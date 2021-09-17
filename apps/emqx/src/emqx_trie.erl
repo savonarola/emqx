@@ -26,12 +26,17 @@
 
 %% Trie APIs
 -export([ insert/1
+        , insert_session/1
         , match/1
+        , match_session/1
         , delete/1
+        , delete_session/1
         ]).
 
 -export([ empty/0
+        , empty_session/0
         , lock_tables/0
+        , lock_session_tables/0
         ]).
 
 -export([is_compact/0, set_compact/1]).
@@ -42,6 +47,7 @@
 -endif.
 
 -define(TRIE, emqx_trie).
+-define(SESSION_TRIE, emqx_session_trie).
 -define(PREFIX(Prefix), {Prefix, 0}).
 -define(TOPIC(Topic), {Topic, 1}).
 
@@ -67,9 +73,17 @@ mnesia(boot) ->
                 {record_name, ?TRIE},
                 {attributes, record_info(fields, ?TRIE)},
                 {type, ordered_set},
+                {storage_properties, StoreProps}]),
+    ok = ekka_mnesia:create_table(?SESSION_TRIE, [
+                {rlog_shard, ?ROUTE_SHARD},
+                {ram_copies, [node()]},
+                {record_name, ?TRIE},
+                {attributes, record_info(fields, ?TRIE)},
+                {type, ordered_set},
                 {storage_properties, StoreProps}]);
 mnesia(copy) ->
     %% Copy topics table
+    ok = ekka_mnesia:copy_table(?SESSION_TRIE, ram_copies),
     ok = ekka_mnesia:copy_table(?TRIE, ram_copies).
 
 %%--------------------------------------------------------------------
@@ -80,6 +94,10 @@ mnesia(copy) ->
 -spec(insert(emqx_topic:topic()) -> ok).
 insert(Topic) when is_binary(Topic) ->
     insert(Topic, ?TRIE).
+
+-spec(insert_session(emqx_topic:topic()) -> ok).
+insert_session(Topic) when is_binary(Topic) ->
+    insert(Topic, ?SESSION_TRIE).
 
 insert(Topic, Trie) when is_binary(Topic) ->
     {TopicKey, PrefixKeys} = make_keys(Topic),
@@ -93,6 +111,11 @@ insert(Topic, Trie) when is_binary(Topic) ->
 delete(Topic) when is_binary(Topic) ->
     delete(Topic, ?TRIE).
 
+%% @doc Delete a topic filter from the trie.
+-spec(delete_session(emqx_topic:topic()) -> ok).
+delete_session(Topic) when is_binary(Topic) ->
+    delete(Topic, ?SESSION_TRIE).
+
 delete(Topic, Trie) when is_binary(Topic) ->
     {TopicKey, PrefixKeys} = make_keys(Topic),
     case [] =/= mnesia:wread({Trie, TopicKey}) of
@@ -104,6 +127,11 @@ delete(Topic, Trie) when is_binary(Topic) ->
 -spec(match(emqx_topic:topic()) -> list(emqx_topic:topic())).
 match(Topic) when is_binary(Topic) ->
     match(Topic, ?TRIE).
+
+-spec(match_session(emqx_topic:topic()) -> list(emqx_topic:topic())).
+match_session(Topic) when is_binary(Topic) ->
+    match(Topic, ?SESSION_TRIE).
+
 match(Topic, Trie) when is_binary(Topic) ->
     Words = emqx_topic:words(Topic),
     case emqx_topic:wildcard(Words) of
@@ -124,11 +152,18 @@ match(Topic, Trie) when is_binary(Topic) ->
 -spec(empty() -> boolean()).
 empty() -> empty(?TRIE).
 
+empty_session() ->
+    empty(?SESSION_TRIE).
+
 empty(Trie) -> ets:first(Trie) =:= '$end_of_table'.
 
 -spec lock_tables() -> ok.
 lock_tables() ->
     mnesia:write_lock_table(?TRIE).
+
+-spec lock_session_tables() -> ok.
+lock_session_tables() ->
+    mnesia:write_lock_table(?SESSION_TRIE).
 
 %%--------------------------------------------------------------------
 %% Internal functions
