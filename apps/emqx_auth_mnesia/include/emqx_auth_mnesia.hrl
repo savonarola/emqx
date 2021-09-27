@@ -10,7 +10,8 @@
         }).
 
 -record(emqx_acl, {
-          filter:: {login() | all, emqx_topic:topic()},
+          login:: login() | all,
+          topic :: emqx_topic:topic(),
           action :: pub | sub | pubsub,
           access :: allow | deny,
           created_at :: integer()

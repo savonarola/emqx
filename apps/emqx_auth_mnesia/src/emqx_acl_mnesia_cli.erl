@@ -39,16 +39,17 @@
 -spec(add_acl(login() | all, emqx_topic:topic(), pub | sub | pubsub, allow | deny) ->
         ok | {error, any()}).
 add_acl(Login, Topic, Action, Access) ->
-    Filter = {Login, Topic},
     Acl = #?TABLE{
-             filter = Filter,
+             login = Login,
+             topic = Topic,
              action = Action,
              access = Access,
              created_at = erlang:system_time(millisecond)
             },
     ret(mnesia:transaction(
-          fun() ->
-                  OldRecords = mnesia:wread({?TABLE, Filter}),
+            fun() ->
+                  MatchSpec = [{{?TABLE, Login, Topic, '_', '_', '_'}, [], ['$_']}],
+                  OldRecords = mnesia:select(?TABLE, MatchSpec, write),
                   case Action of
                       pubsub ->
                           update_permission(pub, Acl, OldRecords),
@@ -56,22 +57,27 @@ add_acl(Login, Topic, Action, Access) ->
                       _ ->
                           update_permission(Action, Acl, OldRecords)
                   end
-          end)).
+            end)).
 
 %% @doc Lookup acl by login
 -spec(lookup_acl(login() | all) -> list()).
 lookup_acl(undefined) -> [];
 lookup_acl(Login) ->
-    MatchSpec = ets:fun2ms(fun({?TABLE, {Filter, ACLTopic}, Action, Access, CreatedAt})
-                                 when Filter =:= Login ->
-                                   {Filter, ACLTopic, Action, Access, CreatedAt}
-                           end),
+    MatchSpec = [{{?TABLE, Login, '$1', '$2', '$3', '$4'}, [], [{{{const, Login}, '$1', '$2', '$3', '$4'}}]}],
     lists:sort(fun comparing/2, ets:select(?TABLE, MatchSpec)).
 
 %% @doc Remove acl
 -spec(remove_acl(login() | all, emqx_topic:topic()) -> ok | {error, any()}).
 remove_acl(Login, Topic) ->
-    ret(mnesia:transaction(fun mnesia:delete/1, [{?TABLE, {Login, Topic}}])).
+    MatchSpec = ets:fun2ms(
+                  fun({?TABLE, RecLogin, RecTopic, _Action, _Access, _CreatedAt} = Rec)
+                    when (RecLogin =:= Login) and (RecTopic =:= Topic) ->
+                          Rec
+                  end),
+    ret(mnesia:transaction(fun() ->
+            RecordsToDelete = mnesia:select(?TABLE, MatchSpec, write),
+            lists:foreach(fun mnesia:delete_object/1, RecordsToDelete)
+        end)).
 
 %% @doc All logins
 -spec(all_acls() -> list()).
@@ -82,19 +88,19 @@ all_acls() ->
 
 all_acls(clientid) ->
     MatchSpec = ets:fun2ms(
-                  fun({?TABLE, {{clientid, Clientid}, Topic}, Action, Access, CreatedAt}) ->
+                  fun({?TABLE, {clientid, Clientid}, Topic, Action, Access, CreatedAt}) ->
                           {{clientid, Clientid}, Topic, Action, Access, CreatedAt}
                   end),
     lists:sort(fun comparing/2, ets:select(?TABLE, MatchSpec));
 all_acls(username) ->
     MatchSpec = ets:fun2ms(
-                  fun({?TABLE, {{username, Username}, Topic}, Action, Access, CreatedAt}) ->
+                  fun({?TABLE, {username, Username}, Topic, Action, Access, CreatedAt}) ->
                           {{username, Username}, Topic, Action, Access, CreatedAt}
                   end),
     lists:sort(fun comparing/2, ets:select(?TABLE, MatchSpec));
 all_acls(all) ->
     MatchSpec = ets:fun2ms(
-                  fun({?TABLE, {all, Topic}, Action, Access, CreatedAt}) ->
+                  fun({?TABLE, all, Topic, Action, Access, CreatedAt}) ->
                           {all, Topic, Action, Access, CreatedAt}
                   end
                  ),
@@ -247,12 +253,12 @@ print_acl({all, Topic, Action, Access, _}) ->
 
 update_permission(Action, Acl0, OldRecords) ->
     Acl = Acl0 #?TABLE{action = Action},
-    maybe_delete_shadowed_records(Action, OldRecords),
+    maybe_delete_shadowed_records(Acl, OldRecords),
     mnesia:write(Acl).
 
 maybe_delete_shadowed_records(_, []) ->
     ok;
-maybe_delete_shadowed_records(Action1, [Rec = #emqx_acl{action = Action2} | Rest]) ->
+maybe_delete_shadowed_records(#emqx_acl{action = Action1, topic = Topic} = Acl, [Rec = #emqx_acl{action = Action2, topic = Topic} | Rest]) ->
     if Action1 =:= Action2 ->
             ok = mnesia:delete_object(Rec);
        Action2 =:= pubsub ->
@@ -264,7 +270,7 @@ maybe_delete_shadowed_records(Action1, [Rec = #emqx_acl{action = Action2} | Rest
        true ->
             ok
     end,
-    maybe_delete_shadowed_records(Action1, Rest).
+    maybe_delete_shadowed_records(Acl, Rest).
 
 other_action(pub) -> sub;
 other_action(sub) -> pub.
