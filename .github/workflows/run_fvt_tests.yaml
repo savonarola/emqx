@@ -2,6 +2,8 @@ name: Functional Verification Tests
 
 on:
   push:
+    branches:
+      - debug-relup-tests
     tags:
       - v*
       - e*
