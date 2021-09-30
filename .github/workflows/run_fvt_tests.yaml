@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - debug-relup-tests
+      - debug-relup-tests-1
 
 jobs:
 
@@ -58,6 +59,7 @@ jobs:
             mkdir -p packages
             cp emqx/_packages/${PROFILE}/*.zip packages
             cp emqx/_upgrade_base/*.zip packages
+            find .
             lux \
             --case_timeout infinity \
             --var PROFILE=$PROFILE \
