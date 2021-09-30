@@ -6,10 +6,52 @@ on:
       - debug-relup-tests
 
 jobs:
+    relup_test_planner:
+        runs-on: ubuntu-20.04
+        container: emqx/build-env:erl23.2.7.2-emqx-2-ubuntu20.04
+        defaults:
+          run:
+            shell: bash
+        outputs:
+          matrix: ${{ steps.generate-matrix.outputs.matrix }}
+          profile: ${{ steps.profile-and-versions.outputs.profile  }}
+          vsn: ${{ steps.profile-and-versions.outputs.vsn  }}
+        steps:
+        - name: Get profile and version list
+          id: profile-and-versions
+          run: |
+            vsn="$(./pkg-vsn.sh)"
+
+            if make -C emqx emqx-ee --dry-run > /dev/null 2>&1; then
+              profile=emqx-ee
+              old_vsns="$(git tag -l "e$pre_vsn.[0-9]" | xargs echo -n | sed "s/e$vsn//")"
+            else
+              profile=emqx-ee
+              old_vsns="$(git tag -l "v$pre_vsn.[0-9]" | xargs echo -n | sed "s/v$vsn//")"
+            fi
+
+            echo "OLD_VSNS=$old_vsns" >> $GITHUB_ENV
+
+            echo "::set-output name=vsn::$vsn"
+            echo "::set-output name=profile::$profile"
+
+        - name: Generate matrix
+          id: generate-matrix
+          run: |
+            matrix=$(echo -n "$OLD_VSNS" | jq -R -s -c 'split(" ")')
+            echo "::set-output name=matrix::$matrix"
 
     relup_test:
+        needs: relup_test_planner
         runs-on: ubuntu-20.04
         container: docker.io/savonarola/emqx-relup-env:4.3
+        strategy:
+          matrix:
+            old_vsn: ${{ fromJson(needs.relup_test_planner.outputs.matrix) }}
+        env:
+          OLD_VSN: "${{ old_vsn }}"
+          PROFILE: "${{ needs.relup_test_planner.outputs.profile }}"
+          VSN: "${{ needs.relup_test_planner.outputs.vsn }}"
         defaults:
           run:
             shell: bash
@@ -26,25 +68,23 @@ jobs:
             fetch-depth: 0
         - name: prepare
           run: |
-            echo "PROFILE=emqx" >> $GITHUB_ENV
-        - name: get version
-          run: |
-            broker="emqx-ce"
-            edition='opensource'
+            if [ "$PROFILE" = "emqx-ee" ]; then
+              echo "https://ci%40emqx.io:${{ secrets.CI_GIT_TOKEN }}@github.com" > $HOME/.git-credentials
+              git config --global credential.helper store
+              echo "${{ secrets.CI_GIT_TOKEN }}" >> emqx/scripts/git-token
+
+              broker="emqx-ee"
+            else
+              broker="emqx-ce"
+            fi
+
             echo "BROKER=$broker" >> $GITHUB_ENV
-            cd emqx
-            vsn="$(./pkg-vsn.sh)"
-            echo "VSN=$vsn" >> $GITHUB_ENV
-            echo "OLD_VSNS=v4.3.8" >> $GITHUB_ENV
         - name: download emqx
           run: |
             set -e -x -u
             mkdir -p emqx/_upgrade_base
             cd emqx/_upgrade_base
-            old_vsns=($(echo $OLD_VSNS | tr ' ' ' '))
-            for old_vsn in ${old_vsns[@]}; do
-              wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$old_vsn/$PROFILE-ubuntu20.04-${old_vsn#[e|v]}-amd64.zip
-            done
+            wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$OLD_VSN/$PROFILE-ubuntu20.04-$OLD_VSN-amd64.zip
         - name: build emqx
           run: make -C emqx ${PROFILE}-zip
         - uses: actions/upload-artifact@v2
@@ -64,7 +104,7 @@ jobs:
             --var PACKAGE_PATH=$(pwd)/packages \
             --var ONE_MORE_EMQX_PATH=$(pwd)/one_more_emqx \
             --var VSN="$VSN" \
-            --var OLD_VSN="$OLD_VSNS" \
+            --var OLD_VSN="$OLD_VSN" \
             emqx/.ci/fvt_tests/relup.lux
         - uses: actions/upload-artifact@v1
           if: failure()
