@@ -70,7 +70,7 @@ jobs:
         - uses: actions/upload-artifact@v2
           with:
             name: emqx_built
-            path: emqx/_packages/${PROFILE}/*.zip
+            path: emqx/_packages/*/*.zip
 
 
     relup_test:
@@ -112,7 +112,7 @@ jobs:
           run: |
             set -e -x -u
             mkdir -p packages
-            cp _emqx_prebuilt/*.zip packages
+            cp _emqx_prebuilt/**/*.zip packages
             cp _upgrade_base/*.zip packages
             ls packages
             lux \
