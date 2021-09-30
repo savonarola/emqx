@@ -70,7 +70,11 @@ jobs:
         - uses: actions/upload-artifact@v2
           with:
             name: emqx
-            path: emqx
+            path: |
+              emqx/etc
+              emqx/data
+              emqx/_build
+              emqx/_packages
 
 
     relup_test:
