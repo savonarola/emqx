@@ -28,11 +28,11 @@ jobs:
             cd emqx
             vsn="$(./pkg-vsn.sh)"
 
-            if make -C emqx emqx-ee --dry-run > /dev/null 2>&1; then
-              profile=emqx-ee
+            if make emqx-ee --dry-run > /dev/null 2>&1; then
+              profile="emqx-ee"
               old_vsns="$(git tag -l "e$pre_vsn.[0-9]" | xargs echo -n | sed "s/e$vsn//")"
             else
-              profile=emqx-ee
+              profile="emqx"
               old_vsns="$(git tag -l "v$pre_vsn.[0-9]" | xargs echo -n | sed "s/v$vsn//")"
             fi
 
