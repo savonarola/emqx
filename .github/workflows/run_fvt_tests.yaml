@@ -70,7 +70,7 @@ jobs:
         - uses: actions/upload-artifact@v2
           with:
             name: emqx
-            path: emqx/_packages/**/*.zip
+            path: emqx
 
 
     relup_test:
@@ -89,8 +89,9 @@ jobs:
           run:
             shell: bash
         steps:
-        - uses: actions/checkout@v2
+          - uses: actions/download-artifact@v2
           with:
+            name: emqx
             path: emqx
         - uses: actions/checkout@v2
           with:
@@ -103,18 +104,13 @@ jobs:
             mkdir -p emqx/_upgrade_base
             cd emqx/_upgrade_base
             wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$OLD_VSN/$PROFILE-ubuntu20.04-${OLD_VSN#[e|v]}-amd64.zip
-        - uses: actions/download-artifact@v2
-          with:
-            name: emqx
-            path: emqx_prebuilt
         - name: run relup test
           timeout-minutes: 35
           run: |
             set -e -x -u
             mkdir -p packages
-            cp emqx_prebuilt/emqx/*.zip packages
+            cp emqx/_packages/${PROFILE}/*.zip packages
             cp emqx/_upgrade_base/*.zip packages
-            echo "PWD: $(pwd)"
             ls -lR .
             lux \
             --case_timeout infinity \
