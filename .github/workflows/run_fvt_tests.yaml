@@ -55,6 +55,13 @@ jobs:
             fi
         - name: get version
           run: |
+                broker="emqx-ce"
+                edition='opensource'
+            echo "BROKER=$broker" >> $GITHUB_ENV
+
+            vsn="$(./pkg-vsn.sh)"
+            echo "VSN=$vsn" >> $GITHUB_ENV
+
             echo "OLD_VSNS=4.3.8" >> $GITHUB_ENV
         - name: download emqx
           run: |
