@@ -103,12 +103,14 @@ jobs:
         - uses: actions/download-artifact@v2
           with:
             name: emqx
+            path: emqx_prebuilt
         - name: run relup test
           timeout-minutes: 35
           run: |
             set -e -x -u
+            ls -lR emqx_prebuilt
             mkdir -p packages
-            cp emqx/_packages/${PROFILE}/*.zip packages
+            cp emqx_prebuilt/*.zip packages
             cp emqx/_upgrade_base/*.zip packages
             lux \
             --case_timeout infinity \
