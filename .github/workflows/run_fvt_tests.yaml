@@ -67,14 +67,10 @@ jobs:
 
         - name: Build emqx
           run: make -C emqx ${PROFILE}-zip
-        - name: Prepare artifact
-          run: |
-            cd emqx
-            tar czf emqx.tar.gz etc data _build/emqx/rel _packages .ci
         - uses: actions/upload-artifact@v2
           with:
-            name: emqx
-            path: emqx/emqx.tar.gz
+            name: emqx_built
+            path: emqx/_packages/${PROFILE}/*.zip
 
 
     relup_test:
@@ -93,14 +89,13 @@ jobs:
           run:
             shell: bash
         steps:
+        - uses: actions/checkout@v2
+          with:
+            path: emqx
         - uses: actions/download-artifact@v2
           with:
-            name: emqx
-            path: emqx/
-        - name: Unpack emqx
-          run: |
-            cd emqx
-            tar xf emqx.tar.gz
+            name: emqx_built
+            path: _emqx_built
         - uses: actions/checkout@v2
           with:
             repository: terry-xiaoyu/one_more_emqx
@@ -109,17 +104,17 @@ jobs:
         - name: download emqx
           run: |
             set -e -x -u
-            mkdir -p emqx/_upgrade_base
-            cd emqx/_upgrade_base
+            mkdir -p _upgrade_base
+            cd _upgrade_base
             wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$OLD_VSN/$PROFILE-ubuntu20.04-${OLD_VSN#[e|v]}-amd64.zip
         - name: run relup test
           timeout-minutes: 35
           run: |
             set -e -x -u
             mkdir -p packages
-            cp emqx/_packages/${PROFILE}/*.zip packages
-            cp emqx/_upgrade_base/*.zip packages
-            ls -lR .
+            cp _emqx_prebuilt/*.zip packages
+            cp _upgrade_base/*.zip packages
+            ls packages
             lux \
             --case_timeout infinity \
             --var PROFILE=$PROFILE \
