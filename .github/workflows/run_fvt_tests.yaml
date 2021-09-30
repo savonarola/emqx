@@ -20,11 +20,6 @@ jobs:
             architecture: 'x64'
         - uses: actions/checkout@v2
           with:
-            repository: emqx/paho.mqtt.testing
-            ref: develop-4.0
-            path: paho.mqtt.testing
-        - uses: actions/checkout@v2
-          with:
             repository: terry-xiaoyu/one_more_emqx
             ref: master
             path: one_more_emqx
