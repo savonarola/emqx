@@ -112,6 +112,7 @@ jobs:
           run: |
             set -e -x -u
             mkdir -p packages
+            find _emqx_prebuilt
             cp _emqx_prebuilt/emqx/*.zip packages
             cp _upgrade_base/*.zip packages
             ls packages
