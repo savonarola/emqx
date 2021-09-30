@@ -17,9 +17,15 @@ jobs:
           profile: ${{ steps.profile-and-versions.outputs.profile  }}
           vsn: ${{ steps.profile-and-versions.outputs.vsn  }}
         steps:
+        - uses: actions/checkout@v2
+          with:
+            repository: ${{ github.repository }}
+            path: emqx
+            fetch-depth: 0
         - name: Get profile and version list
           id: profile-and-versions
           run: |
+            cd emqx
             vsn="$(./pkg-vsn.sh)"
 
             if make -C emqx emqx-ee --dry-run > /dev/null 2>&1; then
