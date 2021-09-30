@@ -36,7 +36,7 @@ jobs:
             cd emqx
             vsn="$(./pkg-vsn.sh)"
             echo "VSN=$vsn" >> $GITHUB_ENV
-            echo "OLD_VSNS=v4.3.8" >> $GITHUB_ENV
+            echo "OLD_VSNS=v4.3.2" >> $GITHUB_ENV
         - name: download emqx
           run: |
             set -e -x -u
@@ -59,7 +59,7 @@ jobs:
             mkdir -p packages
             cp emqx/_packages/${PROFILE}/*.zip packages
             cp emqx/_upgrade_base/*.zip packages
-            find .
+            ls packages
             lux \
             --case_timeout infinity \
             --var PROFILE=$PROFILE \
