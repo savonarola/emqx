@@ -50,8 +50,8 @@ jobs:
             fi
         - name: get version
           run: |
-                broker="emqx-ce"
-                edition='opensource'
+            broker="emqx-ce"
+            edition='opensource'
             echo "BROKER=$broker" >> $GITHUB_ENV
 
             vsn="$(./pkg-vsn.sh)"
