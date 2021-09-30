@@ -49,7 +49,7 @@ jobs:
           matrix:
             old_vsn: ${{ fromJson(needs.relup_test_planner.outputs.matrix) }}
         env:
-          OLD_VSN: "${{ old_vsn }}"
+          OLD_VSN: "${{ matrix.old_vsn }}"
           PROFILE: "${{ needs.relup_test_planner.outputs.profile }}"
           VSN: "${{ needs.relup_test_planner.outputs.vsn }}"
         defaults:
