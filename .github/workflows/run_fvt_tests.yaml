@@ -91,7 +91,7 @@ jobs:
             set -e -x -u
             mkdir -p emqx/_upgrade_base
             cd emqx/_upgrade_base
-            wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$OLD_VSN/$PROFILE-ubuntu20.04-$OLD_VSN-amd64.zip
+            wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$OLD_VSN/$PROFILE-ubuntu20.04-${OLD_VSN#[e|v]}-amd64.zip
         - name: build emqx
           run: make -C emqx ${PROFILE}-zip
         - uses: actions/upload-artifact@v2
