@@ -90,6 +90,9 @@ jobs:
             shell: bash
         steps:
         - uses: actions/checkout@v2
+          with:
+            path: emqx
+
         - uses: actions/checkout@v2
           with:
             repository: terry-xiaoyu/one_more_emqx
