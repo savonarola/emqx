@@ -126,6 +126,7 @@ jobs:
               emqx/.ci/fvt_tests/relup.lux
         - name: run relup test
           timeout-minutes: 10
+          run: |
             lux \
             --case_timeout infinity \
             --var PROFILE=$PROFILE \
