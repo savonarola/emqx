@@ -51,7 +51,9 @@ jobs:
         - uses: actions/upload-artifact@v2
           with:
             name: emqx
-            path: emqx/_packages/**/*.zip
+            path: |
+              emqx
+              one_more_emqx
         - name: run relup test
           timeout-minutes: 35
           run: |
