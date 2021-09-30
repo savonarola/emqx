@@ -40,23 +40,15 @@ jobs:
             fetch-depth: 0
         - name: prepare
           run: |
-            if make -C emqx emqx-ee --dry-run > /dev/null 2>&1; then
-              echo "https://ci%40emqx.io:${{ secrets.CI_GIT_TOKEN }}@github.com" > $HOME/.git-credentials
-              git config --global credential.helper store
-              echo "${{ secrets.CI_GIT_TOKEN }}" >> emqx/scripts/git-token
-              echo "PROFILE=emqx-ee" >> $GITHUB_ENV
-            else
-              echo "PROFILE=emqx" >> $GITHUB_ENV
-            fi
+            echo "PROFILE=emqx" >> $GITHUB_ENV
         - name: get version
           run: |
             broker="emqx-ce"
             edition='opensource'
             echo "BROKER=$broker" >> $GITHUB_ENV
-
+            cd emqx
             vsn="$(./pkg-vsn.sh)"
             echo "VSN=$vsn" >> $GITHUB_ENV
-
             echo "OLD_VSNS=4.3.8" >> $GITHUB_ENV
         - name: download emqx
           run: |
