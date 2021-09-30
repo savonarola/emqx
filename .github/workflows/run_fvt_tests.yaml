@@ -73,7 +73,7 @@ jobs:
             path: |
               emqx/etc
               emqx/data
-              emqx/_build
+              emqx/_build/emqx/rel
               emqx/_packages
 
 
