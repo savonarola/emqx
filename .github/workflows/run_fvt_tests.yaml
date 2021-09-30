@@ -67,14 +67,14 @@ jobs:
 
         - name: Build emqx
           run: make -C emqx ${PROFILE}-zip
+        - name: Prepare artifact
+          run: |
+            cd emqx
+            tar czf emqx.tar.gz etc data _build/emqx/rel _packages .ci
         - uses: actions/upload-artifact@v2
           with:
             name: emqx
-            path: |
-              emqx/etc
-              emqx/data
-              emqx/_build/emqx/rel
-              emqx/_packages
+            path: emqx/emqx.tar.gz
 
 
     relup_test:
@@ -96,7 +96,11 @@ jobs:
         - uses: actions/download-artifact@v2
           with:
             name: emqx
-            path: emqx
+            path: emqx/
+        - name: Unpack emqx
+          run: |
+            cd emqx
+            tar xf emqx.tar.gz
         - uses: actions/checkout@v2
           with:
             repository: terry-xiaoyu/one_more_emqx
