@@ -92,7 +92,6 @@ jobs:
         - uses: actions/checkout@v2
           with:
             path: emqx
-
         - uses: actions/checkout@v2
           with:
             repository: terry-xiaoyu/one_more_emqx
@@ -112,10 +111,11 @@ jobs:
           timeout-minutes: 35
           run: |
             set -e -x -u
-            ls -lR emqx_prebuilt
             mkdir -p packages
             cp emqx_prebuilt/emqx/*.zip packages
             cp emqx/_upgrade_base/*.zip packages
+            echo "PWD: $(pwd)"
+            ls -lR .
             lux \
             --case_timeout infinity \
             --var PROFILE=$PROFILE \
