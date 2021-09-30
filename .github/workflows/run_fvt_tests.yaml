@@ -109,14 +109,23 @@ jobs:
             mkdir -p _upgrade_base
             cd _upgrade_base
             wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$OLD_VSN/$PROFILE-ubuntu20.04-${OLD_VSN#[e|v]}-amd64.zip
-        - name: run relup test
-          timeout-minutes: 35
+        - name: prepare packages
           run: |
             set -e -x -u
             mkdir -p packages
             cp _emqx_built/emqx/*.zip packages
             cp _upgrade_base/*.zip packages
             ls packages
+        - uses: actions/upload-artifact@v2
+          name: Save test data
+          with:
+            name: emqx_built
+            path: |
+              packages
+              one_more_emqx
+              emqx/.ci/fvt_tests/relup.lux
+        - name: run relup test
+          timeout-minutes: 10
             lux \
             --case_timeout infinity \
             --var PROFILE=$PROFILE \
