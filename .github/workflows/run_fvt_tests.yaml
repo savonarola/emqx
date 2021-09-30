@@ -9,30 +9,16 @@ jobs:
 
     relup_test:
         runs-on: ubuntu-20.04
-        container: emqx/build-env:erl23.2.7.2-emqx-2-ubuntu20.04
+        container: docker.io/savonarola/emqx-relup-env:4.3
         defaults:
           run:
             shell: bash
         steps:
-        - uses: actions/setup-python@v2
-          with:
-            python-version: '3.8'
-            architecture: 'x64'
         - uses: actions/checkout@v2
           with:
             repository: terry-xiaoyu/one_more_emqx
             ref: master
             path: one_more_emqx
-        - uses: actions/checkout@v2
-          with:
-            repository: emqx/emqtt-bench
-            ref: '0.3.3'
-            path: emqtt-bench
-        - uses: actions/checkout@v2
-          with:
-            repository: hawk/lux
-            ref: lux-2.6
-            path: lux
         - uses: actions/checkout@v2
           with:
             repository: ${{ github.repository }}
@@ -65,34 +51,21 @@ jobs:
           with:
             name: emqx
             path: emqx/_packages/**/*.zip
-        - name: build emqtt-bench
-          run: make -C emqtt-bench
-        - name: build lux
-          run: |
-            set -e -u -x
-            cd lux
-            autoconf
-            ./configure
-            make
-            make install
         - name: run relup test
           timeout-minutes: 35
           run: |
             set -e -x -u
-            if [ -n "$OLD_VSNS" ]; then
-                mkdir -p packages
-                cp emqx/_packages/${PROFILE}/*.zip packages
-                cp emqx/_upgrade_base/*.zip packages
-                lux \
-                --case_timeout infinity \
-                --var PROFILE=$PROFILE \
-                --var PACKAGE_PATH=$(pwd)/packages \
-                --var BENCH_PATH=$(pwd)/emqtt-bench \
-                --var ONE_MORE_EMQX_PATH=$(pwd)/one_more_emqx \
-                --var VSN="$VSN" \
-                --var OLD_VSNS="$OLD_VSNS" \
-                emqx/.ci/fvt_tests/relup.lux
-            fi
+            mkdir -p packages
+            cp emqx/_packages/${PROFILE}/*.zip packages
+            cp emqx/_upgrade_base/*.zip packages
+            lux \
+            --case_timeout infinity \
+            --var PROFILE=$PROFILE \
+            --var PACKAGE_PATH=$(pwd)/packages \
+            --var ONE_MORE_EMQX_PATH=$(pwd)/one_more_emqx \
+            --var VSN="$VSN" \
+            --var OLD_VSN="$OLD_VSNS" \
+            emqx/.ci/fvt_tests/relup.lux
         - uses: actions/upload-artifact@v1
           if: failure()
           with:
