@@ -102,7 +102,7 @@
     """
     ?SH-PROMPT
 
-    !./bin/emqx_ctl plugins list | grep emqx_management
+    !./bin/emqx_ctl plugins list | grep --color=never emqx_management
     ?Plugin\(emqx_management.*active=true\)
     ?SH-PROMPT
 
@@ -127,7 +127,7 @@
     """
     ?SH-PROMPT
 
-    !./bin/emqx_ctl plugins list | grep emqx_management
+    !./bin/emqx_ctl plugins list | grep --color=never emqx_management
     ?Plugin\(emqx_management.*active=true\)
     ?SH-PROMPT
 
