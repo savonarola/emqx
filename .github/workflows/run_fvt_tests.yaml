@@ -148,7 +148,7 @@ jobs:
           name: Save debug data
           if: failure()
           with:
-            name:
+            name: debug_data
             path: |
               packages/emqx/log/emqx.log.1
               packages/emqx2/log/emqx.log.1
