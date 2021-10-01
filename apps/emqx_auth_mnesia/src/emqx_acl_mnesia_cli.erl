@@ -19,6 +19,8 @@
 -include("emqx_auth_mnesia.hrl").
 -include_lib("emqx/include/logger.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
+-include_lib("stdlib/include/qlc.hrl").
+
 -define(TABLE, emqx_acl).
 
 %% Acl APIs
@@ -62,11 +64,13 @@ add_acl(Login, Topic, Action, Access) ->
 -spec(lookup_acl(login() | all) -> list()).
 lookup_acl(undefined) -> [];
 lookup_acl(Login) ->
-    MatchSpec = ets:fun2ms(fun({?TABLE, {Filter, ACLTopic}, Action, Access, CreatedAt})
-                                 when Filter =:= Login ->
-                                   {Filter, ACLTopic, Action, Access, CreatedAt}
-                           end),
-    lists:sort(fun comparing/2, ets:select(?TABLE, MatchSpec)).
+    QH = qlc:q([
+        {Filter, ACLTopic, Action, Access, CreatedAt}
+            || {?TABLE, {Filter, ACLTopic}, Action, Access, CreatedAt} <- ets:table(?TABLE),
+        Filter =:= Login
+    ]),
+
+    lists:sort(fun comparing/2, qlc:eval(QH)).
 
 %% @doc Remove acl
 -spec(remove_acl(login() | all, emqx_topic:topic()) -> ok | {error, any()}).
