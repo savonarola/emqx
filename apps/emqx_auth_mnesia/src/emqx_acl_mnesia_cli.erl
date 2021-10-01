@@ -64,12 +64,11 @@ add_acl(Login, Topic, Action, Access) ->
 -spec(lookup_acl(login() | all) -> list()).
 lookup_acl(undefined) -> [];
 lookup_acl(Login) ->
-    QH = qlc:q([
-        {Filter, ACLTopic, Action, Access, CreatedAt}
-            || {?TABLE, {Filter, ACLTopic}, Action, Access, CreatedAt} <- ets:table(?TABLE),
-        Filter =:= Login
-    ]),
-
+    MatchSpec = ets:fun2ms(fun({?TABLE, {Filter, ACLTopic}, Action, Access, CreatedAt})
+                                 when Filter =:= Login ->
+                                   {Filter, ACLTopic, Action, Access, CreatedAt}
+                           end),
+    QH = qlc:q([AclRec || AclRec <- ets:table(?TABLE, {traverse, {select, MatchSpec}})]),
     lists:sort(fun comparing/2, qlc:eval(QH)).
 
 %% @doc Remove acl
