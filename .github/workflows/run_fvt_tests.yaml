@@ -130,7 +130,8 @@ jobs:
           run: |
             set -e -x -u
             mkdir -p packages
-            cp emqx_built/emqx/_packages/*/*.zip packages
+            find emqx_built
+            cp emqx_built/_packages/*/*.zip packages
             cd packages
             wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$OLD_VSN/$PROFILE-ubuntu20.04-${OLD_VSN#[e|v]}-amd64.zip
         - name: Run relup test scenario
@@ -143,7 +144,7 @@ jobs:
             --var ONE_MORE_EMQX_PATH=$(pwd)/one_more_emqx \
             --var VSN="$VSN" \
             --var OLD_VSN="$OLD_VSN" \
-            emqx_built/emqx/.ci/fvt_tests/relup.lux
+            emqx_built/.ci/fvt_tests/relup.lux
         - uses: actions/upload-artifact@v2
           name: Save debug data
           if: failure()

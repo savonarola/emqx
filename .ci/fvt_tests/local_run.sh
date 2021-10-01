@@ -4,7 +4,8 @@ USAGE="$0 profile vsn old_vsn package_path"
 EXAMPLE="$0 emqx 4.3.8-b3bb6075 v4.3.2 /home/alice/relup_dubug/downloaded_packages"
 
 if [[ $# -ne 4 ]]; then
-    echo $USAGE
+    echo "$USAGE"
+    echo "$EXAMPLE"
     exit 1
 fi
 
