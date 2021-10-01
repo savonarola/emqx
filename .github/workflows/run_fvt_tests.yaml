@@ -15,6 +15,9 @@ jobs:
           old_vsns: ${{ steps.profile-and-versions.outputs.old_vsns }}
           broker: ${{ steps.profile-and-versions.outputs.broker }}
           matrix: ${{ steps.generate-matrix.outputs.matrix }}
+        defaults:
+          run:
+            shell: bash
         steps:
         - uses: actions/checkout@v2
           name: Checkout
@@ -58,6 +61,9 @@ jobs:
         needs: relup_test_plan
         runs-on: ubuntu-20.04
         container: emqx/build-env:erl23.2.7.2-emqx-2-ubuntu20.04
+        defaults:
+          run:
+            shell: bash
         env:
           OLD_VSNS: "${{ needs.relup_test_plan.outputs.old_vsns }}"
           PROFILE: "${{ needs.relup_test_plan.outputs.profile }}"
