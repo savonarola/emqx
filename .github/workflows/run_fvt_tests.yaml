@@ -129,7 +129,6 @@ jobs:
           run: |
             set -e -x -u
             mkdir -p packages
-            find emqx_built
             cp emqx_built/_packages/*/*.zip packages
             cd packages
             wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$OLD_VSN/$PROFILE-ubuntu20.04-${OLD_VSN#[e|v]}-amd64.zip
