@@ -105,7 +105,6 @@ jobs:
         strategy:
           matrix:
             old_vsn: ${{ fromJson(needs.relup_test_plan.outputs.matrix) }}
-          max-parallel: 2
         env:
           OLD_VSN: "${{ matrix.old_vsn }}"
           PROFILE: "${{ needs.relup_test_plan.outputs.profile }}"
