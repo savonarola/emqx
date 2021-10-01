@@ -6,21 +6,19 @@ on:
       - debug-relup-tests
 
 jobs:
-    relup_test_planner:
+    relup_test_plan:
         runs-on: ubuntu-20.04
         container: emqx/build-env:erl23.2.7.2-emqx-2-ubuntu20.04
-        defaults:
-          run:
-            shell: bash
         outputs:
-          matrix: ${{ steps.generate-matrix.outputs.matrix }}
           profile: ${{ steps.profile-and-versions.outputs.profile }}
           vsn: ${{ steps.profile-and-versions.outputs.vsn }}
-          broker: ${{ steps.profile-and-versions.outputs.broker  }}
+          old_vsns: ${{ steps.profile-and-versions.outputs.old_vsns }}
+          broker: ${{ steps.profile-and-versions.outputs.broker }}
+          matrix: ${{ steps.generate-matrix.outputs.matrix }}
         steps:
         - uses: actions/checkout@v2
+          name: Checkout
           with:
-            repository: ${{ github.repository }}
             path: emqx
             fetch-depth: 0
         - name: Get profile and version list
@@ -41,23 +39,34 @@ jobs:
               broker="emqx-ce"
             fi
 
-            old_vsns="v4.3.2"
 
-            echo "OLD_VSNS=$old_vsns" >> $GITHUB_ENV
-            echo "BROKER=$broker" >> $GITHUB_ENV
-            echo "PROFILE=$profile" >> $GITHUB_ENV
+            # echo "OLD_VSNS=$old_vsns" >> $GITHUB_ENV
+            # echo "BROKER=$broker" >> $GITHUB_ENV
+            # echo "PROFILE=$profile" >> $GITHUB_ENV
 
             echo "::set-output name=vsn::$vsn"
             echo "::set-output name=profile::$profile"
             echo "::set-output name=broker::$broker"
-
-
+            echo "::set-output name=old_vsns::$old_vsns"
         - name: Generate matrix
           id: generate-matrix
           run: |
             matrix=$(echo -n "$OLD_VSNS" | jq -R -s -c 'split(" ")')
             echo "::set-output name=matrix::$matrix"
 
+    relup_test_build:
+        needs: relup_test_plan
+        runs-on: ubuntu-20.04
+        container: emqx/build-env:erl23.2.7.2-emqx-2-ubuntu20.04
+        env:
+          OLD_VSNS: "${{ needs.relup_test_plan.outputs.old_vsns }}"
+          PROFILE: "${{ needs.relup_test_plan.outputs.profile }}"
+          BROKER: "${{ needs.relup_test_plan.outputs.broker }}"
+        steps:
+        - uses: actions/checkout@v2
+          name: Checkout
+          with:
+            path: emqx
         - name: Prepare credentials
           run: |
             if [ "$PROFILE" = "emqx-ee" ]; then
@@ -65,66 +74,63 @@ jobs:
               git config --global credential.helper store
               echo "${{ secrets.CI_GIT_TOKEN }}" >> emqx/scripts/git-token
             fi
-
+        - name: Download bases
+          run: |
+            set -e -x -u
+            mkdir -p emqx/_upgrade_base
+            cd emqx/_upgrade_base
+            old_vsns=($(echo $OLD_VSNS | tr ' ' ' '))
+            for old_vsn in ${old_vsns[@]}; do
+              wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$old_vsn/$PROFILE-ubuntu20.04-${old_vsn#[e|v]}-amd64.zip
+            done
         - name: Build emqx
           run: make -C emqx ${PROFILE}-zip
         - uses: actions/upload-artifact@v2
+          name: Upload built emqx and test scenario
           with:
             name: emqx_built
-            path: emqx/_packages/*/*.zip
+            path: |
+              emqx/_packages/*/*.zip
+              emqx/.ci/fvt_tests
 
-
-    relup_test:
-        needs: relup_test_planner
+    relup_test_run:
+        needs:
+          - relup_test_plan
+          - relup_test_build
         runs-on: ubuntu-20.04
         container: docker.io/savonarola/emqx-relup-env:4.3
         strategy:
           matrix:
-            old_vsn: ${{ fromJson(needs.relup_test_planner.outputs.matrix) }}
+            old_vsn: ${{ fromJson(needs.relup_test_plan.outputs.matrix) }}
           max-parallel: 2
         env:
           OLD_VSN: "${{ matrix.old_vsn }}"
-          PROFILE: "${{ needs.relup_test_planner.outputs.profile }}"
-          VSN: "${{ needs.relup_test_planner.outputs.vsn }}"
-          BROKER: "${{ needs.relup_test_planner.outputs.broker }}"
+          PROFILE: "${{ needs.relup_test_plan.outputs.profile }}"
+          VSN: "${{ needs.relup_test_plan.outputs.vsn }}"
+          BROKER: "${{ needs.relup_test_plan.outputs.broker }}"
         defaults:
           run:
             shell: bash
         steps:
-        - uses: actions/checkout@v2
-          with:
-            path: emqx
         - uses: actions/download-artifact@v2
+          name: Dowload built emqx and test scenario
           with:
             name: emqx_built
-            path: _emqx_built
+            path: emqx_built
         - uses: actions/checkout@v2
+          name: Checkout one_more_emqx
           with:
             repository: terry-xiaoyu/one_more_emqx
             ref: master
             path: one_more_emqx
-        - name: download emqx
-          run: |
-            set -e -x -u
-            mkdir -p _upgrade_base
-            cd _upgrade_base
-            wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$OLD_VSN/$PROFILE-ubuntu20.04-${OLD_VSN#[e|v]}-amd64.zip
-        - name: prepare packages
+        - name: Prepare packages
           run: |
             set -e -x -u
             mkdir -p packages
-            cp _emqx_built/emqx/*.zip packages
-            cp _upgrade_base/*.zip packages
-            ls packages
-        - uses: actions/upload-artifact@v2
-          name: Save test data
-          with:
-            name: emqx_built
-            path: |
-              packages
-              one_more_emqx
-              emqx/.ci/fvt_tests/relup.lux
-        - name: run relup test
+            cp emqx_built/emqx/_packages/*/*.zip packages
+            cd packages
+            wget --no-verbose https://s3-us-west-2.amazonaws.com/packages.emqx/$BROKER/$OLD_VSN/$PROFILE-ubuntu20.04-${OLD_VSN#[e|v]}-amd64.zip
+        - name: Run relup test scenario
           timeout-minutes: 10
           run: |
             lux \
@@ -134,20 +140,15 @@ jobs:
             --var ONE_MORE_EMQX_PATH=$(pwd)/one_more_emqx \
             --var VSN="$VSN" \
             --var OLD_VSN="$OLD_VSN" \
-            emqx/.ci/fvt_tests/relup.lux
-        - uses: actions/upload-artifact@v1
+            emqx_built/emqx/.ci/fvt_tests/relup.lux
+        - uses: actions/upload-artifact@v2
+          name: Save debug data
           if: failure()
           with:
-            name: emqx_logs
-            path: packages/emqx/log/emqx.log.1
-        - uses: actions/upload-artifact@v1
-          if: failure()
-          with:
-            name: emqx2_logs
-            path: packages/emqx2/log/emqx.log.1
-        - uses: actions/upload-artifact@v1
-          if: failure()
-          with:
-            name: lux_logs
-            path: lux_logs
+            name:
+            path: |
+              packages/emqx/log/emqx.log.1
+              packages/emqx2/log/emqx.log.1
+              packages/*.zip
+              lux_logs
 
