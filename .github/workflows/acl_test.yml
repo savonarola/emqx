@@ -1,0 +1,25 @@
+name: ACL fix & migration integration tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_version:
+        required: true
+
+jobs:
+    test:
+        runs-on: ubuntu-20.04
+        container: emqx/build-env:erl23.2.7.2-emqx-2-ubuntu20.04
+        strategy:
+            fail-fast: true
+        env:
+            BASE_VERSION: ${{ github.event.inputs.base_version }}
+        steps:
+        - uses: actions/checkout@v1
+          path: emqx
+        - name: Prepare scripts
+          run: |
+            cp ./emqx/.ci/acl_migration_test/*.sh ./
+        - name: Run tests
+          run: |
+            ./suite.sh emqx "$BASE_VERSION"
