@@ -7,6 +7,7 @@
 -export([spec/1, spec/2]).
 -export([translate_req/2]).
 -export([namespace/0, fields/1]).
+-export([schema_with_example/2, schema_with_examples/2]).
 -export([error_codes/1, error_codes/2]).
 -define(MAX_ROW_LIMIT, 100).
 
@@ -89,6 +90,14 @@ fields(limit) ->
         integer_to_binary(?MAX_ROW_LIMIT), <<")">>]),
     Meta = #{in => query, desc => Desc, default => ?MAX_ROW_LIMIT, example => 50},
     [{limit, hoconsc:mk(range(1, ?MAX_ROW_LIMIT), Meta)}].
+
+
+schema_with_example(Type, Example) ->
+    hoconsc:mk(Type, #{examples => #{<<"example">> => Example}}).
+
+schema_with_examples(Type, Examples) ->
+    hoconsc:mk(Type, #{examples => #{<<"examples">> => Examples}}).
+
 
 error_codes(Codes) ->
     error_codes(Codes, <<"Error code to troubleshoot problems.">>).
@@ -244,14 +253,15 @@ trans_desc(Spec, Hocon) ->
 
 requestBody([], _Module) -> {[], []};
 requestBody(Schema, Module) ->
-    {Props, Refs} =
+    {{Props, Refs}, Examples} =
         case hoconsc:is_schema(Schema) of
             true ->
                 HoconSchema = hocon_schema:field_schema(Schema, type),
-                hocon_schema_to_spec(HoconSchema, Module);
-            false -> parse_object(Schema, Module)
+                SchemaExamples = hocon_schema:field_schema(Schema, examples),
+                {hocon_schema_to_spec(HoconSchema, Module), SchemaExamples};
+            false -> {parse_object(Schema, Module), undefined}
         end,
-    {#{<<"content">> => #{<<"application/json">> => #{<<"schema">> => Props}}},
+    {#{<<"content">> => content(Props, Examples)},
         Refs}.
 
 responses(Responses, Module) ->
@@ -264,19 +274,20 @@ response(Status, ?REF(StructName), {Acc, RefsAcc, Module}) ->
     response(Status, ?R_REF(Module, StructName), {Acc, RefsAcc, Module});
 response(Status, ?R_REF(_Mod, _Name) = RRef, {Acc, RefsAcc, Module}) ->
     {Spec, Refs} = hocon_schema_to_spec(RRef, Module),
-    Content = #{<<"application/json">> => #{<<"schema">> => Spec}},
+    Content = content(Spec),
     {Acc#{integer_to_binary(Status) => #{<<"content">> => Content}}, Refs ++ RefsAcc, Module};
 response(Status, Schema, {Acc, RefsAcc, Module}) ->
     case hoconsc:is_schema(Schema) of
         true ->
             Hocon = hocon_schema:field_schema(Schema, type),
+            Examples = hocon_schema:field_schema(Schema, examples),
             {Spec, Refs} = hocon_schema_to_spec(Hocon, Module),
             Init = trans_desc(#{}, Schema),
-            Content = #{<<"application/json">> => #{<<"schema">> => Spec}},
+            Content = content(Spec, Examples),
             {Acc#{integer_to_binary(Status) => Init#{<<"content">> => Content}}, Refs ++ RefsAcc, Module};
         false ->
             {Props, Refs} = parse_object(Schema, Module),
-            Content = #{<<"content">> => #{<<"application/json">> => #{<<"schema">> => Props}}},
+            Content = #{<<"content">> => content(Props)},
             {Acc#{integer_to_binary(Status) => Content}, Refs ++ RefsAcc, Module}
     end.
 
@@ -467,3 +478,11 @@ parse_object(Other, Module) ->
 is_required(Hocon) ->
     hocon_schema:field_schema(Hocon, required) =:= true orelse
         hocon_schema:field_schema(Hocon, nullable) =:= false.
+
+content(ApiSpec) ->
+    content(ApiSpec, undefined).
+
+content(ApiSpec, undefined) ->
+    #{<<"application/json">> => #{<<"schema">> => ApiSpec}};
+content(ApiSpec, Examples) when is_map(Examples) ->
+    #{<<"application/json">> => Examples#{<<"schema">> => ApiSpec}}.

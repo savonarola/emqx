@@ -27,6 +27,8 @@
         , fields/1
         ]).
 
+-export([authenticator_sc/0]).
+
 -export([ pre_config_update/2
         , post_config_update/4
         ]).
@@ -187,6 +189,10 @@ authentication(type) ->
 authentication(default) -> [];
 authentication(_) -> undefined.
 
+authenticator_sc() ->
+    {ok, Refs} = get_refs(),
+    hoconsc:union(Refs).
+
 %%------------------------------------------------------------------------------
 %% Callbacks of config handler
 %%------------------------------------------------------------------------------
@@ -200,7 +206,7 @@ pre_config_update(UpdateReq, OldConfig) ->
     end.
 
 do_pre_config_update({create_authenticator, ChainName, Config}, OldConfig) ->
-    try 
+    try
         CertsDir = certs_dir([to_bin(ChainName), generate_id(Config)]),
         NConfig = convert_certs(CertsDir, Config),
         {ok, OldConfig ++ [NConfig]}
@@ -216,7 +222,7 @@ do_pre_config_update({delete_authenticator, _ChainName, AuthenticatorID}, OldCon
                              end, OldConfig),
     {ok, NewConfig};
 do_pre_config_update({update_authenticator, ChainName, AuthenticatorID, Config}, OldConfig) ->
-    try 
+    try
         CertsDir = certs_dir([to_bin(ChainName), AuthenticatorID]),
         NewConfig = lists:map(
                         fun(OldConfig0) ->
@@ -479,10 +485,12 @@ generate_id(#{mechanism := Mechanism0, backend := Backend0}) ->
     <<Mechanism/binary, ":", Backend/binary>>;
 generate_id(#{mechanism := Mechanism}) ->
     to_bin(Mechanism);
-generate_id(#{<<"mechanism">> := Mechanism, <<"backend">> := Backend}) ->
+generate_id(#{<<"mechanism">> := Mechanism0, <<"backend">> := Backend0}) ->
+    Mechanism = to_bin(Mechanism0),
+    Backend = to_bin(Backend0),
     <<Mechanism/binary, ":", Backend/binary>>;
 generate_id(#{<<"mechanism">> := Mechanism}) ->
-    Mechanism;
+    to_bin(Mechanism);
 generate_id(_) ->
     error({missing_parameter, mechanism}).
 
@@ -549,7 +557,7 @@ handle_call({lookup_chain, Name}, _From, State) ->
     end;
 
 handle_call({create_authenticator, ChainName, Config}, _From, #{providers := Providers} = State) ->
-    UpdateFun = 
+    UpdateFun =
         fun(#chain{authenticators = Authenticators} = Chain) ->
             AuthenticatorID = generate_id(Config),
             case lists:keymember(AuthenticatorID, #authenticator.id, Authenticators) of
@@ -570,7 +578,7 @@ handle_call({create_authenticator, ChainName, Config}, _From, #{providers := Pro
     reply(Reply, maybe_hook(State));
 
 handle_call({delete_authenticator, ChainName, AuthenticatorID}, _From, State) ->
-    UpdateFun = 
+    UpdateFun =
         fun(#chain{authenticators = Authenticators} = Chain) ->
             case lists:keytake(AuthenticatorID, #authenticator.id, Authenticators) of
                 false ->
@@ -614,7 +622,7 @@ handle_call({update_authenticator, ChainName, AuthenticatorID, Config}, _From, S
     reply(Reply, State);
 
 handle_call({move_authenticator, ChainName, AuthenticatorID, Position}, _From, State) ->
-    UpdateFun = 
+    UpdateFun =
         fun(#chain{authenticators = Authenticators} = Chain) ->
             case do_move_authenticator(AuthenticatorID, Authenticators, Position) of
                 {ok, NAuthenticators} ->
