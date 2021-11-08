@@ -27,7 +27,7 @@
     state => resource_state(),
     status => started | stopped
 }.
-
+-type resource_group() :: term().
 -type after_query() :: {OnSuccess :: after_query_fun(), OnFailed :: after_query_fun()} |
     undefined.
 

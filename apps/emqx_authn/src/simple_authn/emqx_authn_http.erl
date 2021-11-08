@@ -113,24 +113,22 @@ refs() ->
     , hoconsc:ref(?MODULE, post)
     ].
 
-create(#{ method := Method
-        , url := URL
-        , headers := Headers
-        , body := Body
-        , request_timeout := RequestTimeout
-        , '_unique' := Unique
-        } = Config) ->
+create(#{method := Method,
+         url := URL,
+         headers := Headers,
+         body := Body,
+         request_timeout := RequestTimeout} = Config) ->
     #{path := Path,
       query := Query} = URIMap = parse_url(URL),
-    State = #{ method          => Method
-             , path            => Path
-             , base_query      => cow_qs:parse_qs(list_to_binary(Query))
-             , headers         => maps:to_list(Headers)
-             , body            => maps:to_list(Body)
-             , request_timeout => RequestTimeout
-             , '_unique'       => Unique
-             },
-    case emqx_resource:create_local(Unique,
+    ResourceId = emqx_authn_utils:make_resource_id(?MODULE),
+    State = #{method          => Method,
+              path            => Path,
+              base_query      => cow_qs:parse_qs(list_to_binary(Query)),
+              headers         => maps:to_list(Headers),
+              body            => maps:to_list(Body),
+              request_timeout => RequestTimeout,
+              resource_id => ResourceId},
+    case emqx_resource:create_local(ResourceId,
                                     emqx_connector_http,
                                     Config#{base_url => maps:remove(query, URIMap),
                                             pool_type => hash}) of
@@ -153,11 +151,11 @@ update(Config, State) ->
 
 authenticate(#{auth_method := _}, _) ->
     ignore;
-authenticate(Credential, #{'_unique' := Unique,
+authenticate(Credential, #{resource_id := ResourceId,
                            method := Method,
                            request_timeout := RequestTimeout} = State) ->
     Request = generate_request(Credential, State),
-    case emqx_resource:query(Unique, {Method, Request, RequestTimeout}) of
+    case emqx_resource:query(ResourceId, {Method, Request, RequestTimeout}) of
         {ok, 204, _Headers} -> {ok, #{is_superuser => false}};
         {ok, 200, Headers, Body} ->
             ContentType = proplists:get_value(<<"content-type">>, Headers, <<"application/json">>),
@@ -171,13 +169,13 @@ authenticate(Credential, #{'_unique' := Unique,
             end;
         {error, Reason} ->
             ?SLOG(error, #{msg => "http_server_query_failed",
-                           resource => Unique,
+                           resource => ResourceId,
                            reason => Reason}),
             ignore
     end.
 
-destroy(#{'_unique' := Unique}) ->
-    _ = emqx_resource:remove_local(Unique),
+destroy(#{resource_id := ResourceId}) ->
+    _ = emqx_resource:remove_local(ResourceId),
     ok.
 
 %%--------------------------------------------------------------------

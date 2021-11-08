@@ -34,6 +34,7 @@
 start(_StartType, _StartArgs) ->
     ok = mria_rlog:wait_for_shards([?AUTH_SHARD], infinity),
     {ok, Sup} = emqx_authn_sup:start_link(),
+    ok = emqx_authn_utils:cleanup_resources(),
     ok = ?AUTHN:register_providers(emqx_authn:providers()),
     ok = initialize(),
     {ok, Sup}.
@@ -50,9 +51,13 @@ initialize() ->
     RawConfigs = emqx:get_raw_config([authentication], []),
     Config = emqx_authn:check_configs(RawConfigs),
     ?AUTHN:initialize_authentication(?GLOBAL, Config),
-    lists:foreach(fun({ListenerID, ListenerConfig}) ->
-                      ?AUTHN:initialize_authentication(ListenerID, maps:get(authentication, ListenerConfig, []))
-                  end, emqx_listeners:list()).
+    lists:foreach(
+      fun({ListenerID, ListenerConfig}) ->
+              ?AUTHN:initialize_authentication(
+                 ListenerID,
+                 maps:get(authentication, ListenerConfig, []))
+      end,
+      emqx_listeners:list()).
 
 provider_types() ->
-    lists:map(fun({Type, _Module}) -> Type end, emqx_authn:providers()).
+    [Type || {Type, _Module} <- emqx_authn:providers()].

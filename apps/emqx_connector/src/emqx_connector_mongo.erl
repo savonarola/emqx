@@ -128,12 +128,17 @@ on_stop(InstId, #{poolname := PoolName}) ->
                   connector => InstId}),
     emqx_plugin_libs_pool:stop_pool(PoolName).
 
-on_query(InstId, {Action, Collection, Selector, Docs}, AfterQuery, #{poolname := PoolName} = State) ->
+on_query(InstId,
+         {Action, Collection, Selector, Docs},
+         AfterQuery,
+         #{poolname := PoolName} = State) ->
     Request = {Action, Collection, Selector, Docs},
     ?SLOG(debug, #{msg => "mongodb connector received request",
         request => Request, connector => InstId,
         state => State}),
-    case ecpool:pick_and_do(PoolName, {?MODULE, mongo_query, [Action, Collection, Selector, Docs]}, no_handover) of
+    case ecpool:pick_and_do(PoolName,
+                            {?MODULE, mongo_query, [Action, Collection, Selector, Docs]},
+                            no_handover) of
         {error, Reason} ->
             ?SLOG(error, #{msg => "mongodb connector do query failed",
                 request => Request, reason => Reason,
@@ -142,7 +147,7 @@ on_query(InstId, {Action, Collection, Selector, Docs}, AfterQuery, #{poolname :=
             {error, Reason};
         {ok, Cursor} when is_pid(Cursor) ->
             emqx_resource:query_success(AfterQuery),
-            mc_cursor:foldl(fun(O, Acc2) -> [O|Acc2] end, [], Cursor, 1000);
+            mc_cursor:foldl(fun(O, Acc2) -> [O | Acc2] end, [], Cursor, 1000);
         Result ->
             emqx_resource:query_success(AfterQuery),
             Result
@@ -192,7 +197,10 @@ do_start(InstId, Opts0, Config = #{mongo_type := Type,
     SslOpts = case maps:get(enable, SSL) of
                   true ->
                       [{ssl, true},
-                       {ssl_opts, emqx_plugin_libs_ssl:save_files_return_opts(SSL, "connectors", InstId)}
+                       {ssl_opts, emqx_plugin_libs_ssl:save_files_return_opts(
+                                    SSL,
+                                    "connectors",
+                                    InstId)}
                       ];
                   false -> [{ssl, false}]
               end,
@@ -219,29 +227,29 @@ do_start(InstId, Opts0, Config = #{mongo_type := Type,
            test_conn => TestConn,
            test_opts => TestOpts}}.
 
-init_topology_options([{pool_size, Val}| R], Acc) ->
-    init_topology_options(R, [{pool_size, Val}| Acc]);
-init_topology_options([{max_overflow, Val}| R], Acc) ->
-    init_topology_options(R, [{max_overflow, Val}| Acc]);
-init_topology_options([{overflow_ttl, Val}| R], Acc) ->
-    init_topology_options(R, [{overflow_ttl, Val}| Acc]);
-init_topology_options([{overflow_check_period, Val}| R], Acc) ->
-    init_topology_options(R, [{overflow_check_period, Val}| Acc]);
-init_topology_options([{local_threshold_ms, Val}| R], Acc) ->
-    init_topology_options(R, [{'localThresholdMS', Val}| Acc]);
-init_topology_options([{connect_timeout_ms, Val}| R], Acc) ->
-    init_topology_options(R, [{'connectTimeoutMS', Val}| Acc]);
-init_topology_options([{socket_timeout_ms, Val}| R], Acc) ->
-    init_topology_options(R, [{'socketTimeoutMS', Val}| Acc]);
-init_topology_options([{server_selection_timeout_ms, Val}| R], Acc) ->
-    init_topology_options(R, [{'serverSelectionTimeoutMS', Val}| Acc]);
-init_topology_options([{wait_queue_timeout_ms, Val}| R], Acc) ->
-    init_topology_options(R, [{'waitQueueTimeoutMS', Val}| Acc]);
-init_topology_options([{heartbeat_frequency_ms, Val}| R], Acc) ->
-    init_topology_options(R, [{'heartbeatFrequencyMS', Val}| Acc]);
-init_topology_options([{min_heartbeat_frequency_ms, Val}| R], Acc) ->
-    init_topology_options(R, [{'minHeartbeatFrequencyMS', Val}| Acc]);
-init_topology_options([_| R], Acc) ->
+init_topology_options([{pool_size, Val} | R], Acc) ->
+    init_topology_options(R, [{pool_size, Val} | Acc]);
+init_topology_options([{max_overflow, Val} | R], Acc) ->
+    init_topology_options(R, [{max_overflow, Val} | Acc]);
+init_topology_options([{overflow_ttl, Val} | R], Acc) ->
+    init_topology_options(R, [{overflow_ttl, Val} | Acc]);
+init_topology_options([{overflow_check_period, Val} | R], Acc) ->
+    init_topology_options(R, [{overflow_check_period, Val} | Acc]);
+init_topology_options([{local_threshold_ms, Val} | R], Acc) ->
+    init_topology_options(R, [{'localThresholdMS', Val} | Acc]);
+init_topology_options([{connect_timeout_ms, Val} | R], Acc) ->
+    init_topology_options(R, [{'connectTimeoutMS', Val} | Acc]);
+init_topology_options([{socket_timeout_ms, Val} | R], Acc) ->
+    init_topology_options(R, [{'socketTimeoutMS', Val} | Acc]);
+init_topology_options([{server_selection_timeout_ms, Val} | R], Acc) ->
+    init_topology_options(R, [{'serverSelectionTimeoutMS', Val} | Acc]);
+init_topology_options([{wait_queue_timeout_ms, Val} | R], Acc) ->
+    init_topology_options(R, [{'waitQueueTimeoutMS', Val} | Acc]);
+init_topology_options([{heartbeat_frequency_ms, Val} | R], Acc) ->
+    init_topology_options(R, [{'heartbeatFrequencyMS', Val} | Acc]);
+init_topology_options([{min_heartbeat_frequency_ms, Val} | R], Acc) ->
+    init_topology_options(R, [{'minHeartbeatFrequencyMS', Val} | Acc]);
+init_topology_options([_ | R], Acc) ->
     init_topology_options(R, Acc);
 init_topology_options([], Acc) ->
     Acc.
