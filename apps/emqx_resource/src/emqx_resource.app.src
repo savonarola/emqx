@@ -10,7 +10,8 @@
     gproc,
     hocon,
     jsx,
-    emqx
+    emqx,
+    emqx_conf
    ]},
   {env,[]},
   {modules, []},
