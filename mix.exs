@@ -88,7 +88,8 @@ defmodule EMQXUmbrella.MixProject do
       {:ranch,
        github: "ninenines/ranch", ref: "a692f44567034dacf5efcaa24a24183788594eb7", override: true},
       # in conflict by grpc and eetcd
-      {:gpb, "4.11.2", override: true}
+      {:gpb, "4.11.2", override: true},
+      {:clean_mixer, "~> 0.2", only: [:dev, :test], runtime: false}
     ] ++ umbrella_apps() ++ bcrypt_dep() ++ quicer_dep()
   end
 
