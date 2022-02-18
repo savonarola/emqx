@@ -1,5 +1,5 @@
 defmodule EMQXUmbrella.MixProject do
-  use Mix.Project
+          use Mix.Project
 
   @moduledoc """
 
@@ -35,7 +35,7 @@ defmodule EMQXUmbrella.MixProject do
     check_profile!()
 
     [
-      app: :emqx_mix,
+app: :emqx_mix,
       version: pkg_vsn(),
       deps: deps(),
       releases: releases()
