@@ -1,5 +1,5 @@
 defmodule EMQXUmbrella.MixProject do
-          use Mix.Project
+  use Mix.Project
 
   @moduledoc """
 
@@ -35,7 +35,7 @@ defmodule EMQXUmbrella.MixProject do
     check_profile!()
 
     [
-app: :emqx_mix,
+      app: :emqx_mix,
       version: pkg_vsn(),
       deps: deps(),
       releases: releases()
@@ -553,7 +553,7 @@ app: :emqx_mix,
       emqx_machine_boot_apps: emqx_machine_boot_app_list(edition_type),
       built_on_arch: built_on(),
       is_elixir: "yes",
-      is_enterprise: (if edition_type == :enterprise, do: "yes", else: "no")
+      is_enterprise: if(edition_type == :enterprise, do: "yes", else: "no")
     ]
   end
 
@@ -581,7 +581,7 @@ app: :emqx_mix,
       emqx_schema_mod: emqx_schema_mod(edition_type),
       emqx_machine_boot_apps: emqx_machine_boot_app_list(edition_type),
       is_elixir: "yes",
-      is_enterprise: (if edition_type == :enterprise, do: "yes", else: "no")
+      is_enterprise: if(edition_type == :enterprise, do: "yes", else: "no")
     ]
   end
 
