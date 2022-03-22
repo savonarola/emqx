@@ -121,7 +121,7 @@ dispatch(Group, Topic, Delivery) ->
 
 dispatch(Group, Topic, Delivery = #delivery{message = Msg}, FailedSubs) ->
     #message{from = ClientId, topic = SourceTopic} = Msg,
-    case pick(strategy(), ClientId, SourceTopic, Group, Topic, FailedSubs) of
+    case pick(strategy(Group), ClientId, SourceTopic, Group, Topic, FailedSubs) of
         false ->
             {error, no_subscribers};
         {Type, SubPid} ->
@@ -133,8 +133,8 @@ dispatch(Group, Topic, Delivery = #delivery{message = Msg}, FailedSubs) ->
             end
     end.
 
--spec(strategy() -> strategy()).
-strategy() ->
+-spec(strategy(emqx_topic:group()) -> strategy()).
+strategy(_Group) ->
     emqx:get_env(shared_subscription_strategy, random).
 
 -spec(ack_enabled() -> boolean()).
@@ -267,6 +267,12 @@ do_pick(Strategy, ClientId, SourceTopic, Group, Topic, FailedSubs) ->
     end.
 
 pick_subscriber(_Group, _Topic, _Strategy, _ClientId, _SourceTopic, [Sub]) -> Sub;
+pick_subscriber(Group, Topic, local, ClientId, SourceTopic, Subs) ->
+    [Sub | _] = lists:filter(fun(Pid) -> erlang:node(Pid) =:= node() end, Subs),
+    case lists:filter(fun(Pid) -> erlang:node(Pid) =:= node() end, Subs) of
+        [Sub | _] -> Sub;
+        [] -> pick_subscriber(Group, Topic, random, ClientId, SourceTopic, Subs)
+    end;
 pick_subscriber(Group, Topic, Strategy, ClientId, SourceTopic, Subs) ->
     Nth = do_pick_subscriber(Group, Topic, Strategy, ClientId, SourceTopic, length(Subs)),
     lists:nth(Nth, Subs).
