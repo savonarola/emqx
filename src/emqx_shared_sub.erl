@@ -134,8 +134,29 @@ dispatch(Group, Topic, Delivery = #delivery{message = Msg}, FailedSubs) ->
     end.
 
 -spec(strategy(emqx_topic:group()) -> strategy()).
-strategy(_Group) ->
-    emqx:get_env(shared_subscription_strategy, random).
+strategy(Group) ->
+    case erlang:get(per_group_shared_sub_strategy) of
+        #{Group => Strategy} ->
+            Strategy;
+
+        undefined ->
+            Groups = emqx:get_env(shared_subscription_strategy_per_group, []),
+            Map = maps:from_list(Groups),
+            erlang:put(per_group_shared_sub_strategy, Map),
+            strategy(Group);
+
+        _ ->
+            case erlang:get(default_shared_sub_strategy) of
+                undefined ->
+                    Default = emqx:get_env(shared_subscription_strategy, random),
+                    erlang:put(default_shared_sub_strategy, Default),
+                    Default;
+
+                Strategy ->
+                    Strategy
+            end
+    end.
+
 
 -spec(ack_enabled() -> boolean()).
 ack_enabled() ->
