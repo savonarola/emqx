@@ -2277,7 +2277,7 @@ end}.
 ]}.
 
 %% @doc Per group Shared Subscription Dispatch Strategy
-{mapping, "broker.$name.shared_subscription_strategy", "emqx.groups", [
+{mapping, "broker.$name.shared_subscription_strategy", "emqx.shared_subscription_strategy_per_group", [
   {default, round_robin},
   {datatype,
    {enum,

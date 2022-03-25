@@ -136,7 +136,7 @@ dispatch(Group, Topic, Delivery = #delivery{message = Msg}, FailedSubs) ->
 -spec(strategy(emqx_topic:group()) -> strategy()).
 strategy(Group) ->
     case erlang:get(per_group_shared_sub_strategy) of
-        #{Group => Strategy} ->
+        #{Group := Strategy} ->
             Strategy;
 
         undefined ->
