@@ -322,22 +322,43 @@ t_local(_) ->
     Topic = <<"local_foo/bar">>,
     ClientId1 = <<"ClientId1">>,
     ClientId2 = <<"ClientId2">>,
+    Node = start_slave('local_shared_sub_test', [emqx_modules, emqx_management]),
 
     {ok, ConnPid1} = emqtt:start_link([{clientid, ClientId1}]),
-    {ok, _} = emqtt:connect(ConnPid1),
 
-    Node = start_slave('local_shared_sub_test', [emqx_modules, emqx_management]),
-    {ok, ConnPid2} = rpc:call(Node, emqtt, start_link, [[{clientid, ClientId2}, {owner, Me}]]),
+    ct:pal("Here"),
+    erlang:spawn(Node, fun() ->
+                               Res = emqtt:start_link([{clientid, ClientId2}, {owner, Me}]),
+                               (Me ! Res),
+                               _ = receive
+                                   _ -> ok
+                               end
+                       end),
+    ct:pal("Here"),
+
+    ConnPid2 = receive
+                   {ok, ReceivedConnPid} -> ReceivedConnPid
+               after 5000 -> exit(fuck)
+               end,
+
     ct:pal("ConnPid2: ~p", [ConnPid2]),
     ct:pal("ConnPid2 alive? ~p", [rpc:call(Node, erlang, is_process_alive, [ConnPid2])]),
+    ct:sleep(10),
+    ct:pal("ConnPid2 alive? another ~p", [rpc:call(Node, erlang, is_process_alive, [ConnPid2])]),
+    ct:sleep(5000),
+    ct:pal("ConnPid2 alive? second ~p", [rpc:call(Node, erlang, is_process_alive, [ConnPid2])]),
 
+    {ok, _} = emqtt:connect(ConnPid1),
     {ok, _} = rpc:call(Node, emqtt, connect, [ConnPid2]),
 
     Message1 = emqx_message:make(ClientId1, 0, Topic, <<"hello1">>),
     Message2 = emqx_message:make(ClientId1, 0, Topic, <<"hello2">>),
 
-    emqtt:subscribe(ConnPid1, {<<"$share/local_group/foo/bar">>, 0}),
-    rpc:call(Node, emqtt, subscribe, [ConnPid2, {<<"$share/local_group/foo/bar">>, 0}]),
+    emqtt:subscribe(ConnPid1, {<<"$share/local_group/local_foo/bar">>, 0}),
+
+    rpc:call(Node, emqtt, subscribe, [ConnPid2, {<<"$share/local_group/local_foo/bar">>, 0}]),
+
+    ct:pal("ConnPid2 alive? third ~p", [rpc:call(Node, erlang, is_process_alive, [ConnPid2])]),
     ct:sleep(100),
 
     WaitF = fun(ExpectedPayload) ->
