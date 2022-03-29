@@ -32,7 +32,7 @@
 -define(ack, shared_sub_ack).
 -define(no_ack, no_ack).
 
-all() -> emqx_ct:all(?SUITE).
+all() -> [t_local].
 
 init_per_suite(Config) ->
     net_kernel:start(['master@127.0.0.1', longnames]),
@@ -82,7 +82,7 @@ t_random_basic(_) ->
     receive
         {deliver, Topic0, #message{from = ClientId0,
                                    payload = Payload0}} = M->
-        ct:pal("==== received: ~p", [M]),
+        ct:print("==== received: ~p", [M]),
         ?assertEqual(Topic, Topic0),
         ?assertEqual(ClientId, ClientId0),
         ?assertEqual(Payload, Payload0)
@@ -289,9 +289,10 @@ test_two_messages(Strategy, WithAck) ->
 last_message(ExpectedPayload, Pids) ->
     receive
         {publish, #{client_pid := Pid, payload := ExpectedPayload}} ->
-            ct:pal("~p ====== ~p", [Pids, Pid]),
+            ct:print("last_message: ~p ====== ~p, payload=~p", [Pids, Pid, ExpectedPayload]),
             {true, Pid}
     after 100 ->
+        ct:print("not yet"),
         <<"not yet?">>
     end.
 
@@ -318,66 +319,30 @@ t_uncovered_func(_) ->
 t_local(_) ->
     ok = ensure_group_config([{<<"local_group">>, local}]),
 
-    Me = self(),
     Topic = <<"local_foo/bar">>,
     ClientId1 = <<"ClientId1">>,
     ClientId2 = <<"ClientId2">>,
-    Node = start_slave('local_shared_sub_test', [emqx_modules, emqx_management]),
+    Node = start_slave('local_shared_sub_test', []),
 
     {ok, ConnPid1} = emqtt:start_link([{clientid, ClientId1}]),
-
-    ct:pal("Here"),
-    erlang:spawn(Node, fun() ->
-                               Res = emqtt:start_link([{clientid, ClientId2}, {owner, Me}]),
-                               (Me ! Res),
-                               _ = receive
-                                   _ -> ok
-                               end
-                       end),
-    ct:pal("Here"),
-
-    ConnPid2 = receive
-                   {ok, ReceivedConnPid} -> ReceivedConnPid
-               after 5000 -> exit(fuck)
-               end,
-
-    ct:pal("ConnPid2: ~p", [ConnPid2]),
-    ct:pal("ConnPid2 alive? ~p", [rpc:call(Node, erlang, is_process_alive, [ConnPid2])]),
-    ct:sleep(10),
-    ct:pal("ConnPid2 alive? another ~p", [rpc:call(Node, erlang, is_process_alive, [ConnPid2])]),
-    ct:sleep(5000),
-    ct:pal("ConnPid2 alive? second ~p", [rpc:call(Node, erlang, is_process_alive, [ConnPid2])]),
+    {ok, ConnPid2} = emqtt:start_link([{clientid, ClientId2}, {port, 11884}]),
 
     {ok, _} = emqtt:connect(ConnPid1),
-    {ok, _} = rpc:call(Node, emqtt, connect, [ConnPid2]),
+    {ok, _} = emqtt:connect(ConnPid2),
 
     Message1 = emqx_message:make(ClientId1, 0, Topic, <<"hello1">>),
     Message2 = emqx_message:make(ClientId1, 0, Topic, <<"hello2">>),
 
     emqtt:subscribe(ConnPid1, {<<"$share/local_group/local_foo/bar">>, 0}),
 
-    rpc:call(Node, emqtt, subscribe, [ConnPid2, {<<"$share/local_group/local_foo/bar">>, 0}]),
-
-    ct:pal("ConnPid2 alive? third ~p", [rpc:call(Node, erlang, is_process_alive, [ConnPid2])]),
-    ct:sleep(100),
-
-    WaitF = fun(ExpectedPayload) ->
-                    case last_message(ExpectedPayload, [ConnPid1, ConnPid2]) of
-                        {true, Pid} ->
-                            Me ! {subscriber, Pid},
-                            true;
-                        Other ->
-                            Other
-                    end
-            end,
+    emqtt:subscribe(ConnPid2, {<<"$share/local_group/local_foo/bar">>, 0}),
 
     emqx:publish(Message1),
-    WaitF(<<"hello1">>),
-    UsedSubPid1 = receive {subscriber, P1} -> P1 end,
+    {true, UsedSubPid1} = last_message(<<"hello1">>, [ConnPid1, ConnPid2]),
 
-    rpc:call(Node, emqx, publish, [Message2]),
-    WaitF(<<"hello2">>),
-    UsedSubPid2 = receive {subscriber, P2} -> P2 end,
+    Res = rpc:call(Node, emqx, publish, [Message2]),
+    ct:print("remote emqx:publish result=~p", [Res]),
+    {true, UsedSubPid2} = last_message(<<"hello2">>, [ConnPid1, ConnPid2]),
 
     ?assert(UsedSubPid1 =/= UsedSubPid2),
 
@@ -447,24 +412,22 @@ is_lib(Path) ->
 setup_node(Node, Apps) ->
     EnvHandler =
         fun(emqx) ->
-                application:set_env(emqx, listeners, []),
+                application:set_env(
+                  emqx,
+                  listeners,
+                  [#{listen_on => {{127,0,0,1},11884},
+                     name => "internal",
+                     opts => [{zone,internal}],
+                     proto => tcp}]),
                 application:set_env(gen_rpc, port_discovery, manual),
-                ok;
-           (emqx_management) ->
-                application:set_env(emqx_management, listeners, []),
-                ok;
-           (emqx_dashboard) ->
-                application:set_env(emqx_dashboard, listeners, []),
                 ok;
            (_) ->
                 ok
         end,
 
     [ok = rpc:call(Node, application, load, [App]) || App <- [gen_rpc, emqx | Apps]],
-    ok = rpc:call(Node, emqx_ct_helpers, start_apps, [Apps, EnvHandler]),
+    ok = rpc:call(Node, emqx_ct_helpers, start_apps, [[emqx | Apps], EnvHandler]),
 
     rpc:call(Node, ekka, join, [node()]),
-    rpc:call(Node, application, stop, [emqx_dashboard]),
-    rpc:call(Node, application, start, [emqx_dashboard]),
 
     ok.
