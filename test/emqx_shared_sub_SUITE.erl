@@ -35,6 +35,7 @@
 all() -> emqx_ct:all(?SUITE).
 
 init_per_suite(Config) ->
+    net_kernel:start(['master@127.0.0.1', longnames]),
     emqx_ct_helpers:boot_modules(all),
     emqx_ct_helpers:start_apps([]),
     Config.
@@ -314,6 +315,55 @@ t_uncovered_func(_) ->
     ignored = emqx_shared_sub ! ignored,
     {mnesia_table_event, []} = emqx_shared_sub ! {mnesia_table_event, []}.
 
+t_local(_) ->
+    ok = ensure_group_config([{<<"local_group">>, local}]),
+
+    Me = self(),
+    Topic = <<"local_foo/bar">>,
+    ClientId1 = <<"ClientId1">>,
+    ClientId2 = <<"ClientId2">>,
+
+    {ok, ConnPid1} = emqtt:start_link([{clientid, ClientId1}]),
+    {ok, _} = emqtt:connect(ConnPid1),
+
+    Node = start_slave('local_shared_sub_test', [emqx_modules, emqx_management]),
+    {ok, ConnPid2} = rpc:call(Node, emqtt, start_link, [[{clientid, ClientId2}, {owner, Me}]]),
+    ct:pal("ConnPid2: ~p", [ConnPid2]),
+    ct:pal("ConnPid2 alive? ~p", [rpc:call(Node, erlang, is_process_alive, [ConnPid2])]),
+
+    {ok, _} = rpc:call(Node, emqtt, connect, [ConnPid2]),
+
+    Message1 = emqx_message:make(ClientId1, 0, Topic, <<"hello1">>),
+    Message2 = emqx_message:make(ClientId1, 0, Topic, <<"hello2">>),
+
+    emqtt:subscribe(ConnPid1, {<<"$share/local_group/foo/bar">>, 0}),
+    rpc:call(Node, emqtt, subscribe, [ConnPid2, {<<"$share/local_group/foo/bar">>, 0}]),
+    ct:sleep(100),
+
+    WaitF = fun(ExpectedPayload) ->
+                    case last_message(ExpectedPayload, [ConnPid1, ConnPid2]) of
+                        {true, Pid} ->
+                            Me ! {subscriber, Pid},
+                            true;
+                        Other ->
+                            Other
+                    end
+            end,
+
+    emqx:publish(Message1),
+    WaitF(<<"hello1">>),
+    UsedSubPid1 = receive {subscriber, P1} -> P1 end,
+
+    rpc:call(Node, emqx, publish, [Message2]),
+    WaitF(<<"hello2">>),
+    UsedSubPid2 = receive {subscriber, P2} -> P2 end,
+
+    ?assert(UsedSubPid1 =/= UsedSubPid2),
+
+    emqtt:stop(ConnPid1),
+    emqtt:stop(ConnPid2),
+    ok.
+
 %%--------------------------------------------------------------------
 %% help functions
 %%--------------------------------------------------------------------
@@ -324,6 +374,10 @@ ensure_config(Strategy) ->
 ensure_config(Strategy, AckEnabled) ->
     application:set_env(emqx, shared_subscription_strategy, Strategy),
     application:set_env(emqx, shared_dispatch_ack_enabled, AckEnabled),
+    ok.
+
+ensure_group_config(Group2Strategy) ->
+    application:set_env(emqx, shared_subscription_strategy_per_group, Group2Strategy),
     ok.
 
 subscribed(Group, Topic, Pid) ->
@@ -343,3 +397,53 @@ recv_msgs(Count, Msgs) ->
         Msgs
     end.
 
+start_slave(Name, Apps) ->
+    {ok, Node} = ct_slave:start(list_to_atom(atom_to_list(Name) ++ "@" ++ host()),
+                                [{kill_if_fail, true},
+                                 {monitor_master, true},
+                                 {init_timeout, 10000},
+                                 {startup_timeout, 10000},
+                                 {erl_flags, ebin_path()}]),
+
+    pong = net_adm:ping(Node),
+    setup_node(Node, Apps),
+    Node.
+
+stop_slave(Node, Apps) ->
+    [ok = Res || Res <- rpc:call(Node, emqx_ct_helpers, stop_apps, [Apps])],
+    rpc:call(Node, ekka, leave, []),
+    ct_slave:stop(Node).
+
+host() ->
+    [_, Host] = string:tokens(atom_to_list(node()), "@"), Host.
+
+ebin_path() ->
+    string:join(["-pa" | lists:filter(fun is_lib/1, code:get_path())], " ").
+
+is_lib(Path) ->
+    string:prefix(Path, code:lib_dir()) =:= nomatch.
+
+setup_node(Node, Apps) ->
+    EnvHandler =
+        fun(emqx) ->
+                application:set_env(emqx, listeners, []),
+                application:set_env(gen_rpc, port_discovery, manual),
+                ok;
+           (emqx_management) ->
+                application:set_env(emqx_management, listeners, []),
+                ok;
+           (emqx_dashboard) ->
+                application:set_env(emqx_dashboard, listeners, []),
+                ok;
+           (_) ->
+                ok
+        end,
+
+    [ok = rpc:call(Node, application, load, [App]) || App <- [gen_rpc, emqx | Apps]],
+    ok = rpc:call(Node, emqx_ct_helpers, start_apps, [Apps, EnvHandler]),
+
+    rpc:call(Node, ekka, join, [node()]),
+    rpc:call(Node, application, stop, [emqx_dashboard]),
+    rpc:call(Node, application, start, [emqx_dashboard]),
+
+    ok.
