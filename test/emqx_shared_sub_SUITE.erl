@@ -331,7 +331,7 @@ t_local(_) ->
     {ok, _} = emqtt:connect(ConnPid2),
 
     Message1 = emqx_message:make(ClientId1, 0, Topic, <<"hello1">>),
-    Message2 = emqx_message:make(ClientId1, 0, Topic, <<"hello2">>),
+    Message2 = emqx_message:make(ClientId2, 0, Topic, <<"hello2">>),
 
     emqtt:subscribe(ConnPid1, {<<"$share/local_group/local_foo/bar">>, 0}),
 
