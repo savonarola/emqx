@@ -19,6 +19,7 @@
 %% APIs
 -export([ match/3
         , compile/1
+        , feed_var/2
         ]).
 
 -export_type([rule/0]).

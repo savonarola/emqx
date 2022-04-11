@@ -31,15 +31,24 @@
 start(_Type, _Args) ->
     {ok, Sup} = supervisor:start_link({local, ?MODULE}, ?MODULE, []),
 
-    {ok, Pid} = start_auth_server(jwks_svr_options()),
+    {ok, _} = start_jwt_cache(jwt_cache_options()),
+    {ok, _} = start_auth_server(jwks_svr_options()),
     ok = emqx_auth_jwt:register_metrics(),
+
     AuthEnv = auth_env(),
+    _ = emqx:hook('client.authenticate', {emqx_auth_jwt, check_auth, [AuthEnv]}),
+   
+    AclEnv = acl_env(),
+    _ = emqx:hook('client.check_acl', {emqx_auth_jwt, check_acl, [AclEnv]}),
 
-    _ = emqx:hook('client.authenticate', {emqx_auth_jwt, check, [AuthEnv]}),
-    {ok, Sup, AuthEnv}.
+    _ = emqx:hook('client.disconnected', {emqx_auth_jwt, client_disconnected, []}),
 
-stop(AuthEnv) ->
-    emqx:unhook('client.authenticate', {emqx_auth_jwt, check, [AuthEnv]}).
+    {ok, Sup}.
+
+stop(_State) ->
+    emqx:unhook('client.authenticate', {emqx_auth_jwt, check_auth}),
+    emqx:unhook('client.check_acl', {emqx_auth_jwt, check_acl}),
+    emqx:unhook('client.disconnected', {emqx_auth_jwt, client_disconnected}).
 
 %%--------------------------------------------------------------------
 %% Dummy supervisor
@@ -57,6 +66,15 @@ start_auth_server(Options) ->
              modules => [emqx_auth_jwt_svr]},
     supervisor:start_child(?MODULE, Spec).
 
+start_jwt_cache(Options) ->
+    Spec = #{id => jwt_cache,
+             start => {emqx_auth_jwt_cache, start_link, [Options]},
+             restart => permanent,
+             shutdown => brutal_kill,
+             type => worker,
+             modules => [emqx_auth_jwt_cache]},
+    supervisor:start_child(?MODULE, Spec).
+
 %%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
@@ -67,6 +85,14 @@ auth_env() ->
     #{ from => env(from, password)
      , checklists => Checklists
      }.
+
+acl_env() ->
+    #{acl_claim_name => env(acl_claim_name, <<"acl">>)}.
+
+jwt_cache_options() ->
+    [{K, V} || {K, V}
+             <- [{interval, env(jwt_cache_cleanup_interval, undefined)}],
+             V /= undefined].
 
 jwks_svr_options() ->
     [{K, V} || {K, V}

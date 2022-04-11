@@ -73,8 +73,7 @@ init([Options]) ->
     ok = jose:json_module(jiffy),
     _ = ets:new(?TAB, [set, protected, named_table]),
     {Static, Remote} = do_init_jwks(Options),
-    true = ets:insert(?TAB, {static, Static}),
-    true = ets:insert(?TAB, {remote, Remote}),
+    true = ets:insert(?TAB, [{static, Static}, {remote, Remote}]),
     Intv = proplists:get_value(interval, Options, ?INTERVAL),
     {ok, reset_timer(
            #state{
