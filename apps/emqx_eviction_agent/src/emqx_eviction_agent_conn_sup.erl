@@ -14,7 +14,7 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_eviction_agent_sup).
+-module(emqx_eviction_agent_conn_sup).
 
 -behaviour(supervisor).
 
@@ -26,18 +26,17 @@ start_link(Env) ->
 	supervisor:start_link({local, ?MODULE}, ?MODULE, [Env]).
 
 init([_Env]) ->
-    Childs = [child_spec(worker, emqx_eviction_agent, []),
-              child_spec(supervisor, emqx_eviction_agent_conn_sup, [#{}])],
+    Childs = [],
     {ok, {
        {one_for_one, 10, 3600},
        Childs}
     }.
 
-child_spec(Type, Mod, Args) ->
-    #{id => Mod,
-      start => {Mod, start_link, Args},
-      restart => permanent,
-      shutdown => 5000,
-      type => Type,
-      modules => [Mod]
-     }.
+% child_spec(Mod, Args) ->
+%     #{id => Mod,
+%       start => {Mod, start_link, Args},
+%       restart => permanent,
+%       shutdown => 5000,
+%       type => worker,
+%       modules => [Mod]
+%      }.
