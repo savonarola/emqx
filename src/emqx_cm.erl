@@ -63,9 +63,8 @@
         ]).
 
 -export([all_channels/0,
-         all_channel_count/0,
-         all_connection_table/0,
-         all_connection_count/0]).
+         channel_with_session_table/0,
+         live_connection_table/0]).
 
 %% gen_server callbacks
 -export([ init/1
@@ -433,12 +432,23 @@ all_channels() ->
     Pat = [{{'_', '$1'}, [], ['$1']}],
     ets:select(?CHAN_TAB, Pat).
 
-%% @doc Get all channel count
-all_channel_count() ->
-    ets:info(?CHAN_TAB, size).
+%% @doc Get clientinfo for all clients with sessions
+channel_with_session_table() ->
+    Ms = ets:fun2ms(
+           fun({{ClientId, _ChanPid},
+                Info,
+                _Stats}) ->
+                   {ClientId, Info}
+           end),
+    Table = ets:table(?CHAN_INFO_TAB, [{traverse, {select, Ms}}]),
+    qlc:q([ {ClientId, ConnInfo, ClientInfo}
+            || {ClientId,
+                #{clientinfo := ClientInfo,
+                  conninfo := #{clean_start := false} = ConnInfo}} <- Table
+          ]).
 
 %% @doc Get all local connection query handle
-all_connection_table() ->
+live_connection_table() ->
     Ms = ets:fun2ms(
            fun({{ClientId, ChanPid}, _}) ->
                    {ClientId, ChanPid}
@@ -446,14 +456,10 @@ all_connection_table() ->
     Table = ets:table(?CHAN_CONN_TAB, [{traverse, {select, Ms}}]),
     qlc:q([{ClientId, ChanPid} || {ClientId, ChanPid} <- Table, is_channel_connected(ClientId, ChanPid)]).
 
-%% @doc Get all local connection count
-all_connection_count() ->
-    qlc:fold(fun(_, Acc) -> Acc + 1 end, 0, all_connection_table()).
-
 is_channel_connected(ClientId, ChanPid) when node(ChanPid) =:= node() ->
     case get_chan_info(ClientId, ChanPid) of
-        #{conn_state := connected} -> true;
-        _ -> false
+        #{conn_state := disconnected} -> false;
+        _ -> true
     end;
 is_channel_connected(_ClientId, _ChanPid) -> false.
 

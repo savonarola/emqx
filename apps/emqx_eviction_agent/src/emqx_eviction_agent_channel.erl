@@ -22,10 +22,16 @@
 -include_lib("emqx/include/logger.hrl").
 -include_lib("emqx/include/types.hrl").
 
+-include_lib("snabbkaffe/include/snabbkaffe.hrl").
+
 -logger_header("[Evicted Channel]").
 
 -export([start_link/1,
-         start_supervised/1
+         start_supervised/1,
+         call/2,
+         call/3,
+         cast/2,
+         stop/1
         ]).
 
 -export([init/1,
@@ -58,31 +64,55 @@ start_supervised(Opts) ->
 
 -spec start_link(opts()) -> startlink_ret().
 start_link(Opts) ->
-    gen_server:start_link(?MODULE, [Opts]).
+    gen_server:start_link(?MODULE, [Opts], []).
+
+-spec cast(pid(), term()) -> ok.
+cast(Pid, Req) ->
+    gen_server:cast(Pid, Req).
+
+-spec call(pid(), term()) -> term().
+call(Pid, Req) ->
+    call(Pid, Req, infinity).
+
+-spec call(pid(), term(), timeout()) -> term().
+call(Pid, Req, Timeout) ->
+    gen_server:call(Pid, Req, Timeout).
+
+-spec stop(pid()) -> ok.
+stop(Pid) ->
+    gen_server:stop(Pid).
 
 %%--------------------------------------------------------------------
 %% gen_server API
 %%--------------------------------------------------------------------
 
-init([#{conninfo := OldConnInfo, clientinfo := OldClientInfo}]) ->
+init([#{conninfo := OldConnInfo, clientinfo := #{clientid := ClientId} = OldClientInfo}]) ->
     process_flag(trap_exit, true),
     ClientInfo = clientinfo(OldClientInfo),
     ConnInfo = conninfo(OldConnInfo),
     case open_session(ConnInfo, ClientInfo) of
         {ok, Channel0} ->
-            set_expiry_timer(Channel0);
+            case set_expiry_timer(Channel0) of
+                {ok, Channel1} ->
+                    ?tp(debug,
+                        emqx_eviction_agent_channel_session_opened,
+                        #{clientid => ClientId}),
+                    {ok, Channel1, hibernate};
+                {error, _} = Error ->
+                    Error
+            end;
         {error, _} = Error ->
             Error
     end.
 
 handle_call(kick, _From, Channel) ->
-    {shutdown, kicked, ok, Channel};
+    {stop, kicked, ok, Channel};
 
 handle_call(discard, _From, Channel) ->
-    {shutdown, discarded, ok, Channel};
+    {stop, discarded, ok, Channel};
 
 handle_call({takeover, 'begin'}, _From, #{session := Session} = Channel) ->
-    {ok, Session, Channel#{takeover => true}};
+    {reply, Session, Channel#{takeover => true}};
 
 handle_call({takeover, 'end'}, _From, #{session := Session,
                                         pendings := Pendings} = Channel) ->
@@ -90,7 +120,7 @@ handle_call({takeover, 'end'}, _From, #{session := Session,
     %% TODO: Should not drain deliver here (side effect)
     Delivers = emqx_misc:drain_deliver(),
     AllPendings = lists:append(Delivers, Pendings),
-    {shutdown, takeovered, AllPendings, Channel};
+    {stop, normal, AllPendings, Channel};
 
 handle_call(list_acl_cache, _From, Channel) ->
     {reply, [], Channel};
@@ -107,7 +137,7 @@ handle_info(Deliver = {deliver, _Topic, _Msg}, Channel) ->
     {noreply, handle_deliver(Delivers, Channel)};
 
 handle_info(expire_session, Channel) ->
-    {shutdown, expired, Channel};
+    {stop, expired, Channel};
 
 handle_info(Info, Channel) ->
     ?LOG(error, "Unexpected info: ~p", [Info]),
@@ -117,11 +147,9 @@ handle_cast(Msg, Channel) ->
     ?LOG(error, "Unexpected cast: ~p", [Msg]),
     {noreply, Channel}.
 
-terminate({shutdown, Reason}, Channel)
-  when Reason =:= kicked; Reason =:= discarded; Reason =:= takeovered ->
-    do_terminate(Reason, Channel);
-terminate(Reason, Channel) ->
-    do_terminate(Reason, Channel).
+terminate(Reason, #{clientinfo := ClientInfo, session := Session} = Channel) ->
+    ok = cancel_expiry_timer(Channel),
+    emqx_session:terminate(ClientInfo, Reason, Session).
 
 code_change(_OldVsn, Channel, _Extra) ->
     {ok, Channel}.
@@ -153,9 +181,11 @@ handle_deliver(Delivers,
                  Session),
     Channel#{session => NSession}.
 
-do_terminate(Reason, #{expiry_timer := TRef, clientinfo := ClientInfo, session := Session}) ->
-    erlang:cancel_timer(TRef, [flush]),
-    emqx_session:terminate(ClientInfo, Reason, Session).
+cancel_expiry_timer(#{expiry_timer := TRef}) when is_reference(TRef) ->
+    _ = erlang:cancel_timer(TRef),
+    ok;
+cancel_expiry_timer(_) ->
+    ok.
 
 set_expiry_timer(#{conninfo := ConnInfo} = Channel) ->
     case maps:get(expiry_interval, ConnInfo) of
@@ -184,6 +214,7 @@ open_session(ConnInfo, #{clientid := ClientId} = ClientInfo) ->
                            Session),
                          Session),
             NChannel = Channel#{session => NSession},
+            ok = emqx_cm:insert_channel_info(ClientId, info(NChannel), []),
             {ok, NChannel};
         {error, Reason} = Error ->
             ?LOG(error, "Failed to open session due to ~p", [Reason]),
@@ -227,6 +258,13 @@ channel(ConnInfo, ClientInfo) ->
       takeover => false,
       resuming => false,
       pendings => []
+     }.
+
+info(Channel) ->
+    #{conninfo => maps:get(conninfo, Channel, undefined),
+      clientinfo => maps:get(clientinfo, Channel, undefined),
+      session => maps:get(session, Channel, undefined),
+      conn_state => disconnected
      }.
 
 ignore_local(ClientInfo, Delivers, Subscriber, Session) ->

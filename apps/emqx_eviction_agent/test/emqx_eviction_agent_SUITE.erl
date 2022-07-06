@@ -21,6 +21,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
+-include_lib("emqx/include/emqx_mqtt.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 all() ->
@@ -30,9 +31,15 @@ init_per_suite(Config) ->
     emqx_ct_helpers:start_apps([emqx_eviction_agent]),
     Config.
 
-end_per_suite(Config) ->
-    emqx_ct_helpers:stop_apps([emqx_eviction_agent]),
+end_per_suite(_Config) ->
+    emqx_ct_helpers:stop_apps([emqx_eviction_agent]).
+
+init_per_testcase(Config) ->
+    _ = emqx_eviction_agent:disable(foo),
     Config.
+
+end_per_testcase(_Config) ->
+    _ = emqx_eviction_agent:disable(foo).
 
 t_enable_disable(_Config) ->
     erlang:process_flag(trap_exit, true),
@@ -92,7 +99,7 @@ t_evict_connections_status(_Config) ->
     ok = emqx_eviction_agent:enable(foo, undefined),
 
     ?assertMatch(
-       {enabled, #{connections := 1, channels := _}},
+       {enabled, #{connections := 1, sessions := _}},
        emqx_eviction_agent:status()),
 
     ok = emqx_eviction_agent:evict_connections(1),
@@ -100,15 +107,78 @@ t_evict_connections_status(_Config) ->
     ct:sleep(100),
 
     ?assertMatch(
-       {enabled, #{connections := 0, channels := _}},
+       {enabled, #{connections := 0, sessions := _}},
        emqx_eviction_agent:status()),
 
     ok = emqx_eviction_agent:disable(foo).
 
+
+t_explicit_session_takeover(_Config) ->
+    erlang:process_flag(trap_exit, true),
+
+    {ok, C0} = emqtt_connect(<<"client_with_session">>, false),
+    {ok, _, _} = emqtt:subscribe(C0, <<"t1">>),
+
+    ok = emqx_eviction_agent:enable(foo, undefined),
+
+    ?assertEqual(
+       1,
+       emqx_eviction_agent:connection_count()),
+
+    ok = emqx_eviction_agent:evict_connections(1),
+
+    receive
+        {'EXIT', C0, {disconnected, ?RC_USE_ANOTHER_SERVER, _}} -> ok
+    after 1000 ->
+              ?assert(false, "Connection not evicted")
+    end,
+
+    ?assertEqual(
+       0,
+       emqx_eviction_agent:connection_count()),
+
+    ?assertEqual(
+       1,
+       emqx_eviction_agent:session_count()),
+
+    ?check_trace(
+       ?wait_async_action(
+          emqx_eviction_agent:evict_sessions(1, node()),
+          #{?snk_kind := emqx_eviction_agent_channel_session_opened},
+          1000),
+       fun(_Result, Trace) ->
+        ?assertMatch(
+           [#{clientid := <<"client_with_session">>} | _ ],
+           ?of_kind(emqx_eviction_agent_channel_session_opened, Trace))
+       end),
+
+    ?assertEqual(
+       0,
+       emqx_eviction_agent:session_count()),
+
+    ok = emqx_eviction_agent:disable(foo),
+
+    {ok, C1} = emqtt_connect(),
+    emqtt:publish(C1, <<"t1">>, <<"MessageToEvictedSession">>),
+    ok = emqtt:disconnect(C1),
+
+    {ok, C2} = emqtt_connect(<<"client_with_session">>, false),
+
+    receive
+        {publish, #{payload := <<"MessageToEvictedSession">>,
+                    topic := <<"t1">>}} -> ok
+    after 1000 ->
+              ?assert(false, "Message `MessageToEvictedSession` is lost")
+    end,
+    ok = emqtt:disconnect(C2).
+
 emqtt_connect() ->
+    emqtt_connect(<<"client1">>, true).
+
+emqtt_connect(ClientId, CleanStart) ->
     {ok, C} = emqtt:start_link(
-                [{clientid, <<"client1">>},
-                 {clean_start, true},
+                [{clientid, ClientId},
+                 {clean_start, CleanStart},
                  {proto_ver, v5},
                  {properties, #{'Session-Expiry-Interval' => 60}}
                 ]),

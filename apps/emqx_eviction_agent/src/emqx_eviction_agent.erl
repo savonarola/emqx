@@ -27,7 +27,11 @@
          enable/2,
          disable/1,
          status/0,
-         evict_connections/1
+         connection_count/0,
+         session_count/0,
+         evict_connections/1,
+         evict_sessions/2,
+         evict_session_channel/3
         ]).
 
 -export([init/1,
@@ -85,6 +89,14 @@ evict_connections(N) ->
             {error, disabled}
     end.
 
+-spec evict_sessions(pos_integer(), node()) -> ok_or_error(disabled).
+evict_sessions(N, Node) ->
+    case enable_status() of
+        {enabled, _Kind, _ServerReference} ->
+            ok = do_evict_sessions(N, Node);
+        disabled ->
+            {error, disabled}
+    end.
 %%--------------------------------------------------------------------
 %% gen_server callbacks
 %%--------------------------------------------------------------------
@@ -173,17 +185,27 @@ enable_status() ->
 stats() ->
     #{
         connections => connection_count(),
-        channels => channel_count()
+        sessions => session_count()
      }.
 
 connection_table() ->
-    emqx_cm:all_connection_table().
+    emqx_cm:live_connection_table().
 
 connection_count() ->
-    emqx_cm:all_connection_count().
+    table_count(connection_table()).
 
-channel_count() ->
-    emqx_cm:all_channel_count().
+channel_with_session_table() ->
+    qlc:q([
+        Record
+        || {_, #{conn_mod := ConnMod}, _} = Record <- emqx_cm:channel_with_session_table(),
+           ConnMod =/= emqx_eviction_agent_channel
+    ]).
+
+session_count() ->
+    table_count(channel_with_session_table()).
+
+table_count(QH) ->
+    qlc:fold(fun(_, Acc) -> Acc + 1 end, 0, QH).
 
 take_connections(N) ->
     ChanQH = qlc:q([ChanPid || {_ClientId, ChanPid} <- connection_table()]),
@@ -192,6 +214,12 @@ take_connections(N) ->
     ok = qlc:delete_cursor(ChanPidCursor),
     ChanPids.
 
+take_channel_with_sessions(N) ->
+    ChanPidCursor = qlc:cursor(channel_with_session_table()),
+    Channels = qlc:next_answers(ChanPidCursor, N),
+    ok = qlc:delete_cursor(ChanPidCursor),
+    Channels.
+
 do_evict_connections(N, ServerReference) when N > 0 ->
     ChanPids = take_connections(N),
     ok = lists:foreach(
@@ -199,6 +227,32 @@ do_evict_connections(N, ServerReference) when N > 0 ->
                    disconnect_channel(ChanPid, ServerReference)
            end,
            ChanPids).
+
+do_evict_sessions(N, Node) when N > 0 ->
+    Channels = take_channel_with_sessions(N),
+    ok = lists:foreach(
+           fun({ClientId, ConnInfo, ClientInfo}) ->
+                   evict_session_channel(Node, ClientId, ConnInfo, ClientInfo)
+           end,
+           Channels).
+
+evict_session_channel(Node, ClientId, ConnInfo, ClientInfo) ->
+    ?LOG(warning, "Evicting client=~p to node=~p, conninfo=~p, clientinfo=~p",
+         [ClientId, Node, ConnInfo, ClientInfo]),
+    case rpc:call(Node, ?MODULE, evict_session_channel, [ClientId, ConnInfo, ClientInfo]) of
+        {badrpc, Reason} -> {error, Reason};
+        Res -> Res
+    end.
+
+evict_session_channel(ClientId, ConnInfo, ClientInfo) ->
+    ?LOG(warning, "Taking up client=~p, conninfo=~p, clientinfo=~p",
+         [ClientId, ConnInfo, ClientInfo]),
+    Result = emqx_eviction_agent_channel:start_supervised(
+               #{conninfo => ConnInfo,
+                 clientinfo => ClientInfo}),
+    ?LOG(warning, "Taking up client=~p, result=~p",
+         [ClientId, Result]),
+    Result.
 
 disconnect_channel(ChanPid, ServerReference) ->
     ChanPid ! {disconnect,
