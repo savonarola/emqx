@@ -56,7 +56,7 @@
 -type server_reference() :: binary() | undefined.
 -type status() :: {enabled, conn_stats()} | disabled.
 -type conn_stats() :: #{connections := non_neg_integer(),
-                        channels := non_neg_integer()}.
+                        sessions := non_neg_integer()}.
 -type kind() :: atom().
 
 -spec start_link() -> startlink_ret().
@@ -195,11 +195,7 @@ connection_count() ->
     table_count(connection_table()).
 
 channel_with_session_table() ->
-    qlc:q([
-        Record
-        || {_, #{conn_mod := ConnMod}, _} = Record <- emqx_cm:channel_with_session_table(),
-           ConnMod =/= emqx_eviction_agent_channel
-    ]).
+    emqx_cm:channel_with_session_table().
 
 session_count() ->
     table_count(channel_with_session_table()).

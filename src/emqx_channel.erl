@@ -22,6 +22,8 @@
 -include("logger.hrl").
 -include("types.hrl").
 
+-include_lib("snabbkaffe/include/snabbkaffe.hrl").
+
 -logger_header("[Channel]").
 
 -ifdef(TEST).
@@ -957,11 +959,15 @@ handle_call({takeover, 'begin'}, Channel = #channel{session = Session}) ->
     reply(Session, Channel#channel{takeover = true});
 
 handle_call({takeover, 'end'}, Channel = #channel{session  = Session,
-                                                  pendings = Pendings}) ->
+                                                  pendings = Pendings,
+                                                  conninfo = #{clientid := ClientId}}) ->
     ok = emqx_session:takeover(Session),
     %% TODO: Should not drain deliver here (side effect)
     Delivers = emqx_misc:drain_deliver(),
     AllPendings = lists:append(Delivers, Pendings),
+    ?tp(debug,
+        emqx_channel_takeover_end,
+        #{clientid => ClientId}),
     disconnect_and_shutdown(takeovered, AllPendings, Channel);
 
 handle_call(list_acl_cache, Channel) ->

@@ -94,15 +94,16 @@ init([#{conninfo := OldConnInfo, clientinfo := #{clientid := ClientId} = OldClie
         {ok, Channel0} ->
             case set_expiry_timer(Channel0) of
                 {ok, Channel1} ->
-                    ?tp(debug,
-                        emqx_eviction_agent_channel_session_opened,
-                        #{clientid => ClientId}),
+                    ?LOG(
+                       warning,
+                       "Channel initialized for client=~p on node=~p",
+                       [ClientId, node()]),
                     {ok, Channel1, hibernate};
-                {error, _} = Error ->
-                    Error
+                {error, Reason} ->
+                    {stop, Reason}
             end;
-        {error, _} = Error ->
-            Error
+        {error, Reason} ->
+            {stop, Reason}
     end.
 
 handle_call(kick, _From, Channel) ->
@@ -115,11 +116,15 @@ handle_call({takeover, 'begin'}, _From, #{session := Session} = Channel) ->
     {reply, Session, Channel#{takeover => true}};
 
 handle_call({takeover, 'end'}, _From, #{session := Session,
+                                        clientinfo := #{clientid := ClientId},
                                         pendings := Pendings} = Channel) ->
     ok = emqx_session:takeover(Session),
     %% TODO: Should not drain deliver here (side effect)
     Delivers = emqx_misc:drain_deliver(),
     AllPendings = lists:append(Delivers, Pendings),
+    ?tp(debug,
+        emqx_channel_takeover_end,
+        #{clientid => ClientId}),
     {stop, normal, AllPendings, Channel};
 
 handle_call(list_acl_cache, _From, Channel) ->
@@ -204,6 +209,7 @@ open_session(ConnInfo, #{clientid := ClientId} = ClientInfo) ->
             ?LOG(info, "No session for clientid=~p", [ClientId]),
             {error, no_session};
         {ok, #{session := Session, present := true, pendings := Pendings0}} ->
+            ?LOG(warning, "Session opened for client=~p on node=~p", [ClientId, node()]),
             Pendings1 = lists:usort(lists:append(Pendings0, emqx_misc:drain_deliver())),
             NSession = emqx_session:enqueue(
                          ClientInfo,
@@ -215,6 +221,7 @@ open_session(ConnInfo, #{clientid := ClientId} = ClientInfo) ->
                          Session),
             NChannel = Channel#{session => NSession},
             ok = emqx_cm:insert_channel_info(ClientId, info(NChannel), []),
+            ?LOG(warning, "Channel info updated for client=~p on node=~p", [ClientId, node()]),
             {ok, NChannel};
         {error, Reason} = Error ->
             ?LOG(error, "Failed to open session due to ~p", [Reason]),
@@ -229,6 +236,7 @@ conninfo(OldConnInfo) ->
                    peername,
                    peercert,
                    clientid,
+                   clean_start,
                    receive_maximum,
                    expiry_interval],
                   OldConnInfo),

@@ -18,7 +18,12 @@
 
 -export([save/1,
          clear/0,
-         read/0]).
+         read/1]).
+
+
+-ifdef(TEST).
+-export([evacuation_filepath/0]).
+-endif.
 
 -include("emqx_node_rebalance.hrl").
 -include_lib("emqx/include/types.hrl").
@@ -27,17 +32,28 @@
 %% APIs
 %%--------------------------------------------------------------------
 
--type start_opts() :: #{redirect_to => emqx_eviction_agent:server_reference(),
-                        conn_evict_rate => integer()}.
+%% do not persist `migrate_to`:
+%% * after restart there is nothing to migrate
+%% * this value may be invalid after node was offline
+-type start_opts() :: #{server_reference => emqx_eviction_agent:server_reference(),
+                        conn_evict_rate => pos_integer(),
+                        sess_evict_rate => pos_integer(),
+                        wait_takeover => pos_integer()
+                       }.
 
 -spec save(start_opts()) -> ok_or_error(term()).
-save(#{conn_evict_rate := ConnEvictRate, server_reference := ServerReference} = Data)
-  when is_integer(ConnEvictRate) andalso
-       (is_binary(ServerReference) orelse ServerReference =:= undefined) ->
+save(#{server_reference := ServerReference,
+       conn_evict_rate := ConnEvictRate,
+       sess_evict_rate := SessEvictRate,
+       wait_takeover := WaitTakeover} = Data)
+  when (is_binary(ServerReference) orelse ServerReference =:= undefined) andalso
+       is_integer(ConnEvictRate) andalso ConnEvictRate > 0 andalso
+       is_integer(SessEvictRate) andalso SessEvictRate > 0 andalso
+       is_integer(WaitTakeover) andalso WaitTakeover >= 0 ->
     Filepath = evacuation_filepath(),
     case filelib:ensure_dir(Filepath) of
         ok ->
-            JsonData = emqx_json:encode(Data, [pretty]),
+            JsonData = emqx_json:encode(prepare_for_encode(Data), [pretty]),
             file:write_file(Filepath, JsonData);
         {error, _} = Error -> Error
     end.
@@ -46,23 +62,15 @@ save(#{conn_evict_rate := ConnEvictRate, server_reference := ServerReference} = 
 clear() ->
     file:delete(evacuation_filepath()).
 
--spec read() -> {ok, start_opts()} | none.
-read() ->
+-spec read(start_opts()) -> {ok, start_opts()} | none.
+read(DefaultOpts) ->
     case file:read_file(evacuation_filepath()) of
         {ok, Data} ->
             case emqx_json:safe_decode(Data, [return_maps]) of
                 {ok, Map} when is_map(Map) ->
-                    {ok, #{
-                           conn_evict_rate =>
-                                maps:get(<<"conn_evict_rate">>, Map, ?DEFAULT_CONN_EVICT_RATE),
-                           server_reference =>
-                                maps:get(<<"server_reference">>, Map, undefined)
-                          }};
+                    {ok, map_to_opts(DefaultOpts, Map)};
                 _NotAMap ->
-                    {ok, #{
-                           conn_evict_rate => ?DEFAULT_CONN_EVICT_RATE,
-                           server_reference => undefined
-                          }}
+                    {ok, DefaultOpts}
             end;
         {error, _} ->
             none
@@ -71,6 +79,23 @@ read() ->
 %%--------------------------------------------------------------------
 %% Internal funcs
 %%--------------------------------------------------------------------
+
+prepare_for_encode(#{server_reference := undefined} = Data) ->
+    Data#{server_reference => null};
+prepare_for_encode(Data) -> Data.
+
+format_after_decode(#{server_reference := null} = Data) ->
+    Data#{server_reference => undefined};
+format_after_decode(Data) -> Data.
+
+map_to_opts(DefaultOpts, Map) ->
+    format_after_decode(
+      map_to_opts(
+        maps:to_list(DefaultOpts), Map, #{})).
+
+map_to_opts([], _Map, Opts) -> Opts;
+map_to_opts([{Key, DefaultVal} | Rest], Map, Opts) ->
+    map_to_opts(Rest, Map, Opts#{Key => maps:get(atom_to_binary(Key), Map, DefaultVal)}).
 
 evacuation_filepath() ->
     filename:join([emqx:get_env(data_dir), ?EVACUATION_FILENAME]).

@@ -15,4 +15,7 @@
 %%--------------------------------------------------------------------
 
 -define(DEFAULT_CONN_EVICT_RATE, 500).
+-define(DEFAULT_SESS_EVICT_RATE, 500).
+-define(DEFAULT_WAIT_TAKEOVER, 60). %% sec
+
 -define(EVACUATION_FILENAME, <<".evacuation">>).

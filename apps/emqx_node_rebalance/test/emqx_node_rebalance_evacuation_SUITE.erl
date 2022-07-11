@@ -106,7 +106,7 @@ t_status_evict(_Config) ->
     ?check_trace(
        ?wait_async_action(
           emqx_node_rebalance_evacuation:start(opts()),
-          #{?snk_kind := node_evacuation_evict},
+          #{?snk_kind := node_evacuation_evict_conn},
           1000),
        fun(_Result, _Trace) -> ok end),
 

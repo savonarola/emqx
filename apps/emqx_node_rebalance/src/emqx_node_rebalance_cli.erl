@@ -69,7 +69,12 @@ cli(["stop"]) ->
 
 cli(_) ->
     emqx_ctl:usage(
-      [{"rebalance start --evacuation \n    [--redirect-to \"Host1:Port1 Host2:Port2 ...\"]\n    [--conn-evict-rate ConnPerSec]",
+      [{"rebalance start --evacuation \\\n"
+        "    [--redirect-to \"Host1:Port1 Host2:Port2 ...\"] \\\n"
+        "    [--conn-evict-rate ConnPerSec] \\\n"
+        "    [--migrate-to \"node1@host1 node2@host2\"] \\\n"
+        "    [--wait-takeover 60] \\\n"
+        "    [--sess-evict-rate 50]",
         "Start current node evacuation with optional server redirect to the specified servers"},
 
        {"rebalance status",
@@ -98,6 +103,12 @@ collect_args(["--redirect-to", ServerReference | Args], Map) ->
     collect_args(Args, Map#{"--redirect-to" => ServerReference});
 collect_args(["--conn-evict-rate", ConnEvictRate | Args], Map) ->
     collect_args(Args, Map#{"--conn-evict-rate" => ConnEvictRate});
+collect_args(["--migrate-to", MigrateTo | Args], Map) ->
+    collect_args(Args, Map#{"--migrate-to" => MigrateTo});
+collect_args(["--wait-takeover", WaitTakeover | Args], Map) ->
+    collect_args(Args, Map#{"--wait-takeover" => WaitTakeover});
+collect_args(["--sess-evict-rate", SessEvictRate | Args], Map) ->
+    collect_args(Args, Map#{"--sess-evict-rate" => SessEvictRate});
 collect_args(Args, _Map) ->
     {error, io_lib:format("unknown arguments: ~p", [Args])}.
 
@@ -107,12 +118,32 @@ validate_evacuation([{"--evacuation", _} | Rest], Map) ->
     validate_evacuation(Rest, Map);
 validate_evacuation([{"--redirect-to", ServerReference} | Rest], Map) ->
     validate_evacuation(Rest, Map#{server_reference => list_to_binary(ServerReference)});
-validate_evacuation([{"--conn-evict-rate", ConnEvictRate} | Rest], Map) ->
-    case string:to_integer(ConnEvictRate) of
-        {Int, ""} when Int > 0 ->
-           validate_evacuation(Rest, Map#{conn_evict_rate => Int});
-        _ ->
-            {error, "invalid --conn-evict-rate value"}
+validate_evacuation([{"--conn-evict-rate", _} | _] = Opts, Map) ->
+    validate_pos_int(conn_evict_rate, Opts, Map);
+validate_evacuation([{"--sess-evict-rate", _} | _] = Opts, Map) ->
+    validate_pos_int(sess_evict_rate, Opts, Map);
+validate_evacuation([{"--wait-takeover", _} | _] = Opts, Map) ->
+    validate_pos_int(wait_takeover, Opts, Map);
+validate_evacuation([{"--migrate-to", MigrateTo} | Rest], Map) ->
+    Nodes = lists:map(fun list_to_atom/1, string:tokens(MigrateTo, ", ")),
+    case lists:partition(fun is_node_available/1, Nodes) of
+        {[], []} ->
+            {error, "invalid --migrate-to, no nodes"};
+        {Nodes, []} ->
+            validate_evacuation(Rest, Map#{migrate_to => Nodes});
+        {_Nodes, UnavailNodes} ->
+            {error, io_lib:format("invalid --migrate-to, unavailable nodes: ~p", [UnavailNodes])}
     end;
 validate_evacuation(Rest, _Map) ->
     {error, io_lib:format("unknown evacuation arguments: ~p", [Rest])}.
+
+is_node_available(Node) ->
+    net_adm:ping(Node) =:= pong.
+
+validate_pos_int(Name, [{OptionName, Value} | Rest], Map) ->
+    case string:to_integer(Value) of
+        {Int, ""} when Int > 0 ->
+           validate_evacuation(Rest, Map#{Name => Int});
+        _ ->
+            {error, "invalid " ++ OptionName ++ " value"}
+    end.
