@@ -35,14 +35,17 @@ end_per_suite(_Config) ->
     emqx_ct_helpers:stop_apps([emqx_eviction_agent]).
 
 init_per_testcase(t_explicit_session_takeover, Config) ->
-    Node = start_slave(evacuate),
+    _ = emqx_eviction_agent:disable(test_eviction),
+    Node = emqx_node_helpers:start_slave(
+             evacuate,
+             #{start_apps => [emqx, emqx_eviction_agent]}),
     [{evacuate_node, Node} | Config];
 init_per_testcase(_TestCase, Config) ->
     _ = emqx_eviction_agent:disable(test_eviction),
     Config.
 
 end_per_testcase(t_explicit_session_takeover, Config) ->
-    _ = stop_slave(?config(evacuate_node, Config)),
+    _ = emqx_node_helpers:stop_slave(?config(evacuate_node, Config)),
     _ = emqx_eviction_agent:disable(test_eviction);
 end_per_testcase(_TestCase, _Config) ->
     _ = emqx_eviction_agent:disable(test_eviction).
@@ -226,49 +229,3 @@ emqtt_connect(ClientId, CleanStart) ->
         {ok, _} -> {ok, C};
         {error, _} = Error -> Error
     end.
-
-start_slave(Name) ->
-    {ok, Node} = ct_slave:start(list_to_atom(atom_to_list(Name) ++ "@" ++ host()),
-                                [{kill_if_fail, true},
-                                 {monitor_master, true},
-                                 {init_timeout, 10000},
-                                 {startup_timeout, 10000},
-                                 {erl_flags, ebin_path()}]),
-
-    pong = net_adm:ping(Node),
-    setup_node(Node),
-    Node.
-
-stop_slave(Node) ->
-    rpc:call(Node, ekka, leave, []),
-    ct_slave:stop(Node).
-
-host() ->
-    [_, Host] = string:tokens(atom_to_list(node()), "@"), Host.
-
-ebin_path() ->
-    string:join(["-pa" | lists:filter(fun is_lib/1, code:get_path())], " ").
-
-is_lib(Path) ->
-    string:prefix(Path, code:lib_dir()) =:= nomatch.
-
-setup_node(Node) ->
-    EnvHandler =
-        fun(emqx) ->
-                application:set_env(
-                  emqx,
-                  listeners,
-                  []),
-                application:set_env(gen_rpc, port_discovery, manual),
-                application:set_env(gen_rpc, tcp_server_port, 5870),
-                ok;
-           (_) ->
-                ok
-        end,
-
-    [ok = rpc:call(Node, application, load, [App]) || App <- [gen_rpc, emqx]],
-    ok = rpc:call(Node, emqx_ct_helpers, start_apps, [[emqx, emqx_eviction_agent], EnvHandler]),
-
-    rpc:call(Node, ekka, join, [node()]),
-
-    ok.

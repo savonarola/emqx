@@ -529,50 +529,14 @@ recv_msgs(Count, Msgs) ->
     end.
 
 start_slave(Name, Port) ->
-    {ok, Node} = ct_slave:start(list_to_atom(atom_to_list(Name) ++ "@" ++ host()),
-                                [{kill_if_fail, true},
-                                 {monitor_master, true},
-                                 {init_timeout, 10000},
-                                 {startup_timeout, 10000},
-                                 {erl_flags, ebin_path()}]),
-
-    pong = net_adm:ping(Node),
-    setup_node(Node, Port),
-    Node.
+    Listeners = [#{listen_on => {{127,0,0,1},Port},
+                   name => "internal",
+                   opts => [{zone,internal}],
+                   proto => tcp}],
+    emqx_node_helpers:start_slave(
+      Name,
+      #{listeners => Listeners,
+        gen_rpc_tcp_server_port => Port * 2}).
 
 stop_slave(Node) ->
-    rpc:call(Node, ekka, leave, []),
-    ct_slave:stop(Node).
-
-host() ->
-    [_, Host] = string:tokens(atom_to_list(node()), "@"), Host.
-
-ebin_path() ->
-    string:join(["-pa" | lists:filter(fun is_lib/1, code:get_path())], " ").
-
-is_lib(Path) ->
-    string:prefix(Path, code:lib_dir()) =:= nomatch.
-
-setup_node(Node, Port) ->
-    EnvHandler =
-        fun(emqx) ->
-                application:set_env(
-                  emqx,
-                  listeners,
-                  [#{listen_on => {{127,0,0,1},Port},
-                     name => "internal",
-                     opts => [{zone,internal}],
-                     proto => tcp}]),
-                application:set_env(gen_rpc, port_discovery, manual),
-                application:set_env(gen_rpc, tcp_server_port, Port * 2),
-                ok;
-           (_) ->
-                ok
-        end,
-
-    [ok = rpc:call(Node, application, load, [App]) || App <- [gen_rpc, emqx]],
-    ok = rpc:call(Node, emqx_ct_helpers, start_apps, [[emqx], EnvHandler]),
-
-    rpc:call(Node, ekka, join, [node()]),
-
-    ok.
+    emqx_node_helpers:stop_slave(Node).

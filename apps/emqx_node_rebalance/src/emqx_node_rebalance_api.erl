@@ -16,15 +16,22 @@
 
 -module(emqx_node_rebalance_api).
 
--rest_api(#{name   => node_rebalance,
+-rest_api(#{name   => load_rebalance_status,
             method => 'GET',
-            path   => "/node_rebalance/status",
-            func   => node_rebalance,
-            descr  => "Get node rebalance status"}).
+            path   => "/load_rebalance/status",
+            func   => status,
+            descr  => "Get load rebalance status"}).
 
--export([node_rebalance/2]).
+-rest_api(#{name   => load_rebalance_availability_check,
+            method => 'GET',
+            path   => "/load_rebalance/availability_check",
+            func   => availability_check,
+            descr  => "Node rebalance availability check"}).
 
-node_rebalance(_Bindings, _Params) ->
+-export([status/2,
+        availability_check/2]).
+
+status(_Bindings, _Params) ->
     case emqx_node_rebalance_evacuation:status() of
         disabled ->
             {ok, #{status => disabled}};
@@ -32,14 +39,26 @@ node_rebalance(_Bindings, _Params) ->
             {ok, format_stats(Stats)}
     end.
 
+availability_check(_Bindings, _Params) ->
+    case emqx_node_rebalance_evacuation:status() of
+        disabled ->
+            {200, #{}};
+        {enabled, _Stats} ->
+            {503, #{}}
+    end.
+
 format_stats(Stats) ->
     #{
-      status => enabled,
+      status => maps:get(status, Stats),
       connection_eviction_rate => maps:get(conn_evict_rate, Stats),
+      session_eviction_rate => maps:get(sess_evict_rate, Stats),
       %% for evacuation
-      goal => 0,
+      connection_goal => 0,
+      session_goal => 0,
       stats => #{
         initial_connected => maps:get(initial_conns, Stats),
-        current_connected => maps:get(current_conns, Stats)
+        current_connected => maps:get(current_conns, Stats),
+        initial_sessions => maps:get(initial_sessions, Stats),
+        current_sessions => maps:get(current_sessions, Stats)
       }
      }.

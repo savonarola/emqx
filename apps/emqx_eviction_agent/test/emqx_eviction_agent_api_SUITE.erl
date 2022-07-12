@@ -19,8 +19,6 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 
--include_lib("emqx/include/emqx.hrl").
--include_lib("emqx/include/emqx_mqtt.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
 
@@ -57,24 +55,6 @@ t_status(_Config) ->
     ?assertMatch(
        {ok, #{<<"status">> := <<"disabled">>}},
        api_get(["node_eviction", "status"])).
-
-t_health_check(_Config) ->
-
-    ?assertMatch(
-       {ok, #{}},
-       api_get(["node_eviction", "health_check"])),
-
-    ok = emqx_eviction_agent:enable(apitest, undefined),
-
-    ?assertMatch(
-       {error, {_, 503, _}},
-       api_get(["node_eviction", "health_check"])),
-
-    ok = emqx_eviction_agent:disable(apitest),
-
-    ?assertMatch(
-       {ok, #{}},
-       api_get(["node_eviction", "health_check"])).
 
 api_get(Path) ->
     case request_api(get, api_path(Path), auth_header_()) of

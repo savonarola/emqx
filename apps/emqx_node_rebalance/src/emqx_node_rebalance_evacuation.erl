@@ -35,6 +35,12 @@
          code_change/4
         ]).
 
+-export([is_node_available/0]).
+
+-ifdef(TEST).
+-export([migrate_to/1]).
+-endif.
+
 %%--------------------------------------------------------------------
 %% APIs
 %%--------------------------------------------------------------------
@@ -144,7 +150,9 @@ handle_event({call, From}, status, disabled, #{}) ->
      [{reply, From, disabled}]};
 handle_event({call, From}, status, State, Data) ->
     Stats = maps:with(
-              [initial_conns, current_conns, server_reference, conn_evict_rate],
+              [initial_conns, current_conns,
+               initial_sessions, current_sessions,
+               server_reference, conn_evict_rate, sess_evict_rate],
               Data),
     {keep_state_and_data,
      [{reply, From, {enabled, Stats#{status => State}}}]};
@@ -197,19 +205,27 @@ handle_event(state_timeout,
                     {keep_state_and_data,
                      [{state_timeout, ?EVICT_INTERVAL_NO_NODES, evict_sessions}]};
                 Nodes ->
-                    ok = emqx_eviction_agent:evict_sessions(Nodes, SessEvictRate),
-                    ?tp(debug, node_evacuation_evict_sess, #{sess_evict_rate => SessEvictRate}),
+                    Node = select_random(Nodes),
+                    ok = emqx_eviction_agent:evict_sessions(SessEvictRate, Node),
+                    ?tp(debug, node_evacuation_evict_sess, #{sess_evict_rate => SessEvictRate,
+                                                             sess_count => SessCount}),
                     NewData = Data#{current_sessions => SessCount},
                     {keep_state,
                      NewData,
                      [{state_timeout, ?EVICT_INTERVAL, evict_sessions}]}
             end;
         {enabled, #{sessions := 0}} ->
+            ?tp(debug, node_evacuation_evict_sess_over, #{}),
             NewData = Data#{current_sessions => 0},
             {next_state,
              prohibiting,
              NewData}
     end;
+
+handle_event({call, From}, Msg, State, Data) ->
+    ?LOG(warning, "Unknown call: ~p, State: ~p, Data: ~p", [Msg, State, Data]),
+    {keep_state_and_data,
+     [{reply, From, ignored}]};
 
 handle_event(info, Msg, State, Data) ->
     ?LOG(warning, "Unknown Msg: ~p, State: ~p, Data: ~p", [Msg, State, Data]),
@@ -258,10 +274,15 @@ warn_enabled() ->
 migrate_to(undefined) ->
     migrate_to(all_nodes());
 migrate_to(Nodes) when is_list(Nodes) ->
-    lists:filter(fun is_node_available/1, Nodes).
+    {Available, _} = rpc:multicall(Nodes, ?MODULE, is_node_available, []),
+    Available.
 
-is_node_available(Node) ->
-    net_adm:ping(Node) =:= pong.
+is_node_available() ->
+    true = is_pid(whereis(emqx_eviction_agent)),
+    node().
 
 all_nodes() ->
     ekka_mnesia:cluster_nodes(all) -- [node()].
+
+select_random(List) when length(List) > 0 ->
+    lists:nth(rand:uniform(length(List)) , List).

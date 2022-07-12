@@ -57,9 +57,27 @@ t_evacuation(_Config) ->
     ?assertNot(
         emqx_node_rebalance_cli:cli(["start", "--evacuation", "--conn-evict-rate", "foobar"])),
 
+    ?assertNot(
+        emqx_node_rebalance_cli:cli(["start", "--evacuation", "--sess-evict-rate", "foobar"])),
+
+    ?assertNot(
+        emqx_node_rebalance_cli:cli(["start", "--evacuation", "--wait-takeover", "foobar"])),
+
+    ?assertNot(
+        emqx_node_rebalance_cli:cli(["start", "--evacuation",
+                                     "--migrate-to", "nonexistent@node"])),
+    ?assertNot(
+        emqx_node_rebalance_cli:cli(["start", "--evacuation",
+                                     "--migrate-to", ""])),
+    ?assertNot(
+        emqx_node_rebalance_cli:cli(["start", "--evacuation",
+                                     "--unknown-arg"])),
     ?assert(
         emqx_node_rebalance_cli:cli(["start", "--evacuation",
                                      "--conn-evict-rate", "10",
+                                     "--sess-evict-rate", "10",
+                                     "--wait-takeover", "10",
+                                     "--migrate-to", atom_to_list(node()),
                                      "--redirect-to", "srv"])),
 
     %% status
@@ -76,7 +94,9 @@ t_evacuation(_Config) ->
                                      "--redirect-to", "srv"])),
 
     %% stop
-    ok = emqx_node_rebalance_cli:cli(["stop"]),
+    true = emqx_node_rebalance_cli:cli(["stop"]),
+
+    false = emqx_node_rebalance_cli:cli(["stop"]),
 
     ?assertEqual(
        disabled,

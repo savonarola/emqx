@@ -51,20 +51,27 @@ cli(["status"]) ->
         disabled ->
             emqx_ctl:print("Rebalance status: disabled~n");
         {enabled, Stats} ->
-            emqx_ctl:print("Rebalance status: evacuation~n"
+            emqx_ctl:print("Rebalance status: evacuation[~p]~n"
                            "current_connected: ~B~n"
-                           "initial_connected: ~B~n",
-                           [maps:get(current_conns, Stats),
-                            maps:get(initial_conns, Stats)])
+                           "initial_connected: ~B~n"
+                           "current_sessions: ~B~n"
+                           "initial_sessions: ~B~n",
+                           [maps:get(status, Stats),
+                            maps:get(current_conns, Stats),
+                            maps:get(initial_conns, Stats),
+                            maps:get(current_sessions, Stats),
+                            maps:get(initial_sessions, Stats)])
     end;
 
 cli(["stop"]) ->
     case emqx_node_rebalance_evacuation:status() of
         {enabled, _} ->
             ok = emqx_node_rebalance_evacuation:stop(),
-            emqx_ctl:print("Rebalance(evacuation) stopped~n");
+            emqx_ctl:print("Rebalance(evacuation) stopped~n"),
+            true;
         disabled ->
-            emqx_ctl:print("Rebalance is already disabled~n")
+            emqx_ctl:print("Rebalance is already disabled~n"),
+            false
     end;
 
 cli(_) ->

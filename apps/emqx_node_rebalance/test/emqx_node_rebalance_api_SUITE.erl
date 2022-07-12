@@ -19,8 +19,6 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 
--include_lib("emqx/include/emqx.hrl").
--include_lib("emqx/include/emqx_mqtt.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
 
@@ -46,29 +44,55 @@ end_per_testcase(_Case, _Config) ->
 t_status(_Config) ->
 
     ?assertMatch(
-        #{<<"status">> := <<"disabled">>},
-        api_get(["node_rebalance/status"])),
+       {ok, #{<<"status">> := <<"disabled">>}},
+        api_get(["load_rebalance", "status"])),
 
     ok = emqx_node_rebalance_evacuation:start(
            #{conn_evict_rate => 10,
+             sess_evict_rate => 20,
              server_reference => <<"srv">>}),
 
     ?assertMatch(
-       #{<<"status">> := <<"enabled">>,
-         <<"connection_eviction_rate">> := 10,
-         <<"goal">> := 0,
-         <<"stats">> := #{
-                          <<"initial_connected">> := _,
-                          <<"current_connected">> := _
-                         }},
-        api_get(["node_rebalance/status"])),
+       {ok, #{<<"status">> := _,
+              <<"connection_eviction_rate">> := 10,
+              <<"session_eviction_rate">> := 20,
+              <<"connection_goal">> := 0,
+              <<"session_goal">> := 0,
+              <<"stats">> := #{
+                               <<"initial_connected">> := _,
+                               <<"current_connected">> := _,
+                               <<"initial_sessions">> := _,
+                               <<"current_sessions">> := _
+                              }}},
+        api_get(["load_rebalance", "status"])),
 
     ok = emqx_node_rebalance_evacuation:stop(),
 
     ?assertMatch(
-        #{<<"status">> := <<"disabled">>},
-        api_get(["node_rebalance/status"])).
+       {ok, #{<<"status">> := <<"disabled">>}},
+        api_get(["load_rebalance", "status"])).
+
+t_availability_check(_Config) ->
+
+    ?assertMatch(
+       {ok, #{}},
+       api_get(["load_rebalance", "availability_check"])),
+
+    ok = emqx_node_rebalance_evacuation:start(#{}),
+
+    ?assertMatch(
+       {error, {_, 503, _}},
+       api_get(["load_rebalance", "availability_check"])),
+
+    ok = emqx_node_rebalance_evacuation:stop(),
+
+    ?assertMatch(
+       {ok, #{}},
+       api_get(["load_rebalance", "availability_check"])).
 
 api_get(Path) ->
-    {ok, ResponseBody} = request_api(get, api_path(Path), auth_header_()),
-    jiffy:decode(list_to_binary(ResponseBody), [return_maps]).
+    case request_api(get, api_path(Path), auth_header_()) of
+        {ok, ResponseBody} ->
+            {ok, jiffy:decode(list_to_binary(ResponseBody), [return_maps])};
+        {error, _} = Error -> Error
+    end.

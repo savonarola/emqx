@@ -21,32 +21,16 @@
 -rest_api(#{name   => node_eviction_status,
             method => 'GET',
             path   => "/node_eviction/status",
-            func   => node_eviction_status,
+            func   => status,
             descr  => "Get node eviction status"}).
 
--rest_api(#{name   => node_eviction_health_check,
-            method => 'GET',
-            path   => "/node_eviction/health_check",
-            func   => node_eviction_health_check,
-            descr  => "Get node eviction health check"}).
+-export([status/2]).
 
--export([node_eviction_status/2,
-         node_eviction_health_check/2
-        ]).
-
-node_eviction_status(_Bindings, _Params) ->
+status(_Bindings, _Params) ->
     case emqx_eviction_agent:status() of
         disabled ->
             {ok, #{status => disabled}};
         {enabled, Stats} ->
             {ok, #{status => enabled,
                    stats => Stats}}
-    end.
-
-node_eviction_health_check(_Bindings, _Params) ->
-    case emqx_eviction_agent:status() of
-        disabled ->
-            {200, #{}};
-        {enabled, _Stats} ->
-            {503, #{}}
     end.
