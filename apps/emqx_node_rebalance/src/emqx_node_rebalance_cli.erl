@@ -133,19 +133,18 @@ validate_evacuation([{"--wait-takeover", _} | _] = Opts, Map) ->
     validate_pos_int(wait_takeover, Opts, Map);
 validate_evacuation([{"--migrate-to", MigrateTo} | Rest], Map) ->
     Nodes = lists:map(fun list_to_atom/1, string:tokens(MigrateTo, ", ")),
-    case lists:partition(fun is_node_available/1, Nodes) of
-        {[], []} ->
+    case emqx_node_rebalance_evacuation:available_nodes(Nodes) of
+        [] ->
             {error, "invalid --migrate-to, no nodes"};
-        {Nodes, []} ->
+        Nodes ->
             validate_evacuation(Rest, Map#{migrate_to => Nodes});
-        {_Nodes, UnavailNodes} ->
-            {error, io_lib:format("invalid --migrate-to, unavailable nodes: ~p", [UnavailNodes])}
+        OtherNodes ->
+            {error,
+             io_lib:format("invalid --migrate-to, unavailable nodes: ~p",
+                           [Nodes -- OtherNodes])}
     end;
 validate_evacuation(Rest, _Map) ->
     {error, io_lib:format("unknown evacuation arguments: ~p", [Rest])}.
-
-is_node_available(Node) ->
-    net_adm:ping(Node) =:= pong.
 
 validate_pos_int(Name, [{OptionName, Value} | Rest], Map) ->
     case string:to_integer(Value) of

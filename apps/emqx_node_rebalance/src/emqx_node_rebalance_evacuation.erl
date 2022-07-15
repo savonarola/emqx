@@ -35,7 +35,8 @@
          code_change/4
         ]).
 
--export([is_node_available/0]).
+-export([is_node_available/0,
+         available_nodes/1]).
 
 -ifdef(TEST).
 -export([migrate_to/1]).
@@ -85,6 +86,11 @@ status() ->
 -spec start_link() -> startlink_ret().
 start_link() ->
     gen_statem:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+-spec available_nodes(list(node())) -> list(node()).
+available_nodes(Nodes) when is_list(Nodes) ->
+    {Available, _} = rpc:multicall(Nodes, ?MODULE, is_node_available, []),
+    lists:filter(fun is_atom/1, Available).
 
 %%--------------------------------------------------------------------
 %% gen_statem callbacks
@@ -274,8 +280,7 @@ warn_enabled() ->
 migrate_to(undefined) ->
     migrate_to(all_nodes());
 migrate_to(Nodes) when is_list(Nodes) ->
-    {Available, _} = rpc:multicall(Nodes, ?MODULE, is_node_available, []),
-    Available.
+    available_nodes(Nodes).
 
 is_node_available() ->
     true = is_pid(whereis(emqx_eviction_agent)),
