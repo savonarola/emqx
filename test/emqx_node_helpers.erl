@@ -22,7 +22,23 @@
 
 -export([start_slave/1,
          start_slave/2,
-         stop_slave/1]).
+         stop_slave/1,
+         init_gen_rpc/0,
+         deinit_gen_rpc/1]).
+
+init_gen_rpc() ->
+    emqx_ct_helpers:boot_modules(all),
+    PortDiscovery = application:get_env(gen_rpc, port_discovery),
+    application:set_env(gen_rpc, port_discovery, stateless),
+    application:ensure_all_started(gen_rpc),
+    [{port_discovery, PortDiscovery}].
+
+deinit_gen_rpc(Config) ->
+    emqx_ct_helpers:stop_apps([gen_rpc]),
+    case proplists:get_value(port_discovery, Config) of
+      {ok, OldValue} -> application:set_env(gen_rpc, port_discovery, OldValue);
+      _ -> ok
+    end.
 
 start_slave(Name) ->
     start_slave(Name, #{}).
