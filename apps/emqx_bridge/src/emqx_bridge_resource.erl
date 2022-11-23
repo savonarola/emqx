@@ -45,7 +45,9 @@
 bridge_to_resource_type(<<"mqtt">>) -> emqx_connector_mqtt;
 bridge_to_resource_type(mqtt) -> emqx_connector_mqtt;
 bridge_to_resource_type(<<"webhook">>) -> emqx_connector_http;
-bridge_to_resource_type(webhook) -> emqx_connector_http.
+bridge_to_resource_type(webhook) -> emqx_connector_http;
+bridge_to_resource_type(<<"redis">>) -> emqx_bridge_connector_redis;
+bridge_to_resource_type(redis) -> emqx_bridge_connector_redis.
 
 resource_id(BridgeId) when is_binary(BridgeId) ->
     <<"bridge:", BridgeId/binary>>.
@@ -160,6 +162,11 @@ recreate(Type, Name, Conf) ->
 
 create_dry_run(Type, Conf) ->
     Conf0 = fill_dry_run_conf(Conf),
+    ?SLOG(debug, #{
+        msg => "dry_run_create_bridge",
+        type => Type,
+        config => Conf0
+    }),
     case emqx_resource:check_config(bridge_to_resource_type(Type), Conf0) of
         {ok, Conf1} ->
             TmpPath = iolist_to_binary(["bridges-create-dry-run:", emqx_misc:gen_id(8)]),
