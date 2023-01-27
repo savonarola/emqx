@@ -3,6 +3,7 @@ services:
 
   redis-cluster-tls-1: &redis-node
     image: docker.io/bitnami/redis-cluster:${REDIS_TAG}
+    container_name: redis-cluster-tls-1
     environment: &redis-node-env
       REDIS_PASSWORD: public
       REDIS_NODES: "redis-cluster-tls-1 redis-cluster-tls-2 redis-cluster-tls-3 redis-cluster-tls-4 redis-cluster-tls-5 redis-cluster-tls-6"
@@ -16,20 +17,27 @@ services:
       - ../../apps/emqx/etc/certs/cacert.pem:/etc/certs/ca.crt
       - ../../apps/emqx/etc/certs/cert.pem:/etc/certs/redis.crt
       - ../../apps/emqx/etc/certs/key.pem:/etc/certs/redis.key
+    networks:
+      - emqx_bridge
 
   redis-cluster-tls-2:
     <<: *redis-node
+    container_name: redis-cluster-tls-2
 
   redis-cluster-tls-3:
     <<: *redis-node
+    container_name: redis-cluster-tls-3
 
   redis-cluster-tls-4:
     <<: *redis-node
+    container_name: redis-cluster-tls-4
 
   redis-cluster-tls-5:
     <<: *redis-node
+    container_name: redis-cluster-tls-5
 
   redis-cluster-tls-6:
+    container_name: redis-cluster-tls-6
     image: docker.io/bitnami/redis-cluster:${REDIS_TAG}
     depends_on:
       - redis-cluster-tls-1
@@ -59,3 +67,5 @@ services:
         [ "$$cluster_known_nodes" -eq 6 ] || { echo "known nodes = $$cluster_known_nodes"; exit 3; }
       interval: 5s
       retries: 3
+    networks:
+      - emqx_bridge

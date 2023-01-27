@@ -2,25 +2,33 @@ version: '3.9'
 services:
 
   redis-cluster-1: &redis-node
+    container_name: redis-cluster-1
     image: docker.io/bitnami/redis-cluster:${REDIS_TAG}
     environment: &redis-node-env
       REDIS_PASSWORD: public
       REDIS_NODES: "redis-cluster-1 redis-cluster-2 redis-cluster-3 redis-cluster-4 redis-cluster-5 redis-cluster-6"
       REDIS_TLS_ENABLED: "no"
+    networks:
+      - emqx_bridge
 
   redis-cluster-2:
     <<: *redis-node
+    container_name: redis-cluster-2
 
   redis-cluster-3:
     <<: *redis-node
+    container_name: redis-cluster-3
 
   redis-cluster-4:
     <<: *redis-node
+    container_name: redis-cluster-4
 
   redis-cluster-5:
     <<: *redis-node
+    container_name: redis-cluster-5
 
   redis-cluster-6:
+    container_name: redis-cluster-6
     image: docker.io/bitnami/redis-cluster:${REDIS_TAG}
     depends_on:
       - redis-cluster-1
@@ -48,3 +56,5 @@ services:
         [ "$$cluster_known_nodes" -eq 6 ] || { echo "known nodes = $$cluster_known_nodes"; exit 3; }
       interval: 5s
       retries: 3
+    networks:
+      - emqx_bridge
