@@ -1,11 +1,50 @@
 version: '3.9'
-
 services:
-  redis_cluster:
-    image: redis:${REDIS_TAG}
-    container_name: redis-cluster
+
+  redis-cluster-1: &redis-node
+    image: docker.io/bitnami/redis-cluster:${REDIS_TAG}
+    environment: &redis-node-env
+      REDIS_PASSWORD: public
+      REDIS_NODES: "redis-cluster-1 redis-cluster-2 redis-cluster-3 redis-cluster-4 redis-cluster-5 redis-cluster-6"
+      REDIS_TLS_ENABLED: "no"
+
+  redis-cluster-2:
+    <<: *redis-node
+
+  redis-cluster-3:
+    <<: *redis-node
+
+  redis-cluster-4:
+    <<: *redis-node
+
+  redis-cluster-5:
+    <<: *redis-node
+
+  redis-cluster-6:
+    image: docker.io/bitnami/redis-cluster:${REDIS_TAG}
+    depends_on:
+      - redis-cluster-1
+      - redis-cluster-2
+      - redis-cluster-3
+      - redis-cluster-4
+      - redis-cluster-5
+    environment:
+      <<: *redis-node-env
+      REDISCLI_AUTH: public
+      REDIS_CLUSTER_REPLICAS: "1"
+      REDIS_CLUSTER_CREATOR: "yes"
     volumes:
-      - ./redis/:/data/conf
-    command: bash -c "/bin/bash /data/conf/redis.sh --node cluster && tail -f /var/log/redis-server.log"
-    networks:
-      - emqx_bridge
+      - ./redis:/etc/redis
+    healthcheck:
+      test: |
+        # Convert `cluster info` output into shell variable assignments
+        eval "$(
+          redis-cli -a "public" --no-auth-warning cluster info | \
+            grep "^cluster" | \
+            sed -r 's/(\w+):(\w+).*/\1=\2/'
+        )"
+        [ "$$cluster_state" = "ok" ]      || { echo "cluster state = $$cluster_state"; exit 1; }
+        [ "$$cluster_size" -gt 1 ]        || { echo "cluster size = $$cluster_size"; exit 2; }
+        [ "$$cluster_known_nodes" -eq 6 ] || { echo "known nodes = $$cluster_known_nodes"; exit 3; }
+      interval: 5s
+      retries: 3
