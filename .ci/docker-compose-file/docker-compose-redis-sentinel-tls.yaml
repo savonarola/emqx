@@ -64,4 +64,6 @@ services:
       - redis-sentinel-tls-slave
     volumes:
       - ../../apps/emqx/etc/certs:/etc/certs
-
+    command: >
+      /bin/bash -c "sed -i 's/bind .*/bind :: 0.0.0.0/' /bitnami/redis-sentinel/conf/sentinel.conf
+      && /opt/bitnami/scripts/redis-sentinel/run.sh"

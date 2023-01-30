@@ -44,4 +44,9 @@ services:
     depends_on:
       - redis-sentinel-master
       - redis-sentinel-slave
+    command: >
+      /bin/bash -c "sed -i 's/bind .*/bind :: 0.0.0.0/' /bitnami/redis-sentinel/conf/sentinel.conf
+      && /opt/bitnami/scripts/redis-sentinel/run.sh"
+
+
 
