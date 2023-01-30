@@ -1,11 +1,47 @@
-version: '3.9'
+version: "3"
+
+x-redis-node-env: &redis-node-env
+  REDIS_PASSWORD: public
+  REDIS_MASTER_PASSWORD: public
 
 services:
-  redis_sentinel_server:
-    container_name: redis-sentinel
-    image: redis:${REDIS_TAG}
-    volumes:
-      - ./redis/:/data/conf
-    command: bash -c "/bin/bash /data/conf/redis.sh --node sentinel && tail -f /var/log/redis-server.log"
+
+  redis-sentinel-master:
+    container_name: redis-sentinel-master
+    image: bitnami/redis:${REDIS_SENTINEL_TAG}
+    environment:
+      <<: *redis-node-env
+      REDIS_REPLICATION_MODE: master
     networks:
       - emqx_bridge
+
+  redis-sentinel-slave:
+    container_name: redis-sentinel-slave
+    image: bitnami/redis:${REDIS_SENTINEL_TAG}
+    environment:
+      <<: *redis-node-env
+      REDIS_REPLICATION_MODE: slave
+      REDIS_MASTER_HOST: "redis-sentinel-master"
+    networks:
+      - emqx_bridge
+    depends_on:
+      - redis-sentinel-master
+
+  redis-sentinel:
+    container_name: redis-sentinel
+    image: bitnami/redis-sentinel:${REDIS_SENTINEL_TAG}
+    environment:
+      REDIS_MASTER_HOST: "redis-sentinel-master"
+      REDIS_MASTER_SET: "mymaster"
+      REDIS_MASTER_PORT_NUMBER: "6379"
+      REDIS_MASTER_PASSWORD: public
+      REDIS_PASSWORD: public
+      REDIS_SENTINEL_DOWN_AFTER_MILLISECONDS: "5000"
+      REDIS_SENTINEL_FAILOVER_TIMEOUT: "15000"
+      REDIS_SENTINEL_QUORUM: "1"
+    networks:
+      - emqx_bridge
+    depends_on:
+      - redis-sentinel-master
+      - redis-sentinel-slave
+

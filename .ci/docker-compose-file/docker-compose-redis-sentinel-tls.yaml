@@ -1,14 +1,67 @@
-version: '3.9'
+version: "3"
+
+x-redis-node-env: &redis-node-env
+  REDIS_PASSWORD: public
+  REDIS_MASTER_PASSWORD: public
+  REDIS_TLS_ENABLED: "yes"
+  REDIS_TLS_AUTH_CLIENTS: "no"
+  REDIS_TLS_PORT_NUMBER: "6389"
+  REDIS_TLS_CERT_FILE: "/etc/certs/cert.pem"
+  REDIS_TLS_KEY_FILE: "/etc/certs/key.pem"
+  REDIS_TLS_CA_FILE: "/etc/certs/cacert.pem"
 
 services:
-  redis_sentinel_server_tls:
-    container_name: redis-sentinel-tls
-    image: redis:${REDIS_TAG}
-    volumes:
-      - ../../apps/emqx/etc/certs/cacert.pem:/etc/certs/ca.crt
-      - ../../apps/emqx/etc/certs/cert.pem:/etc/certs/redis.crt
-      - ../../apps/emqx/etc/certs/key.pem:/etc/certs/redis.key
-      - ./redis/:/data/conf
-    command: bash -c "/bin/bash /data/conf/redis.sh --node sentinel --tls-enabled && tail -f /var/log/redis-server.log"
+
+  redis-sentinel-tls-master:
+    container_name: redis-sentinel-tls-master
+    image: bitnami/redis:${REDIS_SENTINEL_TAG}
+    environment:
+      <<: *redis-node-env
+      REDIS_REPLICATION_MODE: master
     networks:
       - emqx_bridge
+    volumes:
+      - ../../apps/emqx/etc/certs:/etc/certs
+
+  redis-sentinel-tls-slave:
+    container_name: redis-sentinel-tls-slave
+    image: bitnami/redis:${REDIS_SENTINEL_TAG}
+    environment:
+      <<: *redis-node-env
+      REDIS_REPLICATION_MODE: slave
+      REDIS_MASTER_HOST: "redis-sentinel-tls-master"
+      REDIS_MASTER_PORT_NUMBER: "6389"
+      REDIS_TLS_REPLICATION: "yes"
+    networks:
+      - emqx_bridge
+    depends_on:
+      - redis-sentinel-tls-master
+    volumes:
+      - ../../apps/emqx/etc/certs:/etc/certs
+
+  redis-sentinel-tls:
+    container_name: redis-sentinel-tls
+    image: bitnami/redis-sentinel:${REDIS_SENTINEL_TAG}
+    environment:
+      REDIS_MASTER_HOST: "redis-sentinel-tls-master"
+      REDIS_MASTER_SET: "mymaster"
+      REDIS_MASTER_PORT_NUMBER: "6389"
+      REDIS_MASTER_PASSWORD: public
+      REDIS_PASSWORD: public
+      REDIS_SENTINEL_DOWN_AFTER_MILLISECONDS: "5000"
+      REDIS_SENTINEL_FAILOVER_TIMEOUT: "15000"
+      REDIS_SENTINEL_QUORUM: "1"
+      REDIS_SENTINEL_TLS_ENABLED: "yes"
+      REDIS_SENTINEL_TLS_AUTH_CLIENTS: "no"
+      REDIS_SENTINEL_TLS_PORT_NUMBER: "26380"
+      REDIS_SENTINEL_TLS_CERT_FILE: "/etc/certs/cert.pem"
+      REDIS_SENTINEL_TLS_KEY_FILE: "/etc/certs/key.pem"
+      REDIS_SENTINEL_TLS_CA_FILE: "/etc/certs/cacert.pem"
+    networks:
+      - emqx_bridge
+    depends_on:
+      - redis-sentinel-tls-master
+      - redis-sentinel-tls-slave
+    volumes:
+      - ../../apps/emqx/etc/certs:/etc/certs
+
