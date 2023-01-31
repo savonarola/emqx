@@ -8,6 +8,8 @@ services:
     - ./redis/cluster-tls:/usr/local/etc/redis
     - ../../apps/emqx/etc/certs:/etc/certs
     command: redis-server /usr/local/etc/redis/redis.conf
+    networks:
+      - emqx_bridge
 
   redis-cluster-tls-2:
     <<: *redis-node
