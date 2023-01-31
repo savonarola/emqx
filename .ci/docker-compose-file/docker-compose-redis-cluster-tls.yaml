@@ -37,16 +37,18 @@ services:
     command: >
       redis-cli
         --cluster create
-          redis-cluster-tls-1:6379
-          redis-cluster-tls-2:6379
-          redis-cluster-tls-3:6379
-          redis-cluster-tls-4:6379
-          redis-cluster-tls-5:6379
-          redis-cluster-tls-6:6379
+          redis-cluster-tls-1:6389
+          redis-cluster-tls-2:6389
+          redis-cluster-tls-3:6389
+          redis-cluster-tls-4:6389
+          redis-cluster-tls-5:6389
+          redis-cluster-tls-6:6389
         --cluster-replicas 1
         --cluster-yes
         --pass "public"
         --no-auth-warning
+        --tls
+        --insecure
     depends_on:
       - redis-cluster-tls-1
       - redis-cluster-tls-2
