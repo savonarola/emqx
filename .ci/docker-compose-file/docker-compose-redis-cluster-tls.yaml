@@ -2,53 +2,54 @@ version: '3.9'
 services:
 
   redis-cluster-tls-1: &redis-node
-    image: bitnami/redis-cluster:${REDIS_TAG}
     container_name: redis-cluster-tls-1
-    environment: &redis-node-env
-      REDIS_PASSWORD: "public"
-      REDIS_NODES: "redis-cluster-tls-1 redis-cluster-tls-2 redis-cluster-tls-3"
-      REDIS_TLS_ENABLED: "yes"
-      REDIS_TLS_AUTH_CLIENTS: "no"
-      REDIS_TLS_PORT_NUMBER: "6389"
-      REDIS_MASTER_PORT_NUMBER: "6389"
-      REDIS_TLS_CERT_FILE: "/etc/certs/cert.pem"
-      REDIS_TLS_KEY_FILE: "/etc/certs/key.pem"
-      REDIS_TLS_CA_FILE: "/etc/certs/cacert.pem"
+    image: redis:${REDIS_TAG}
     volumes:
-      - ../../apps/emqx/etc/certs:/etc/certs
-    networks:
-      - emqx_bridge
+    - ./redis/cluster-tls:/usr/local/etc/redis
+    - ../../apps/emqx/etc/certs:/etc/certs
+    command: redis-server /usr/local/etc/redis/redis.conf
 
   redis-cluster-tls-2:
     <<: *redis-node
     container_name: redis-cluster-tls-2
 
   redis-cluster-tls-3:
+    <<: *redis-node
+    container_name: redis-cluster-tls-3
+
+  redis-cluster-tls-4:
+    <<: *redis-node
+    container_name: redis-cluster-tls-4
+
+  redis-cluster-tls-5:
+    <<: *redis-node
+    container_name: redis-cluster-tls-5
+
+  redis-cluster-tls-6:
+    <<: *redis-node
     container_name: redis-cluster-tls-6
-    image: bitnami/redis-cluster:${REDIS_TAG}
+
+  redis-cluster-tls-create:
+    <<: *redis-node
+    container_name: redis-cluster-tls-create
+    command: >
+      redis-cli
+        --cluster create
+          redis-cluster-tls-1:6379
+          redis-cluster-tls-2:6379
+          redis-cluster-tls-3:6379
+          redis-cluster-tls-4:6379
+          redis-cluster-tls-5:6379
+          redis-cluster-tls-6:6379
+        --cluster-replicas 1
+        --cluster-yes
+        --pass "public"
+        --no-auth-warning
     depends_on:
       - redis-cluster-tls-1
       - redis-cluster-tls-2
       - redis-cluster-tls-3
       - redis-cluster-tls-4
       - redis-cluster-tls-5
-    environment:
-      <<: *redis-node-env
-      REDIS_CLUSTER_CREATOR: "yes"
-    volumes:
-      - ../../apps/emqx/etc/certs:/etc/certs
-    healthcheck:
-      test: |
-        # Convert `cluster info` output into shell variable assignments
-        eval "$$(
-          redis-cli -a "public" --no-auth-warning cluster info | \
-            grep "^cluster" | \
-            sed -r 's/(\w+):(\w+).*/\1=\2/'
-        )"
-        [ "$$cluster_state" = "ok" ]      || { echo "cluster state = $$cluster_state"; exit 1; }
-        [ "$$cluster_size" -gt 1 ]        || { echo "cluster size = $$cluster_size"; exit 2; }
-        [ "$$cluster_known_nodes" -eq 6 ] || { echo "known nodes = $$cluster_known_nodes"; exit 3; }
-      interval: 5s
-      retries: 3
-    networks:
-      - emqx_bridge
+      - redis-cluster-tls-6
+

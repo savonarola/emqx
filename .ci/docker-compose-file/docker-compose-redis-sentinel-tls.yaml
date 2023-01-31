@@ -1,69 +1,44 @@
 version: "3"
 
-x-redis-node-env: &redis-node-env
-  REDIS_PASSWORD: "public"
-  REDIS_MASTER_PASSWORD: "public"
-  REDIS_TLS_ENABLED: "yes"
-  REDIS_TLS_AUTH_CLIENTS: "no"
-  REDIS_TLS_PORT_NUMBER: "6389"
-  REDIS_TLS_CERT_FILE: "/etc/certs/cert.pem"
-  REDIS_TLS_KEY_FILE: "/etc/certs/key.pem"
-  REDIS_TLS_CA_FILE: "/etc/certs/cacert.pem"
-
 services:
 
   redis-sentinel-tls-master:
     container_name: redis-sentinel-tls-master
-    image: bitnami/redis:${REDIS_SENTINEL_TAG}
-    environment:
-      <<: *redis-node-env
-      REDIS_REPLICATION_MODE: master
+    image: redis:${REDIS_TAG}
+    volumes:
+      - ./redis/sentinel-tls:/usr/local/etc/redis
+      - ../../apps/emqx/etc/certs:/etc/certs
+    command: redis-server /usr/local/etc/redis/master.conf
     networks:
       - emqx_bridge
-    volumes:
-      - ../../apps/emqx/etc/certs:/etc/certs
 
   redis-sentinel-tls-slave:
     container_name: redis-sentinel-tls-slave
-    image: bitnami/redis:${REDIS_SENTINEL_TAG}
-    environment:
-      <<: *redis-node-env
-      REDIS_REPLICATION_MODE: "slave"
-      REDIS_MASTER_HOST: "redis-sentinel-tls-master"
-      REDIS_MASTER_PORT_NUMBER: "6389"
-      REDIS_TLS_REPLICATION: "yes"
+    image: redis:${REDIS_TAG}
+    volumes:
+      - ./redis/sentinel-tls:/usr/local/etc/redis
+      - ../../apps/emqx/etc/certs:/etc/certs
+    command: redis-server /usr/local/etc/redis/slave.conf
     networks:
       - emqx_bridge
     depends_on:
       - redis-sentinel-tls-master
-    volumes:
-      - ../../apps/emqx/etc/certs:/etc/certs
 
   redis-sentinel-tls:
     container_name: redis-sentinel-tls
-    image: bitnami/redis-sentinel:${REDIS_SENTINEL_TAG}
-    environment:
-      REDIS_MASTER_HOST: "redis-sentinel-tls-master"
-      REDIS_MASTER_SET: "mymaster"
-      REDIS_MASTER_PORT_NUMBER: "6389"
-      REDIS_MASTER_PASSWORD: "public"
-      REDIS_PASSWORD: "public"
-      REDIS_SENTINEL_DOWN_AFTER_MILLISECONDS: "5000"
-      REDIS_SENTINEL_FAILOVER_TIMEOUT: "15000"
-      REDIS_SENTINEL_QUORUM: "1"
-      REDIS_SENTINEL_TLS_ENABLED: "yes"
-      REDIS_SENTINEL_TLS_AUTH_CLIENTS: "no"
-      REDIS_SENTINEL_TLS_PORT_NUMBER: "26380"
-      REDIS_SENTINEL_TLS_CERT_FILE: "/etc/certs/cert.pem"
-      REDIS_SENTINEL_TLS_KEY_FILE: "/etc/certs/key.pem"
-      REDIS_SENTINEL_TLS_CA_FILE: "/etc/certs/cacert.pem"
-    networks:
-      - emqx_bridge
+    image: redis:${REDIS_TAG}
+    volumes:
+      - ./redis/sentinel-tls/sentinel-base.conf:/usr/local/etc/redis/sentinel-base.conf
+      - ../../apps/emqx/etc/certs:/etc/certs
     depends_on:
       - redis-sentinel-tls-master
       - redis-sentinel-tls-slave
-    volumes:
-      - ../../apps/emqx/etc/certs:/etc/certs
     command: >
-      /bin/bash -c "sed -i 's/bind .*/bind :: 0.0.0.0/' /bitnami/redis-sentinel/conf/sentinel.conf
-      && /opt/bitnami/scripts/redis-sentinel/run.sh"
+      bash -c "cp -f /usr/local/etc/redis/sentinel-base.conf /usr/local/etc/redis/sentinel.conf &&
+               redis-sentinel /usr/local/etc/redis/sentinel.conf"
+    networks:
+      - emqx_bridge
+
+
+
+

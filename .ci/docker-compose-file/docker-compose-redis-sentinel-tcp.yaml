@@ -1,27 +1,22 @@
 version: "3"
 
-x-redis-node-env: &redis-node-env
-  REDIS_PASSWORD: "public"
-  REDIS_MASTER_PASSWORD: "public"
-
 services:
 
   redis-sentinel-master:
     container_name: redis-sentinel-master
-    image: bitnami/redis:${REDIS_SENTINEL_TAG}
-    environment:
-      <<: *redis-node-env
-      REDIS_REPLICATION_MODE: "master"
+    image: redis:${REDIS_TAG}
+    volumes:
+    - ./redis/sentinel-tcp:/usr/local/etc/redis
+    command: redis-server /usr/local/etc/redis/master.conf
     networks:
       - emqx_bridge
 
   redis-sentinel-slave:
     container_name: redis-sentinel-slave
-    image: bitnami/redis:${REDIS_SENTINEL_TAG}
-    environment:
-      <<: *redis-node-env
-      REDIS_REPLICATION_MODE: "slave"
-      REDIS_MASTER_HOST: "redis-sentinel-master"
+    image: redis:${REDIS_TAG}
+    volumes:
+      - ./redis/sentinel-tcp:/usr/local/etc/redis
+    command: redis-server /usr/local/etc/redis/slave.conf
     networks:
       - emqx_bridge
     depends_on:
@@ -29,24 +24,18 @@ services:
 
   redis-sentinel:
     container_name: redis-sentinel
-    image: bitnami/redis-sentinel:${REDIS_SENTINEL_TAG}
-    environment:
-      REDIS_MASTER_HOST: "redis-sentinel-master"
-      REDIS_MASTER_SET: "mymaster"
-      REDIS_MASTER_PORT_NUMBER: "6379"
-      REDIS_MASTER_PASSWORD: "public"
-      REDIS_PASSWORD: "public"
-      REDIS_SENTINEL_DOWN_AFTER_MILLISECONDS: "5000"
-      REDIS_SENTINEL_FAILOVER_TIMEOUT: "15000"
-      REDIS_SENTINEL_QUORUM: "1"
-    networks:
-      - emqx_bridge
+    image: redis:${REDIS_TAG}
+    volumes:
+      - ./redis/sentinel-tcp/sentinel-base.conf:/usr/local/etc/redis/sentinel-base.conf
     depends_on:
       - redis-sentinel-master
       - redis-sentinel-slave
     command: >
-      /bin/bash -c "sed -i 's/bind .*/bind :: 0.0.0.0/' /bitnami/redis-sentinel/conf/sentinel.conf
-      && /opt/bitnami/scripts/redis-sentinel/run.sh"
+      bash -c "cp -f /usr/local/etc/redis/sentinel-base.conf /usr/local/etc/redis/sentinel.conf &&
+               redis-sentinel /usr/local/etc/redis/sentinel.conf"
+    networks:
+      - emqx_bridge
+
 
 
 

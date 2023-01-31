@@ -158,7 +158,7 @@ jobs:
             MONGO_TAG: "5"
             MYSQL_TAG: "8"
             PGSQL_TAG: "13"
-            REDIS_TAG: "6.2"
+            REDIS_TAG: "7.0"
             REDIS_SENTINEL_TAG: "7.0"
             INFLUXDB_TAG: "2.5.0"
             PROFILE: ${{ matrix.profile }}
