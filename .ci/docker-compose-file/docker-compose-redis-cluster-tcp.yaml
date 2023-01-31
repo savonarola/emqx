@@ -3,11 +3,10 @@ services:
 
   redis-cluster-1: &redis-node
     container_name: redis-cluster-1
-    image: bitnami/redis-cluster:${REDIS_TAG}
-    environment: &redis-node-env
-      REDIS_PASSWORD: "public"
-      REDIS_NODES: "redis-cluster-1 redis-cluster-2 redis-cluster-3 redis-cluster-4 redis-cluster-5 redis-cluster-6"
-      REDIS_TLS_ENABLED: "no"
+    image: redis:7.0
+    volumes:
+    - ./redis/cluster-tcp:/usr/local/etc/redis
+    command: redis-server /usr/local/etc/redis/redis.conf
     networks:
       - emqx_bridge
 
@@ -28,32 +27,25 @@ services:
     container_name: redis-cluster-5
 
   redis-cluster-6:
+    <<: *redis-node
     container_name: redis-cluster-6
-    image: bitnami/redis-cluster:${REDIS_TAG}
+
+  redis-cluster-create:
+    <<: *redis-node
+    container_name: redis-cluster-create
+    command: >
+      redis-cli --cluster create \
+        redis-cluster-1:6379 \
+        redis-cluster-2:6379 \
+        redis-cluster-3:6379 \
+        redis-cluster-4:6379 \
+        redis-cluster-5:6379 \
+        redis-cluster-6:6379 \
+        --cluster-replicas 1 --cluster-yes
     depends_on:
       - redis-cluster-1
       - redis-cluster-2
       - redis-cluster-3
       - redis-cluster-4
       - redis-cluster-5
-    environment:
-      <<: *redis-node-env
-      REDIS_CLUSTER_REPLICAS: "1"
-      REDIS_CLUSTER_CREATOR: "yes"
-    volumes:
-      - ./redis:/etc/redis
-    healthcheck:
-      test: |
-        # Convert `cluster info` output into shell variable assignments
-        eval "$$(
-          redis-cli -a "public" --no-auth-warning cluster info | \
-            grep "^cluster" | \
-            sed -r 's/(\w+):(\w+).*/\1=\2/'
-        )"
-        [ "$$cluster_state" = "ok" ]      || { echo "cluster state = $$cluster_state"; exit 1; }
-        [ "$$cluster_size" -gt 1 ]        || { echo "cluster size = $$cluster_size"; exit 2; }
-        [ "$$cluster_known_nodes" -eq 6 ] || { echo "known nodes = $$cluster_known_nodes"; exit 3; }
-      interval: 5s
-      retries: 3
-    networks:
-      - emqx_bridge
+      - redis-cluster-6

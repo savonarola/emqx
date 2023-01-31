@@ -6,7 +6,7 @@ services:
     container_name: redis-cluster-tls-1
     environment: &redis-node-env
       REDIS_PASSWORD: "public"
-      REDIS_NODES: "redis-cluster-tls-1 redis-cluster-tls-2 redis-cluster-tls-3 redis-cluster-tls-4 redis-cluster-tls-5 redis-cluster-tls-6"
+      REDIS_NODES: "redis-cluster-tls-1 redis-cluster-tls-2 redis-cluster-tls-3"
       REDIS_TLS_ENABLED: "yes"
       REDIS_TLS_AUTH_CLIENTS: "no"
       REDIS_TLS_PORT_NUMBER: "6389"
@@ -24,18 +24,6 @@ services:
     container_name: redis-cluster-tls-2
 
   redis-cluster-tls-3:
-    <<: *redis-node
-    container_name: redis-cluster-tls-3
-
-  redis-cluster-tls-4:
-    <<: *redis-node
-    container_name: redis-cluster-tls-4
-
-  redis-cluster-tls-5:
-    <<: *redis-node
-    container_name: redis-cluster-tls-5
-
-  redis-cluster-tls-6:
     container_name: redis-cluster-tls-6
     image: bitnami/redis-cluster:${REDIS_TAG}
     depends_on:
@@ -46,7 +34,6 @@ services:
       - redis-cluster-tls-5
     environment:
       <<: *redis-node-env
-      REDIS_CLUSTER_REPLICAS: "1"
       REDIS_CLUSTER_CREATOR: "yes"
     volumes:
       - ../../apps/emqx/etc/certs:/etc/certs
