@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2020-2022 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2020-2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -28,6 +28,8 @@ all() ->
     [
         t_assemble_empty_transfer,
         t_assemble_complete_local_transfer,
+        t_assemble_incomplete_transfer,
+        t_assemble_no_meta,
 
         % NOTE
         % It depends on the side effects of all previous testcases.
@@ -155,6 +157,46 @@ t_assemble_complete_local_transfer(Config) ->
         AssemblyFilename
     ).
 
+t_assemble_incomplete_transfer(Config) ->
+    Storage = storage(Config),
+    Transfer = {?CLIENTID2, ?config(file_id, Config)},
+    Filename = "incomplete.pdf",
+    TransferSize = 10000 + rand:uniform(50000),
+    SegmentSize = 4096,
+    Gen = emqx_ft_content_gen:new({Transfer, TransferSize}, SegmentSize),
+    Hash = emqx_ft_content_gen:hash(Gen, crypto:hash_init(sha256)),
+    Meta = #{
+        name => Filename,
+        checksum => {sha256, Hash},
+        size => TransferSize,
+        expire_at => 42
+    },
+    ok = emqx_ft_storage_fs:store_filemeta(Storage, Transfer, Meta),
+    Self = self(),
+    {ok, _AsmPid} = emqx_ft_storage_fs:assemble(Storage, Transfer, fun(Result) ->
+        Self ! {test_assembly_finished, Result}
+    end),
+    receive
+        {test_assembly_finished, Result} ->
+            ?assertMatch({error, _}, Result)
+    after 1000 ->
+        ct:fail("Assembler did not called callback")
+    end.
+
+t_assemble_no_meta(Config) ->
+    Storage = storage(Config),
+    Transfer = {?CLIENTID2, ?config(file_id, Config)},
+    Self = self(),
+    {ok, _AsmPid} = emqx_ft_storage_fs:assemble(Storage, Transfer, fun(Result) ->
+        Self ! {test_assembly_finished, Result}
+    end),
+    receive
+        {test_assembly_finished, Result} ->
+            ?assertMatch({error, _}, Result)
+    after 1000 ->
+        ct:fail("Assembler did not called callback")
+    end.
+
 mk_assembly_filename(Config, {ClientID, FileID}, Filename) ->
     filename:join([?config(storage_root, Config), ClientID, FileID, result, Filename]).
 
@@ -205,5 +247,6 @@ mk_fileid() ->
 
 storage(Config) ->
     #{
+        type => local,
         root => ?config(storage_root, Config)
     }.
