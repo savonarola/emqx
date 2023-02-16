@@ -381,7 +381,9 @@ defmodule EMQXUmbrella.MixProject do
           emqx_bridge_timescale: :permanent,
           emqx_oracle: :permanent,
           emqx_bridge_oracle: :permanent,
-          emqx_ee_schema_registry: :permanent
+          emqx_ee_schema_registry: :permanent,
+          emqx_eviction_agent: :permanent,
+          emqx_node_rebalance: :permanent
         ],
         else: []
       )
