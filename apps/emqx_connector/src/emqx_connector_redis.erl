@@ -251,31 +251,33 @@ do_get_status(Conn) ->
 status_result(_Status = true) -> connected;
 status_result(_Status = false) -> connecting.
 
-do_cmd(PoolName, cluster, {cmd, Command}) ->
-    eredis_cluster:q(PoolName, Command);
-do_cmd(Conn, _Type, {cmd, Command}) ->
-    eredis:q(Conn, Command);
-do_cmd(PoolName, cluster, {cmds, Commands}) ->
-    % TODO
-    % Cluster mode is currently incompatible with batching.
-    wrap_qp_result([eredis_cluster:q(PoolName, Command) || Command <- Commands]);
-do_cmd(Conn, _Type, {cmds, Commands}) ->
-    wrap_qp_result(eredis:qp(Conn, Commands)).
+do_cmd(_PoolName, _Type, _Query) ->
+    ok.
+% do_cmd(PoolName, cluster, {cmd, Command}) ->
+%     eredis_cluster:q(PoolName, Command);
+% do_cmd(Conn, _Type, {cmd, Command}) ->
+%     eredis:q(Conn, Command);
+% do_cmd(PoolName, cluster, {cmds, Commands}) ->
+%     % TODO
+%     % Cluster mode is currently incompatible with batching.
+%     wrap_qp_result([eredis_cluster:q(PoolName, Command) || Command <- Commands]);
+% do_cmd(Conn, _Type, {cmds, Commands}) ->
+%     wrap_qp_result(eredis:qp(Conn, Commands)).
 
-wrap_qp_result({error, _} = Error) ->
-    Error;
-wrap_qp_result(Results) when is_list(Results) ->
-    AreAllOK = lists:all(
-        fun
-            ({ok, _}) -> true;
-            ({error, _}) -> false
-        end,
-        Results
-    ),
-    case AreAllOK of
-        true -> {ok, Results};
-        false -> {error, Results}
-    end.
+% wrap_qp_result({error, _} = Error) ->
+%     Error;
+% wrap_qp_result(Results) when is_list(Results) ->
+%     AreAllOK = lists:all(
+%         fun
+%             ({ok, _}) -> true;
+%             ({error, _}) -> false
+%         end,
+%         Results
+%     ),
+%     case AreAllOK of
+%         true -> {ok, Results};
+%         false -> {error, Results}
+%     end.
 
 %% ===================================================================
 connect(Opts) ->
