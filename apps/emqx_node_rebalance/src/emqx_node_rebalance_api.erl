@@ -117,7 +117,7 @@ schema("/load_rebalance/:node/start") ->
             'requestBody' =>
                 emqx_dashboard_swagger:schema_with_examples(
                     ref(rebalance_start),
-                    rebalance_example()
+                    #{rebalance => rebalance_example()}
                 ),
             responses => #{
                 200 => response_schema(),
@@ -152,7 +152,7 @@ schema("/load_rebalance/:node/evacuation/start") ->
             'requestBody' =>
                 emqx_dashboard_swagger:schema_with_examples(
                     ref(rebalance_evacuation_start),
-                    rebalance_evacuation_example()
+                    #{evacuation => rebalance_evacuation_example()}
                 ),
             responses => #{
                 200 => response_schema(),
