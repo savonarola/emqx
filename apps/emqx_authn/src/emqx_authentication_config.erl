@@ -148,20 +148,18 @@ do_pre_config_update(Paths, NewConfig, _OldConfig) ->
 -spec post_config_update(
     list(atom()),
     update_request(),
-    map() | list(),
+    map() | list() | undefined,
     emqx_config:raw_config(),
     emqx_config:app_envs()
 ) ->
     ok | {ok, map()} | {error, term()}.
-post_config_update(Paths, UpdateReq, NewConfig, OldConfig, AppEnvs) ->
-    do_post_config_update(Paths, UpdateReq, to_list(NewConfig), OldConfig, AppEnvs).
-
-do_post_config_update(
-    _, {create_authenticator, ChainName, Config}, NewConfig, _OldConfig, _AppEnvs
+post_config_update(
+    _, {create_authenticator, ChainName, Config}, NewConfig0, _OldConfig, _AppEnvs
 ) ->
+    NewConfig = to_list(NewConfig0),
     NConfig = get_authenticator_config(authenticator_id(Config), NewConfig),
     emqx_authentication:create_authenticator(ChainName, NConfig);
-do_post_config_update(
+post_config_update(
     _,
     {delete_authenticator, ChainName, AuthenticatorID},
     _NewConfig,
@@ -169,20 +167,21 @@ do_post_config_update(
     _AppEnvs
 ) ->
     emqx_authentication:delete_authenticator(ChainName, AuthenticatorID);
-do_post_config_update(
+post_config_update(
     _,
     {update_authenticator, ChainName, AuthenticatorID, Config},
-    NewConfig,
+    NewConfig0,
     _OldConfig,
     _AppEnvs
 ) ->
+    NewConfig = to_list(NewConfig0),
     case get_authenticator_config(authenticator_id(Config), NewConfig) of
         {error, not_found} ->
             {error, {not_found, {authenticator, AuthenticatorID}}};
         NConfig ->
             emqx_authentication:update_authenticator(ChainName, AuthenticatorID, NConfig)
     end;
-do_post_config_update(
+post_config_update(
     _,
     {move_authenticator, ChainName, AuthenticatorID, Position},
     _NewConfig,
@@ -190,9 +189,9 @@ do_post_config_update(
     _AppEnvs
 ) ->
     emqx_authentication:move_authenticator(ChainName, AuthenticatorID, Position);
-do_post_config_update(_, _UpdateReq, OldConfig, OldConfig, _AppEnvs) ->
+post_config_update(_, _UpdateReq, OldConfig, OldConfig, _AppEnvs) ->
     ok;
-do_post_config_update(Paths, _UpdateReq, NewConfig0, OldConfig0, _AppEnvs) ->
+post_config_update(Paths, _UpdateReq, NewConfig0, OldConfig0, _AppEnvs) ->
     ChainName = chain_name(Paths),
     OldConfig = to_list(OldConfig0),
     NewConfig = to_list(NewConfig0),
@@ -201,7 +200,7 @@ do_post_config_update(Paths, _UpdateReq, NewConfig0, OldConfig0, _AppEnvs) ->
     ok = delete_authenticators(NewIds, ChainName, OldConfig),
     ok = create_or_update_authenticators(OldIds, ChainName, NewConfig),
     ok = emqx_authentication:reorder_authenticator(ChainName, NewIds),
-    ok = maybe_delete_chain(ChainName, NewConfig),
+    ok = maybe_delete_chain(ChainName, NewConfig0),
     ok.
 
 maybe_delete_chain(ChainName, undefined) ->
