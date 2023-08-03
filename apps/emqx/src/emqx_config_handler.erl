@@ -464,7 +464,7 @@ propagate_pre_config_updates_to_subconf_key(
         old_raw_conf := OldRawConf,
         new_raw_conf := NewRawConf,
         conf_key_path := ConfKeyPath
-    } = Ctx0
+    } = Ctx
 ) ->
     AtomKey = atom(Key),
     SubHandlers = get_sub_handlers(AtomKey, Handlers),
@@ -474,11 +474,11 @@ propagate_pre_config_updates_to_subconf_key(
     SubConfKeyPath = ConfKeyPath ++ [AtomKey],
     case {SubOldConf, SubNewConf0} of
         {undefined, undefined} ->
-            {ok, Ctx0};
-        _ ->
+            {ok, Ctx};
+        {_, _} ->
             case call_pre_config_update(SubHandlers, SubOldConf, SubNewConf0, SubConfKeyPath) of
-                {ok, SubNewConf1} ->
-                    {ok, Ctx0#{new_raw_conf := maps:put(BinKey, SubNewConf1, NewRawConf)}};
+                {ok, _SubNewConf1} ->
+                    {ok, Ctx};
                 {error, _} = Error ->
                     Error
             end
