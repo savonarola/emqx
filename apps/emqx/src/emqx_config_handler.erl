@@ -331,15 +331,15 @@ do_post_config_update(
     Result,
     ConfKeyPath
 ) ->
-    call_post_config_update(
-        Handlers,
-        OldConf,
-        NewConf,
-        AppEnvs,
-        up_req(UpdateArgs),
-        Result,
-        ConfKeyPath
-    );
+    call_post_config_update(#{
+        handlers => Handlers,
+        old_conf => OldConf,
+        new_conf => NewConf,
+        app_envs => AppEnvs,
+        update_req => up_req(UpdateArgs),
+        result => Result,
+        conf_key_path => ConfKeyPath
+    });
 do_post_config_update(
     [ConfKey | SubConfKeyPath],
     Handlers,
@@ -365,10 +365,22 @@ do_post_config_update(
         ConfKeyPath
     ).
 
-get_sub_handlers(ConfKey, Handlers) ->
+get_sub_handlers(ConfKey, Handlers) when is_atom(ConfKey) ->
     case maps:find(ConfKey, Handlers) of
         error -> maps:get(?WKEY, Handlers, #{});
         {ok, SubHandlers} -> SubHandlers
+    end;
+get_sub_handlers(ConfKeyBin, Handlers) when is_binary(ConfKeyBin) ->
+    case
+        lists:search(
+            fun({Key, _SubHandlers}) ->
+                ConfKeyBin =:= bin(Key)
+            end,
+            maps:to_list(Handlers)
+        )
+    of
+        {value, {_, SubHandlers}} -> SubHandlers;
+        false -> maps:get(?WKEY, Handlers, #{})
     end.
 
 get_sub_config(ConfKey, Conf) when is_map(Conf) ->
@@ -377,56 +389,201 @@ get_sub_config(ConfKey, Conf) when is_map(Conf) ->
 get_sub_config(_, _Conf) ->
     undefined.
 
-call_pre_config_update(#{?MOD := HandlerName}, OldRawConf, UpdateReq, ConfKeyPath) ->
+call_pre_config_update(#{?MOD := HandlerName} = Handlers, OldRawConf, UpdateReq, ConfKeyPath) ->
     case erlang:function_exported(HandlerName, pre_config_update, 3) of
         true ->
             case HandlerName:pre_config_update(ConfKeyPath, UpdateReq, OldRawConf) of
-                {ok, NewUpdateReq} -> {ok, NewUpdateReq};
-                {error, Reason} -> {error, {pre_config_update, HandlerName, Reason}}
+                {ok, NewUpdateReq} ->
+                    case
+                        propagate_pre_config_updates_to_subconf(#{
+                            handlers => Handlers,
+                            old_raw_conf => OldRawConf,
+                            new_raw_conf => NewUpdateReq,
+                            conf_key_path => ConfKeyPath
+                        })
+                    of
+                        {ok, NewUpdateReq1} ->
+                            {ok, NewUpdateReq1};
+                        {error, _} = Error ->
+                            Error
+                    end;
+                {error, Reason} ->
+                    {error, {pre_config_update, HandlerName, Reason}}
             end;
         false ->
             merge_to_old_config(UpdateReq, OldRawConf)
     end;
-call_pre_config_update(_Handlers, OldRawConf, UpdateReq, _ConfKeyPath) ->
-    merge_to_old_config(UpdateReq, OldRawConf).
+call_pre_config_update(Handlers, OldRawConf, UpdateReq, ConfKeyPath) ->
+    case
+        propagate_pre_config_updates_to_subconf(#{
+            handlers => Handlers,
+            old_raw_conf => OldRawConf,
+            new_raw_conf => UpdateReq,
+            conf_key_path => ConfKeyPath
+        })
+    of
+        {ok, NewRawConf} ->
+            merge_to_old_config(NewRawConf, OldRawConf);
+        {error, _} = Error ->
+            Error
+    end.
 
-call_post_config_update(
-    #{?MOD := HandlerName},
-    OldConf,
-    NewConf,
-    AppEnvs,
-    UpdateReq,
-    Result,
-    ConfKeyPath
+propagate_pre_config_updates_to_subconf(
+    #{handlers := #{?WKEY := _}} = Ctx
 ) ->
-    case erlang:function_exported(HandlerName, post_config_update, 5) of
+    propagate_pre_config_updates_to_subconf_wkey(Ctx);
+propagate_pre_config_updates_to_subconf(
+    #{handlers := Handlers} = Ctx
+) ->
+    Keys = maps:keys(maps:without([?MOD], Handlers)),
+    propagate_pre_config_updates_to_subconf_keys(Keys, Ctx).
+
+propagate_pre_config_updates_to_subconf_wkey(
+    #{
+        new_raw_conf := NewRawConf,
+        old_raw_conf := OldRawConf
+    } = Ctx
+) ->
+    Keys = propagate_keys(NewRawConf, OldRawConf),
+    propagate_pre_config_updates_to_subconf_keys(Keys, Ctx).
+
+propagate_pre_config_updates_to_subconf_keys([], #{new_raw_conf := NewRawConf}) ->
+    {ok, NewRawConf};
+propagate_pre_config_updates_to_subconf_keys([Key | Keys], Ctx0) ->
+    case propagate_pre_config_updates_to_subconf_key(Key, Ctx0) of
+        {ok, Ctx1} ->
+            propagate_pre_config_updates_to_subconf_keys(Keys, Ctx1);
+        {error, _} = Error ->
+            Error
+    end.
+
+propagate_pre_config_updates_to_subconf_key(
+    Key,
+    #{
+        handlers := Handlers,
+        old_raw_conf := OldRawConf,
+        new_raw_conf := NewRawConf,
+        conf_key_path := ConfKeyPath
+    } = Ctx0
+) ->
+    AtomKey = atom(Key),
+    SubHandlers = get_sub_handlers(AtomKey, Handlers),
+    BinKey = bin(Key),
+    SubNewConf0 = get_sub_config(BinKey, NewRawConf),
+    SubOldConf = get_sub_config(BinKey, OldRawConf),
+    SubConfKeyPath = ConfKeyPath ++ [AtomKey],
+    case {SubOldConf, SubNewConf0} of
+        {undefined, undefined} ->
+            {ok, Ctx0};
+        _ ->
+            case call_pre_config_update(SubHandlers, SubOldConf, SubNewConf0, SubConfKeyPath) of
+                {ok, SubNewConf1} ->
+                    {ok, Ctx0#{new_raw_conf := maps:put(BinKey, SubNewConf1, NewRawConf)}};
+                {error, _} = Error ->
+                    Error
+            end
+    end.
+
+call_post_config_update(#{handlers := Handlers} = Ctx) ->
+    SubHandlers = maps:without([?MOD], Handlers),
+    case propagate_post_config_updates_to_subconf(Ctx#{handlers := SubHandlers}) of
+        {ok, Result1} ->
+            call_proper_post_config_update(Ctx#{result := Result1});
+        Error ->
+            Error
+    end.
+
+call_proper_post_config_update(
+    #{
+        handlers := #{?MOD := Module},
+        result := Result
+    } = Ctx
+) ->
+    case erlang:function_exported(Module, post_config_update, 5) of
         true ->
-            case
-                HandlerName:post_config_update(
-                    ConfKeyPath,
-                    UpdateReq,
-                    NewConf,
-                    OldConf,
-                    AppEnvs
-                )
-            of
+            case apply_post_config_update(Module, Ctx) of
                 ok -> {ok, Result};
-                {ok, Result1} -> {ok, Result#{HandlerName => Result1}};
-                {error, Reason} -> {error, {post_config_update, HandlerName, Reason}}
+                {ok, Result1} -> {ok, Result#{Module => Result1}};
+                {error, Reason} -> {error, {post_config_update, Module, Reason}}
             end;
         false ->
             {ok, Result}
     end;
-call_post_config_update(
-    _Handlers,
-    _OldConf,
-    _NewConf,
-    _AppEnvs,
-    _UpdateReq,
-    Result,
-    _ConfKeyPath
+call_proper_post_config_update(
+    #{result := Result}
 ) ->
     {ok, Result}.
+
+apply_post_config_update(Module, #{
+    conf_key_path := ConfKeyPath,
+    update_req := UpdateReq,
+    new_conf := NewConf,
+    old_conf := OldConf,
+    app_envs := AppEnvs
+}) ->
+    Module:post_config_update(
+        ConfKeyPath,
+        UpdateReq,
+        NewConf,
+        OldConf,
+        AppEnvs
+    ).
+
+propagate_post_config_updates_to_subconf(
+    #{handlers := #{?WKEY := _}} = Ctx
+) ->
+    propagate_post_config_updates_to_subconf_wkey(Ctx);
+propagate_post_config_updates_to_subconf(
+    #{handlers := Handlers} = Ctx
+) ->
+    Keys = maps:keys(Handlers),
+    propagate_post_config_updates_to_subconf_keys(Keys, Ctx).
+
+propagate_post_config_updates_to_subconf_wkey(
+    #{
+        old_conf := OldConf,
+        new_conf := NewConf
+    } = Ctx
+) ->
+    Keys = propagate_keys(OldConf, NewConf),
+    propagate_post_config_updates_to_subconf_keys(Keys, Ctx).
+propagate_post_config_updates_to_subconf_keys([], #{result := Result}) ->
+    {ok, Result};
+propagate_post_config_updates_to_subconf_keys([Key | Keys], Ctx) ->
+    case propagate_post_config_updates_to_subconf_key(Key, Ctx) of
+        {ok, Result1} ->
+            propagate_post_config_updates_to_subconf_keys(Keys, Ctx#{result := Result1});
+        Error ->
+            Error
+    end.
+
+propagate_keys(OldConf, NewConf) ->
+    sets:to_list(sets:union(propagate_keys(OldConf), propagate_keys(NewConf))).
+
+propagate_keys(Conf) when is_map(Conf) -> sets:from_list(maps:keys(Conf), [{version, 2}]);
+propagate_keys(_) -> sets:new([{version, 2}]).
+
+propagate_post_config_updates_to_subconf_key(
+    Key,
+    #{
+        handlers := Handlers,
+        new_conf := NewConf,
+        old_conf := OldConf,
+        result := Result,
+        conf_key_path := ConfKeyPath
+    } = Ctx
+) ->
+    SubHandlers = maps:get(Key, Handlers, maps:get(?WKEY, Handlers, undefined)),
+    SubNewConf = get_sub_config(Key, NewConf),
+    SubOldConf = get_sub_config(Key, OldConf),
+    SubConfKeyPath = ConfKeyPath ++ [Key],
+    call_post_config_update(Ctx#{
+        handlers := SubHandlers,
+        new_conf := SubNewConf,
+        old_conf := SubOldConf,
+        result := Result,
+        conf_key_path := SubConfKeyPath
+    }).
 
 %% The default callback of config handlers
 %% the behaviour is overwriting the old config if:

@@ -201,6 +201,12 @@ do_post_config_update(Paths, _UpdateReq, NewConfig0, OldConfig0, _AppEnvs) ->
     ok = delete_authenticators(NewIds, ChainName, OldConfig),
     ok = create_or_update_authenticators(OldIds, ChainName, NewConfig),
     ok = emqx_authentication:reorder_authenticator(ChainName, NewIds),
+    ok = maybe_delete_chain(ChainName, NewConfig),
+    ok.
+
+maybe_delete_chain(ChainName, undefined) ->
+    ok = emqx_authentication:delete_chain(ChainName);
+maybe_delete_chain(_ChainName, _NewConfig) ->
     ok.
 
 %% create new authenticators and update existing ones
