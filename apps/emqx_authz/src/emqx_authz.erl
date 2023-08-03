@@ -161,7 +161,13 @@ pre_config_update(Path, Cmd, Sources) ->
         {error, Reason} -> {error, Reason};
         NSources -> {ok, NSources}
     catch
-        _:Reason -> {error, Reason}
+        _:Reason:Stacktrace ->
+            ?SLOG(warning, #{
+                msg => "emqx_authz_pre_config_update_error",
+                reason => Reason,
+                stacktrace => Stacktrace
+            }),
+            {error, Reason}
     end.
 
 do_pre_config_update(?CONF_KEY_PATH, Cmd, Sources) ->
@@ -214,7 +220,9 @@ do_pre_config_update({?CMD_REPLACE, Sources}, _OldSources) ->
     ok = check_dup_types(NSources),
     NSources;
 do_pre_config_update({Op, Source}, Sources) ->
-    throw({bad_request, #{op => Op, source => Source, sources => Sources}}).
+    throw({bad_request, #{op => Op, source => Source, sources => Sources}});
+do_pre_config_update(NSources, _SourcesOld) when is_list(NSources) ->
+    NSources.
 
 post_config_update(_, _, undefined, _OldSource, _AppEnvs) ->
     ok;
@@ -244,6 +252,8 @@ do_post_config_update(?CONF_KEY_PATH, {{?CMD_DELETE, Type}, _RawNewSource}, _Sou
     ok = ensure_deleted(OldSource, #{clear_metric => true}),
     Front ++ Rear;
 do_post_config_update(?CONF_KEY_PATH, {?CMD_REPLACE, _RawNewSources}, Sources) ->
+    overwrite_entire_sources(Sources);
+do_post_config_update(?CONF_KEY_PATH, _UpdateReq, Sources) ->
     overwrite_entire_sources(Sources);
 do_post_config_update(?ROOT_KEY, Conf, Conf) ->
     #{sources := Sources} = Conf,
