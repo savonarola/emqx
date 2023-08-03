@@ -244,6 +244,16 @@ validate_sql(Sql) ->
 post_config_update(
     [rule_engine, jq_implementation_module],
     _Req,
+    undefined,
+    _OldSysConf,
+    _AppEnvs
+) ->
+    ok;
+%% We never get here actually, because jq_implementation_module is deprecated
+%% and never rendered
+post_config_update(
+    [rule_engine, jq_implementation_module],
+    _Req,
     NewSysConf,
     _OldSysConf,
     _AppEnvs
