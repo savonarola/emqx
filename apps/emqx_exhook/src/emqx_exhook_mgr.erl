@@ -176,11 +176,15 @@ pre_config_update(?SERVERS, {enable, Name, Enable}, OldConf) ->
     ReplaceFun = fun(Conf) -> Conf#{<<"enable">> => Enable} end,
     NewConf = replace_conf(Name, ReplaceFun, OldConf),
     {ok, lists:map(fun maybe_write_certs/1, NewConf)};
+pre_config_update(?SERVERS, NewConf, _OldConf) ->
+    {ok, NewConf};
 pre_config_update(?EXHOOK, NewConf, _OldConf) when NewConf =:= #{} ->
     {ok, NewConf#{<<"servers">> => []}};
 pre_config_update(?EXHOOK, NewConf = #{<<"servers">> := Servers}, _OldConf) ->
     {ok, NewConf#{<<"servers">> => lists:map(fun maybe_write_certs/1, Servers)}}.
 
+post_config_update(?SERVERS, #{<<"servers">> := _}, _NewConf, _OldConf, _AppEnvs) ->
+    ok;
 post_config_update(_KeyPath, UpdateReq, NewConf, OldConf, _AppEnvs) ->
     Result = call({update_config, UpdateReq, NewConf, OldConf}),
     {ok, Result}.
