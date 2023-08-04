@@ -487,8 +487,6 @@ pre_config_update([?ROOT_KEY, _Type, _Name], {action, _Action, Updated}, RawConf
     {ok, emqx_utils_maps:deep_merge(RawConf, Updated)};
 pre_config_update([?ROOT_KEY, _Type, _Name], ?MARK_DEL, _RawConf) ->
     {ok, ?TOMBSTONE_VALUE};
-pre_config_update([?ROOT_KEY, _Type, _Name], NewRawConf, _RawConf) ->
-    {ok, NewRawConf};
 pre_config_update([?ROOT_KEY], RawConf, RawConf) ->
     {ok, RawConf};
 pre_config_update([?ROOT_KEY], NewConf, _RawConf) ->
