@@ -352,6 +352,11 @@ pre_config_update([sysmon, os, sysmem_high_watermark], UpdateReq, _RawConf) ->
 pre_config_update([sysmon, os, mem_check_interval], _UpdateReq, _RawConf) ->
     {error, pre_config_update_error}.
 
+propagated_pre_config_update([sysmon, os, mem_check_interval], _UpdateReq, _RawConf) ->
+    {error, pre_config_update_error};
+propagated_pre_config_update(_ConfKeyPath, _UpdateReq, _RawConf) ->
+    ok.
+
 post_config_update([sysmon], _UpdateReq, _NewConf, _OldConf, _AppEnvs) ->
     {ok, ok};
 post_config_update([sysmon, os], _UpdateReq, _NewConf, _OldConf, _AppEnvs) ->
@@ -364,6 +369,13 @@ post_config_update([sysmon, os, cpu_high_watermark], _UpdateReq, _NewConf, _OldC
     ok;
 post_config_update([sysmon, os, sysmem_high_watermark], _UpdateReq, _NewConf, _OldConf, _AppEnvs) ->
     {error, post_config_update_error}.
+
+propagated_post_config_update(
+    [sysmon, os, sysmem_high_watermark], _UpdateReq, _NewConf, _OldConf, _AppEnvs
+) ->
+    {error, post_config_update_error};
+propagated_post_config_update(_ConfKeyPath, _UpdateReq, _NewConf, _OldConf, _AppEnvs) ->
+    ok.
 
 wait_for_new_pid() ->
     case erlang:whereis(emqx_config_handler) of
