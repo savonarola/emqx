@@ -4,13 +4,13 @@
 
 -module(emqx_ldap_authn).
 
--include_lib("emqx_authn/include/emqx_authn.hrl").
+-include_lib("emqx_auth/include/emqx_authn.hrl").
 -include_lib("emqx/include/logger.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
 -include_lib("eldap/include/eldap.hrl").
 
 -behaviour(hocon_schema).
--behaviour(emqx_authentication).
+-behaviour(emqx_authn_chains).
 
 %% a compatible attribute for version 4.x
 -define(ISENABLED_ATTR, "isEnabled").

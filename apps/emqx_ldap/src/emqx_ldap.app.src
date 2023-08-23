@@ -6,7 +6,7 @@
         kernel,
         stdlib,
         eldap,
-        emqx_authn,
+        emqx_auth,
         emqx_authz
     ]},
     {env, []},

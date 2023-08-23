@@ -4,7 +4,7 @@
 
 -module(emqx_gcp_device_authn).
 
--include_lib("emqx_authn/include/emqx_authn.hrl").
+-include_lib("emqx_auth/include/emqx_authn.hrl").
 -include_lib("emqx/include/logger.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
 -include_lib("jose/include/jose_jwt.hrl").

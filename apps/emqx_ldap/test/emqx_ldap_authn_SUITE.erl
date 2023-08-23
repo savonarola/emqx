@@ -6,7 +6,7 @@
 -compile(nowarn_export_all).
 -compile(export_all).
 
--include_lib("emqx_authn/include/emqx_authn.hrl").
+-include_lib("emqx_auth/include/emqx_authn.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
 
@@ -21,7 +21,7 @@ all() ->
     emqx_common_test_helpers:all(?MODULE).
 
 init_per_testcase(_, Config) ->
-    emqx_authentication:initialize_authentication(?GLOBAL, []),
+    emqx_authn_chains:initialize_authentication(?GLOBAL, []),
     emqx_authn_test_lib:delete_authenticators(
         [authentication],
         ?GLOBAL
@@ -32,12 +32,12 @@ init_per_suite(Config) ->
     _ = application:load(emqx_conf),
     case emqx_common_test_helpers:is_tcp_server_available(?LDAP_HOST, ?LDAP_DEFAULT_PORT) of
         true ->
-            Apps = emqx_cth_suite:start([emqx, emqx_conf, emqx_authn], #{
+            Apps = emqx_cth_suite:start([emqx, emqx_conf, emqx_auth], #{
                 work_dir => ?config(priv_dir, Config)
             }),
             {ok, _} = emqx_resource:create_local(
                 ?LDAP_RESOURCE,
-                ?RESOURCE_GROUP,
+                ?AUTHN_RESOURCE_GROUP,
                 emqx_ldap,
                 ldap_config(),
                 #{}
@@ -67,7 +67,7 @@ t_create(_Config) ->
         {create_authenticator, ?GLOBAL, AuthConfig}
     ),
 
-    {ok, [#{provider := emqx_ldap_authn}]} = emqx_authentication:list_authenticators(?GLOBAL),
+    {ok, [#{provider := emqx_ldap_authn}]} = emqx_authn_chains:list_authenticators(?GLOBAL),
     emqx_authn_test_lib:delete_config(?ResourceID).
 
 t_create_invalid(_Config) ->
@@ -88,7 +88,7 @@ t_create_invalid(_Config) ->
             emqx_authn_test_lib:delete_config(?ResourceID),
             ?assertEqual(
                 {error, {not_found, {chain, ?GLOBAL}}},
-                emqx_authentication:list_authenticators(?GLOBAL)
+                emqx_authn_chains:list_authenticators(?GLOBAL)
             )
         end,
         InvalidConfigs
@@ -136,7 +136,7 @@ t_destroy(_Config) ->
     ),
 
     {ok, [#{provider := emqx_ldap_authn, state := State}]} =
-        emqx_authentication:list_authenticators(?GLOBAL),
+        emqx_authn_chains:list_authenticators(?GLOBAL),
 
     {ok, _} = emqx_ldap_authn:authenticate(
         #{

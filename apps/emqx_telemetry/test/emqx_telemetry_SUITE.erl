@@ -38,7 +38,7 @@ suite() ->
         {repeat, 1}
     ].
 
-apps() -> [emqx_conf, emqx_retainer, emqx_authn, emqx_authz, emqx_modules, emqx_telemetry].
+apps() -> [emqx_conf, emqx_retainer, emqx_auth, emqx_authz, emqx_modules, emqx_telemetry].
 
 init_per_suite(Config) ->
     net_kernel:start(['master@127.0.0.1', longnames]),
@@ -700,7 +700,7 @@ mock_advanced_mqtt_features() ->
     ok.
 
 create_authn(ChainName, built_in_database) ->
-    emqx_authentication:initialize_authentication(
+    emqx_authn_chains:initialize_authentication(
         ChainName,
         [
             #{
@@ -716,7 +716,7 @@ create_authn(ChainName, built_in_database) ->
         ]
     );
 create_authn(ChainName, redis) ->
-    emqx_authentication:initialize_authentication(
+    emqx_authn_chains:initialize_authentication(
         ChainName,
         [
             #{

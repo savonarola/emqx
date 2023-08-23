@@ -48,7 +48,7 @@
             emqx_http_lib,
             emqx_resource,
             emqx_connector,
-            emqx_authn,
+            emqx_auth,
             emqx_authz,
             emqx_auto_subscribe,
             emqx_gateway,

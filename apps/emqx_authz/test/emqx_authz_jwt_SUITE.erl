@@ -20,7 +20,7 @@
 -compile(export_all).
 
 -include_lib("emqx/include/emqx_placeholder.hrl").
--include_lib("emqx_authn/include/emqx_authn.hrl").
+-include_lib("emqx_auth/include/emqx_authn.hrl").
 -include_lib("emqx/include/emqx_mqtt.hrl").
 -include_lib("emqx/include/emqx_access_control.hrl").
 
@@ -38,14 +38,14 @@ groups() ->
 
 init_per_suite(Config) ->
     ok = emqx_common_test_helpers:start_apps(
-        [emqx_conf, emqx_authn, emqx_authz],
+        [emqx_conf, emqx_auth, emqx_authz],
         fun set_special_configs/1
     ),
-    ok = emqx_authentication:initialize_authentication(?GLOBAL, []),
+    ok = emqx_authn_chains:initialize_authentication(?GLOBAL, []),
     Config.
 
 end_per_suite(_Config) ->
-    ok = emqx_common_test_helpers:stop_apps([emqx_authn, emqx_authz, emqx_conf]).
+    ok = emqx_common_test_helpers:stop_apps([emqx_auth, emqx_authz, emqx_conf]).
 
 init_per_testcase(_TestCase, Config) ->
     emqx_authn_test_lib:delete_authenticators(

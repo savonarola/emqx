@@ -401,7 +401,7 @@ users(Prefix) ->
     ].
 
 authn_ids(AuthnConf) ->
-    lists:sort([emqx_authentication:authenticator_id(Conf) || Conf <- AuthnConf]).
+    lists:sort([emqx_authn_chains:authenticator_id(Conf) || Conf <- AuthnConf]).
 
 recompose_version(MajorInt, MinorInt, Patch) ->
     unicode:characters_to_list(
@@ -446,7 +446,7 @@ apps_to_start() ->
         emqx_management,
         emqx_dashboard,
         emqx_authz,
-        emqx_authn,
+        emqx_auth,
         emqx_rule_engine,
         emqx_retainer,
         emqx_prometheus,

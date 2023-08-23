@@ -54,7 +54,7 @@ init_per_suite(Config) ->
         emqx_management,
         emqx_retainer,
         emqx_exhook,
-        emqx_authn,
+        emqx_auth,
         emqx_authz,
         emqx_plugin,
         emqx_opentelemetry
