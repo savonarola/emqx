@@ -38,14 +38,17 @@ start(_StartType, _StartArgs) ->
     %% required by test cases, ensure the injection of schema
     _ = emqx_conf_schema:roots(),
     ok = mria_rlog:wait_for_shards([?AUTHN_SHARD], infinity),
+    ok = emqx_authz_mnesia:init_tables(),
     {ok, Sup} = emqx_authn_sup:start_link(),
+    ok = emqx_authz:init(),
     case initialize() of
         ok -> {ok, Sup};
         {error, Reason} -> {error, Reason}
     end.
 
 stop(_State) ->
-    ok = deinitialize().
+    ok = deinitialize(),
+    ok = emqx_authz:deinit().
 
 %%------------------------------------------------------------------------------
 %% Internal functions
