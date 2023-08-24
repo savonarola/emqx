@@ -18,7 +18,7 @@
 
 -include_lib("emqx/include/logger.hrl").
 
--behaviour(emqx_authz).
+-behaviour(emqx_authz_source).
 
 -ifdef(TEST).
 -compile(export_all).

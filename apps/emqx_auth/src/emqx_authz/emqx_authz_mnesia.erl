@@ -40,7 +40,7 @@
     rules :: rules()
 }).
 
--behaviour(emqx_authz).
+-behaviour(emqx_authz_source).
 -behaviour(emqx_db_backup).
 
 %% AuthZ Callbacks

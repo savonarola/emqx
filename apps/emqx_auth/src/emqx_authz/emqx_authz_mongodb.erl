@@ -21,7 +21,7 @@
 -include_lib("emqx/include/logger.hrl").
 -include_lib("emqx/include/emqx_placeholder.hrl").
 
--behaviour(emqx_authz).
+-behaviour(emqx_authz_source).
 
 %% AuthZ Callbacks
 -export([
@@ -64,7 +64,7 @@ update(#{filter := Filter} = Source) ->
     end.
 
 destroy(#{annotations := #{id := Id}}) ->
-    ok = emqx_resource:remove_local(Id).
+    emqx_authz_utils:remove_resource(Id).
 
 authorize(
     Client,

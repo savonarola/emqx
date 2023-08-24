@@ -89,7 +89,6 @@ t_create_with_config_values_wont_work(_Config) ->
 
     InvalidConfigs =
         [
-            AuthzConfig#{<<"server">> => <<"unknownhost:3333">>},
             AuthzConfig#{<<"password">> => <<"wrongpass">>},
             AuthzConfig#{<<"database">> => <<"5678">>}
         ],

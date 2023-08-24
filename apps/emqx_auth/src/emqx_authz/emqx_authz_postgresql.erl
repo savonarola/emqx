@@ -23,7 +23,7 @@
 
 -include_lib("epgsql/include/epgsql.hrl").
 
--behaviour(emqx_authz).
+-behaviour(emqx_authz_source).
 
 %% AuthZ Callbacks
 -export([
@@ -75,7 +75,7 @@ update(#{query := SQL0, annotations := #{id := ResourceID}} = Source) ->
     end.
 
 destroy(#{annotations := #{id := Id}}) ->
-    ok = emqx_resource:remove_local(Id).
+    emqx_authz_utils:remove_resource(Id).
 
 authorize(
     Client,

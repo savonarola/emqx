@@ -8,7 +8,7 @@
     fields/1,
     is_enterprise_module/1,
     authz_sources_types/0,
-    type/1,
+    register_sources/0,
     desc/1
 ]).
 
@@ -32,10 +32,8 @@ is_enterprise_module(_) ->
 authz_sources_types() ->
     [ldap].
 
-%% atom-able name -> type
-type(<<"ldap">>) -> ldap;
-type(ldap) -> ldap;
-type(Unknown) -> throw({unknown_authz_source_type, Unknown}).
+register_sources() ->
+    ok = emqx_authz:register_source(ldap, emqx_ldap_authz).
 
 desc(ldap) ->
     emqx_ldap_authz:description();
@@ -44,7 +42,7 @@ desc(_) ->
 
 -else.
 
--dialyzer({nowarn_function, [fields/1, type/1, desc/1]}).
+-dialyzer({nowarn_function, [fields/1, desc/1]}).
 
 type_names() ->
     [].
@@ -58,8 +56,8 @@ is_enterprise_module(_) ->
 authz_sources_types() ->
     [].
 
-%% should never happen if the input is type-checked by hocon schema
-type(Unknown) -> throw({unknown_authz_source_type, Unknown}).
+register_sources() ->
+    ok.
 
 desc(_) ->
     undefined.

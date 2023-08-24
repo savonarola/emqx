@@ -22,7 +22,7 @@
 -include_lib("emqx/include/emqx_placeholder.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
--behaviour(emqx_authz).
+-behaviour(emqx_authz_source).
 
 %% AuthZ Callbacks
 -export([
@@ -73,7 +73,7 @@ update(Config) ->
     end.
 
 destroy(#{annotations := #{id := Id}}) ->
-    ok = emqx_resource:remove_local(Id).
+    emqx_authz_utils:remove_resource(Id).
 
 authorize(
     Client,

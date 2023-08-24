@@ -24,6 +24,7 @@
     create_resource/2,
     create_resource/3,
     update_resource/2,
+    remove_resource/1,
     update_config/2,
     parse_deep/2,
     parse_str/2,
@@ -80,6 +81,20 @@ update_resource(Module, #{annotations := #{id := ResourceId}} = Config) ->
             {error, Reason} -> {error, Reason}
         end,
     start_resource_if_enabled(Result, ResourceId, Config).
+
+remove_resource(ResourceId) ->
+    case emqx_resource:remove_local(ResourceId) of
+        ok ->
+            ok;
+        {error, not_found} ->
+            ?SLOG(warning, #{msg => "removed_authz_resourse_not_found", resource_id => ResourceId}),
+            ok;
+        {error, Reason} ->
+            ?SLOG(error, #{
+                msg => "remove_authz_resourse_failed", resource_id => ResourceId, reason => Reason
+            }),
+            error(Reason)
+    end.
 
 start_resource_if_enabled({ok, _} = Result, ResourceId, #{enable := true}) ->
     _ = emqx_resource:start(ResourceId),

@@ -23,7 +23,7 @@
 -include_lib("emqx/include/emqx_placeholder.hrl").
 -include_lib("eldap/include/eldap.hrl").
 
--behaviour(emqx_authz).
+-behaviour(emqx_authz_source).
 
 -define(PREPARE_KEY, ?MODULE).
 
@@ -96,7 +96,7 @@ update(Source) ->
     end.
 
 destroy(#{annotations := #{id := Id}}) ->
-    ok = emqx_resource:remove_local(Id).
+    emqx_authz_utils:remove_resource(Id).
 
 authorize(
     Client,

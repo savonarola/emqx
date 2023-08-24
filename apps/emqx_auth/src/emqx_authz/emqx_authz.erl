@@ -27,6 +27,7 @@
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 -export([
+    register_source/2,
     register_metrics/0,
     init/0,
     deinit/0,
@@ -57,15 +58,12 @@
     maybe_write_acl_file/1
 ]).
 
--type source() :: map().
-
--type match_result() :: {matched, allow} | {matched, deny} | nomatch.
-
 -type default_result() :: allow | deny.
 
 -type authz_result_value() :: #{result := allow | deny, from => _}.
 -type authz_result() :: {stop, authz_result_value()} | {ok, authz_result_value()} | ignore.
 
+-type source() :: emqx_authz_source:source().
 -type sources() :: [source()].
 
 -define(METRIC_SUPERUSER, 'authorization.superuser').
@@ -75,48 +73,67 @@
 
 -define(METRICS, [?METRIC_SUPERUSER, ?METRIC_ALLOW, ?METRIC_DENY, ?METRIC_NOMATCH]).
 
-%% Initialize authz backend.
-%% Populate the passed configuration map with necessary data,
-%% like `ResourceID`s
--callback create(source()) -> source().
-
-%% Update authz backend.
-%% Change configuration, or simply enable/disable
--callback update(source()) -> source().
-
-%% Destroy authz backend.
-%% Make cleanup of all allocated data.
-%% An authz backend will not be used after `destroy`.
--callback destroy(source()) -> ok.
-
-%% Get authz text description.
--callback description() -> string().
-
-%% Authorize client action.
--callback authorize(
-    emqx_types:clientinfo(),
-    emqx_types:pubsub(),
-    emqx_types:topic(),
-    source()
-) -> match_result().
-
--optional_callbacks([
-    update/1
-]).
-
 -spec register_metrics() -> ok.
 register_metrics() ->
     lists:foreach(fun emqx_metrics:ensure/1, ?METRICS).
 
 init() ->
     ok = register_metrics(),
-    ok = init_metrics(client_info_source()),
     emqx_conf:add_handler(?CONF_KEY_PATH, ?MODULE),
     emqx_conf:add_handler(?ROOT_KEY, ?MODULE),
+    emqx_authz_source_registry:create(),
+    ok = register_source(client_info, emqx_authz_client_info),
+
+    ok = register_source(file, emqx_authz_file),
+    ok = register_source(http, emqx_authz_http),
+    ok = register_source(mongodb, emqx_authz_mongodb),
+    ok = register_source(mysql, emqx_authz_mysql),
+    ok = register_source(redis, emqx_authz_redis),
+    ok = register_source(postgresql, emqx_authz_postgresql),
+    ok = register_source(built_in_database, emqx_authz_mnesia),
+    emqx_authz_enterprise:register_sources().
+
+register_source(Type, Module) ->
+    ok = emqx_authz_source_registry:register(Type, Module),
+    install_sources(not is_hook_installed() andalso are_all_providers_registered()).
+
+is_hook_installed() ->
+    lists:any(
+        fun(Callback) ->
+            case emqx_hooks:callback_action(Callback) of
+                {?MODULE, authorize, _} -> true;
+                _ -> false
+            end
+        end,
+        emqx_hooks:lookup('client.authorize')
+    ).
+
+are_all_providers_registered() ->
+    Types = lists:map(
+        fun(#{type := Type}) -> Type end,
+        emqx_conf:get(?CONF_KEY_PATH, [])
+    ),
+    try
+        _ = lists:foreach(
+            fun(Type) ->
+                _ = emqx_authz_source_registry:get(Type)
+            end,
+            Types
+        ),
+        true
+    catch
+        {unknown_authz_source_type, _Type} ->
+            false
+    end.
+
+install_sources(true) ->
+    ok = init_metrics(client_info_source()),
     Sources = emqx_conf:get(?CONF_KEY_PATH, []),
     ok = check_dup_types(Sources),
     NSources = create_sources(Sources),
-    ok = emqx_hooks:put('client.authorize', {?MODULE, authorize, [NSources]}, ?HP_AUTHZ).
+    ok = emqx_hooks:put('client.authorize', {?MODULE, authorize, [NSources]}, ?HP_AUTHZ);
+install_sources(false) ->
+    ok.
 
 deinit() ->
     ok = emqx_hooks:del('client.authorize', {?MODULE, authorize}),
@@ -570,35 +587,15 @@ find_action_in_hooks() ->
     [Action] = [Action || {callback, {?MODULE, authorize, _} = Action, _, _} <- Callbacks],
     Action.
 
-authz_module(built_in_database) ->
-    emqx_authz_mnesia;
 authz_module(Type) ->
-    case emqx_authz_enterprise:is_enterprise_module(Type) of
-        {ok, Module} ->
-            Module;
-        _ ->
-            list_to_existing_atom("emqx_authz_" ++ atom_to_list(Type))
-    end.
+    emqx_authz_source_registry:module(Type).
 
-type(#{type := Type}) -> type(Type);
-type(#{<<"type">> := Type}) -> type(Type);
-type(file) -> file;
-type(<<"file">>) -> file;
-type(http) -> http;
-type(<<"http">>) -> http;
-type(mongodb) -> mongodb;
-type(<<"mongodb">>) -> mongodb;
-type(mysql) -> mysql;
-type(<<"mysql">>) -> mysql;
-type(redis) -> redis;
-type(<<"redis">>) -> redis;
-type(postgresql) -> postgresql;
-type(<<"postgresql">>) -> postgresql;
-type(built_in_database) -> built_in_database;
-type(<<"built_in_database">>) -> built_in_database;
-type(client_info) -> client_info;
-type(<<"client_info">>) -> client_info;
-type(MaybeEnterprise) -> emqx_authz_enterprise:type(MaybeEnterprise).
+type(#{type := Type}) ->
+    type(Type);
+type(#{<<"type">> := Type}) ->
+    type(Type);
+type(Type) when is_atom(Type) orelse is_binary(Type) ->
+    emqx_authz_source_registry:get(Type).
 
 maybe_write_files(#{<<"type">> := <<"file">>} = Source) ->
     write_acl_file(Source);
