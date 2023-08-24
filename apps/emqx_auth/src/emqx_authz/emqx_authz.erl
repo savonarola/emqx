@@ -28,6 +28,7 @@
 
 -export([
     register_source/2,
+    unregister_source/1,
     register_metrics/0,
     init/0,
     deinit/0,
@@ -49,13 +50,18 @@
 
 -export([post_config_update/5, pre_config_update/3]).
 
--export([acl_conf_file/0]).
+-export([
+    maybe_read_source_files/1,
+    maybe_read_source_files_safe/1
+]).
+
+% -export([acl_conf_file/0]).
 
 %% Data backup
 -export([
     import_config/1,
-    maybe_read_acl_file/1,
-    maybe_write_acl_file/1
+    maybe_read_files/1,
+    maybe_write_files/1
 ]).
 
 -type default_result() :: allow | deny.
@@ -84,7 +90,7 @@ init() ->
     emqx_authz_source_registry:create(),
     ok = register_source(client_info, emqx_authz_client_info),
 
-    ok = register_source(file, emqx_authz_file),
+    % ok = register_source(file, emqx_authz_file),
     ok = register_source(http, emqx_authz_http),
     ok = register_source(mongodb, emqx_authz_mongodb),
     ok = register_source(mysql, emqx_authz_mysql),
@@ -96,6 +102,9 @@ init() ->
 register_source(Type, Module) ->
     ok = emqx_authz_source_registry:register(Type, Module),
     install_sources(not is_hook_installed() andalso are_all_providers_registered()).
+
+unregister_source(Type) ->
+    ok = emqx_authz_source_registry:unregister(Type).
 
 is_hook_installed() ->
     lists:any(
@@ -180,7 +189,14 @@ pre_config_update(Path, Cmd, Sources) ->
         {error, Reason} -> {error, Reason};
         NSources -> {ok, NSources}
     catch
-        _:Reason -> {error, Reason}
+        Error:Reason:Stack ->
+            ?SLOG(info, #{
+                msg => "error_in_pre_config_update",
+                exception => Error,
+                reason => Reason,
+                stacktrace => Stack
+            }),
+            {error, Reason}
     end.
 
 do_pre_config_update(?CONF_KEY_PATH, Cmd, Sources) ->
@@ -208,17 +224,17 @@ do_pre_config_replace(NewConf, OldConf) ->
 do_pre_config_update({?CMD_MOVE, _, _} = Cmd, Sources) ->
     do_move(Cmd, Sources);
 do_pre_config_update({?CMD_PREPEND, Source}, Sources) ->
-    NSource = maybe_write_files(Source),
+    NSource = maybe_write_source_files(Source),
     NSources = [NSource] ++ Sources,
     ok = check_dup_types(NSources),
     NSources;
 do_pre_config_update({?CMD_APPEND, Source}, Sources) ->
-    NSource = maybe_write_files(Source),
+    NSource = maybe_write_source_files(Source),
     NSources = Sources ++ [NSource],
     ok = check_dup_types(NSources),
     NSources;
 do_pre_config_update({{?CMD_REPLACE, Type}, Source}, Sources) ->
-    NSource = maybe_write_files(Source),
+    NSource = maybe_write_source_files(Source),
     {_Old, Front, Rear} = take(Type, Sources),
     NSources = Front ++ [NSource | Rear],
     ok = check_dup_types(NSources),
@@ -229,7 +245,7 @@ do_pre_config_update({{?CMD_DELETE, Type}, _Source}, Sources) ->
     NSources;
 do_pre_config_update({?CMD_REPLACE, Sources}, _OldSources) ->
     %% overwrite the entire config!
-    NSources = lists:map(fun maybe_write_files/1, Sources),
+    NSources = lists:map(fun maybe_write_source_files/1, Sources),
     ok = check_dup_types(NSources),
     NSources;
 do_pre_config_update({Op, Source}, Sources) ->
@@ -519,29 +535,23 @@ changed_paths(OldSources, NewSources) ->
     Changed = maps:get(changed, emqx_utils:diff_lists(NewSources, OldSources, fun type/1)),
     [?CONF_KEY_PATH ++ [type(OldSource)] || {OldSource, _} <- Changed].
 
-maybe_read_acl_file(RawConf) ->
-    maybe_convert_acl_file(RawConf, fun read_acl_file/1).
+maybe_read_files(RawConf) ->
+    maybe_convert_sources(RawConf, fun maybe_read_source_files/1).
 
-maybe_write_acl_file(RawConf) ->
-    maybe_convert_acl_file(RawConf, fun write_acl_file/1).
+maybe_write_files(RawConf) ->
+    maybe_convert_sources(RawConf, fun maybe_write_source_files/1).
 
-maybe_convert_acl_file(
+maybe_convert_sources(
     #{?CONF_NS_BINARY := #{<<"sources">> := Sources} = AuthRawConf} = RawConf, Fun
 ) ->
-    Sources1 = lists:map(
-        fun
-            (#{<<"type">> := <<"file">>} = FileSource) -> Fun(FileSource);
-            (Source) -> Source
-        end,
-        Sources
-    ),
+    Sources1 = lists:map(Fun, Sources),
     RawConf#{?CONF_NS_BINARY => AuthRawConf#{<<"sources">> => Sources1}};
-maybe_convert_acl_file(RawConf, _Fun) ->
+maybe_convert_sources(RawConf, _Fun) ->
     RawConf.
 
-read_acl_file(#{<<"path">> := Path} = Source) ->
-    {ok, Rules} = emqx_authz_file:read_file(Path),
-    maps:remove(<<"path">>, Source#{<<"rules">> => Rules}).
+% read_acl_file(#{<<"path">> := Path} = Source) ->
+%     {ok, Rules} = emqx_authz_file:read_file(Path),
+%     maps:remove(<<"path">>, Source#{<<"rules">> => Rules}).
 
 %%------------------------------------------------------------------------------
 %% Extended Features
@@ -597,25 +607,49 @@ type(#{<<"type">> := Type}) ->
 type(Type) when is_atom(Type) orelse is_binary(Type) ->
     emqx_authz_source_registry:get(Type).
 
-maybe_write_files(#{<<"type">> := <<"file">>} = Source) ->
-    write_acl_file(Source);
-maybe_write_files(NewSource) ->
-    maybe_write_certs(NewSource).
+maybe_write_source_files(Source) ->
+    Module = authz_module(type(Source)),
+    case erlang:function_exported(Module, write_files, 1) of
+        true ->
+            Module:write_files(Source);
+        false ->
+            maybe_write_certs(Source)
+    end.
 
-write_acl_file(#{<<"rules">> := Rules} = Source0) ->
-    AclPath = ?MODULE:acl_conf_file(),
-    %% Always check if the rules are valid before writing to the file
-    %% If the rules are invalid, the old file will be kept
-    ok = check_acl_file_rules(AclPath, Rules),
-    ok = write_file(AclPath, Rules),
-    Source1 = maps:remove(<<"rules">>, Source0),
-    maps:put(<<"path">>, AclPath, Source1);
-write_acl_file(Source) ->
-    Source.
+maybe_read_source_files(Source) ->
+    Module = authz_module(type(Source)),
+    case erlang:function_exported(Module, read_files, 1) of
+        true ->
+            Module:read_files(Source);
+        false ->
+            Source
+    end.
 
-%% @doc where the acl.conf file is stored.
-acl_conf_file() ->
-    filename:join([emqx:data_dir(), "authz", "acl.conf"]).
+maybe_read_source_files_safe(Source0) ->
+    try maybe_read_source_files(Source0) of
+        Source1 ->
+            {ok, Source1}
+    catch
+        Error:Reason:Stacktrace ->
+            ?SLOG(error, #{
+                msg => "error_in_maybe_read_source_files",
+                exception => Error,
+                reason => Reason,
+                stacktrace => Stacktrace
+            }),
+            {error, Reason}
+    end.
+
+% write_acl_file(#{<<"rules">> := Rules} = Source0) ->
+%     AclPath = ?MODULE:acl_conf_file(),
+%     %% Always check if the rules are valid before writing to the file
+%     %% If the rules are invalid, the old file will be kept
+%     ok = check_acl_file_rules(AclPath, Rules),
+%     ok = write_file(AclPath, Rules),
+%     Source1 = maps:remove(<<"rules">>, Source0),
+%     maps:put(<<"path">>, AclPath, Source1);
+% write_acl_file(Source) ->
+%     Source.
 
 maybe_write_certs(#{<<"type">> := Type, <<"ssl">> := SSL = #{}} = Source) ->
     case emqx_tls_lib:ensure_ssl_files(ssl_file_path(Type), SSL) of
@@ -628,15 +662,15 @@ maybe_write_certs(#{<<"type">> := Type, <<"ssl">> := SSL = #{}} = Source) ->
 maybe_write_certs(#{} = Source) ->
     Source.
 
-write_file(Filename, Bytes) ->
-    ok = filelib:ensure_dir(Filename),
-    case file:write_file(Filename, Bytes) of
-        ok ->
-            ok;
-        {error, Reason} ->
-            ?SLOG(error, #{filename => Filename, msg => "write_file_error", reason => Reason}),
-            throw(Reason)
-    end.
+% write_file(Filename, Bytes) ->
+%     ok = filelib:ensure_dir(Filename),
+%     case file:write_file(Filename, Bytes) of
+%         ok ->
+%             ok;
+%         {error, Reason} ->
+%             ?SLOG(error, #{filename => Filename, msg => "write_file_error", reason => Reason}),
+%             throw(Reason)
+%     end.
 
 ssl_file_path(Type) ->
     filename:join(["authz", Type]).
@@ -648,18 +682,6 @@ get_source_by_type(Type, Sources) ->
 %% @doc put hook with (maybe) initialized new source and old sources
 update_authz_chain(Actions) ->
     emqx_hooks:put('client.authorize', {?MODULE, authorize, [Actions]}, ?HP_AUTHZ).
-
-check_acl_file_rules(Path, Rules) ->
-    TmpPath = Path ++ ".tmp",
-    try
-        ok = write_file(TmpPath, Rules),
-        {ok, _} = emqx_authz_file:validate(TmpPath),
-        ok
-    catch
-        throw:Reason -> throw(Reason)
-    after
-        _ = file:delete(TmpPath)
-    end.
 
 merge_sources(OriginConf, NewConf) ->
     {OriginSource, NewSources} =

@@ -87,7 +87,7 @@ fields(file) ->
                     string(),
                     #{
                         required => true,
-                        validator => fun(Path) -> element(1, emqx_authz_file:validate(Path)) end,
+                        validator => fun(Path) -> element(1, emqx_auth_file_acl:validate(Path)) end,
                         desc => ?DESC(path)
                     }
                 )}

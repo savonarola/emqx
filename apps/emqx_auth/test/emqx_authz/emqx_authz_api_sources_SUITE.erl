@@ -107,10 +107,10 @@ init_per_suite(Config) ->
     meck:expect(emqx_resource, health_check, fun(St) -> {ok, St} end),
     meck:expect(emqx_resource, remove_local, fun(_) -> ok end),
     meck:expect(
-        emqx_authz,
+        emqx_auth_file_acl,
         acl_conf_file,
         fun() ->
-            emqx_common_test_helpers:deps_path(emqx_authz, "etc/acl.conf")
+            emqx_common_test_helpers:deps_path(emqx_auth_file, "etc/acl.conf")
         end
     ),
 
@@ -206,7 +206,7 @@ t_api(_) ->
         ],
         Sources
     ),
-    ?assert(filelib:is_file(emqx_authz:acl_conf_file())),
+    ?assert(filelib:is_file(emqx_auth_file_acl:acl_conf_file())),
 
     {ok, 204, _} = request(
         put,

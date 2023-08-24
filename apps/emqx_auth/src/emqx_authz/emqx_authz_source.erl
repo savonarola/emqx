@@ -18,6 +18,7 @@
 
 -type source_type() :: atom().
 -type source() :: #{type => source_type(), _ => _}.
+-type raw_source() :: map().
 -type match_result() :: {matched, allow} | {matched, deny} | nomatch.
 
 -export_type([
@@ -51,6 +52,14 @@
     source()
 ) -> match_result().
 
+%% Convert filepath values to the content of the files.
+-callback write_files(raw_source()) -> raw_source() | no_return().
+
+%% Convert filepath values to the content of the files.
+-callback read_files(raw_source()) -> raw_source() | no_return().
+
 -optional_callbacks([
-    update/1
+    update/1,
+    write_files/1,
+    read_files/1
 ]).

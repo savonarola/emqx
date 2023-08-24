@@ -16,7 +16,7 @@
 
 -module(emqx_ldap_authz).
 
--include_lib("emqx_authz/include/emqx_authz.hrl").
+-include_lib("emqx_auth/include/emqx_authz.hrl").
 -include_lib("emqx/include/emqx.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
 -include_lib("emqx/include/logger.hrl").

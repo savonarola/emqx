@@ -39,15 +39,15 @@ init_per_suite(Config) ->
     meck:expect(emqx_resource, create_local, fun(_, _, _, _) -> {ok, meck_data} end),
     meck:expect(emqx_resource, remove_local, fun(_) -> ok end),
     meck:expect(
-        emqx_authz,
+        emqx_auth_file_acl,
         acl_conf_file,
         fun() ->
-            emqx_common_test_helpers:deps_path(emqx_auth, "etc/acl.conf")
+            emqx_common_test_helpers:deps_path(emqx_auth_file, "etc/acl.conf")
         end
     ),
 
     ok = emqx_common_test_helpers:start_apps(
-        [emqx_conf, emqx_auth],
+        [emqx_conf, emqx_auth, emqx_auth_file],
         fun set_special_configs/1
     ),
     Config.
@@ -61,7 +61,7 @@ end_per_suite(_Config) ->
             <<"sources">> => []
         }
     ),
-    emqx_common_test_helpers:stop_apps([emqx_auth, emqx_conf]),
+    emqx_common_test_helpers:stop_apps([emqx_auth_file, emqx_auth, emqx_conf]),
     meck:unload(emqx_resource),
     ok.
 
@@ -205,7 +205,7 @@ t_bad_file_source(_) ->
     BadActionErr = {invalid_authorization_action, pubsub},
     lists:foreach(
         fun({Source, Error}) ->
-            File = emqx_authz:acl_conf_file(),
+            File = emqx_auth_file_acl:acl_conf_file(),
             {ok, Bin1} = file:read_file(File),
             ?assertEqual(?UPDATE_ERROR(Error), emqx_authz:update(?CMD_REPLACE, [Source])),
             ?assertEqual(?UPDATE_ERROR(Error), emqx_authz:update(?CMD_PREPEND, Source)),

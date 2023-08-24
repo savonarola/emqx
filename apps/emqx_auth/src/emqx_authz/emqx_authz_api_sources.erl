@@ -196,35 +196,14 @@ sources(Method, #{bindings := #{type := Type} = Bindings} = Req) when
     sources(Method, Req#{bindings => Bindings#{type => atom_to_binary(Type, utf8)}});
 sources(get, _) ->
     Sources = lists:foldl(
-        fun
-            (
-                #{
-                    <<"type">> := <<"file">>,
-                    <<"enable">> := Enable,
-                    <<"path">> := Path
-                },
-                AccIn
-            ) ->
-                case emqx_authz_file:read_file(Path) of
-                    {ok, Rules} ->
-                        lists:append(AccIn, [
-                            #{
-                                type => file,
-                                enable => Enable,
-                                rules => Rules
-                            }
-                        ]);
-                    {error, _} ->
-                        lists:append(AccIn, [
-                            #{
-                                type => file,
-                                enable => Enable,
-                                rules => <<"">>
-                            }
-                        ])
-                end;
-            (Source, AccIn) ->
-                lists:append(AccIn, [Source])
+        fun(Source0, AccIn) ->
+            try emqx_authz:maybe_read_source_files(Source0) of
+                Source1 ->
+                    lists:append(AccIn, [Source1])
+            catch
+                _Error:_Reason ->
+                    lists:append(AccIn, [Source0])
+            end
         end,
         [],
         get_raw_sources()
@@ -240,23 +219,17 @@ source(Method, #{bindings := #{type := Type} = Bindings} = Req) when
 source(get, #{bindings := #{type := Type}}) ->
     with_source(
         Type,
-        fun
-            (#{<<"type">> := <<"file">>, <<"enable">> := Enable, <<"path">> := Path}) ->
-                case emqx_authz_file:read_file(Path) of
-                    {ok, Rules} ->
-                        {200, #{
-                            type => file,
-                            enable => Enable,
-                            rules => Rules
-                        }};
-                    {error, Reason} ->
-                        {500, #{
-                            code => <<"INTERNAL_ERROR">>,
-                            message => bin(Reason)
-                        }}
-                end;
-            (Source) ->
-                {200, Source}
+        fun(Source0) ->
+            try emqx_authz:maybe_read_source_files(Source0) of
+                Source1 ->
+                    {200, Source1}
+            catch
+                _Error:Reason ->
+                    {500, #{
+                        code => <<"INTERNAL_ERROR">>,
+                        message => bin(Reason)
+                    }}
+            end
         end
     );
 source(put, #{bindings := #{type := Type}, body := #{<<"type">> := Type} = Body}) ->

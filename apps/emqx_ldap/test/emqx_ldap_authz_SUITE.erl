@@ -6,7 +6,7 @@
 -compile(nowarn_export_all).
 -compile(export_all).
 
--include("emqx_authz.hrl").
+-include_lib("emqx_auth/include/emqx_authz.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("common_test/include/ct.hrl").
 
@@ -165,7 +165,7 @@ stop_apps(Apps) ->
 create_ldap_resource() ->
     {ok, _} = emqx_resource:create_local(
         ?LDAP_RESOURCE,
-        ?RESOURCE_GROUP,
+        ?AUTHZ_RESOURCE_GROUP,
         emqx_ldap,
         ldap_config(),
         #{}
