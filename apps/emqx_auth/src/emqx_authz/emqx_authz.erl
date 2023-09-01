@@ -89,14 +89,6 @@ init() ->
     emqx_conf:add_handler(?ROOT_KEY, ?MODULE),
     emqx_authz_source_registry:create(),
     ok = register_source(client_info, emqx_authz_client_info),
-
-    % ok = register_source(file, emqx_authz_file),
-    % ok = register_source(http, emqx_authz_http),
-    ok = register_source(mongodb, emqx_authz_mongodb),
-    % ok = register_source(mysql, emqx_authz_mysql),
-    % ok = register_source(redis, emqx_authz_redis),
-    % ok = register_source(postgresql, emqx_authz_postgresql),
-    % ok = register_source(built_in_database, emqx_authz_mnesia),
     emqx_authz_enterprise:register_sources().
 
 register_source(Type, Module) ->

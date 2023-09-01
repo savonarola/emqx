@@ -47,6 +47,7 @@ init_per_suite(Config) ->
     ),
     Apps = emqx_cth_suite:start(
         [
+            emqx,
             {emqx_conf,
                 "authorization { cache { enable = false }, no_match = deny, sources = [] }"},
             emqx_auth,
@@ -55,7 +56,8 @@ init_per_suite(Config) ->
             emqx_auth_mnesia,
             emqx_auth_redis,
             emqx_auth_postgresql,
-            emqx_auth_mysql
+            emqx_auth_mysql,
+            emqx_auth_mongodb
         ],
         #{
             work_dir => filename:join(?config(priv_dir, Config), ?MODULE)

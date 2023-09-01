@@ -37,6 +37,7 @@ init_per_suite(Config) ->
         true ->
             Apps = emqx_cth_suite:start(
                 [
+                    emqx,
                     {emqx_conf,
                         "authorization.no_match = deny, authorization.cache.enable = false"},
                     emqx_auth,
@@ -66,11 +67,6 @@ init_per_testcase(_TestCase, Config) ->
 end_per_testcase(_TestCase, _Config) ->
     _ = emqx_authz:set_feature_available(rich_actions, true),
     ok = drop_table(),
-    ok.
-
-set_special_configs(emqx_auth) ->
-    ok = emqx_authz_test_lib:reset_authorizers();
-set_special_configs(_) ->
     ok.
 
 %%------------------------------------------------------------------------------

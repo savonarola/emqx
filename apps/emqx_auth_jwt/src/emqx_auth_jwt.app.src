@@ -1,9 +1,9 @@
 %% -*- mode: erlang -*-
-{application, emqx_auth_mysql, [
-    {description, "EMQX MySQL Authentication and Authorization"},
+{application, emqx_auth_jwt, [
+    {description, "EMQX JWT Authentication and Authorization"},
     {vsn, "0.1.0"},
     {registered, []},
-    {mod, {emqx_auth_mysql_app, []}},
+    {mod, {emqx_auth_jwt_app, []}},
     {applications, [
         kernel,
         stdlib,

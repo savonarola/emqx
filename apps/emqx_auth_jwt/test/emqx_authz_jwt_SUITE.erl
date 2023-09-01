@@ -37,15 +37,21 @@ groups() ->
     [].
 
 init_per_suite(Config) ->
-    ok = emqx_common_test_helpers:start_apps(
-        [emqx_conf, emqx_auth],
-        fun set_special_configs/1
+    Apps = emqx_cth_suite:start(
+        [
+            emqx,
+            {emqx_conf, "authorization.no_match = deny, authorization.cache.enable = false"},
+            emqx_auth,
+            emqx_auth_jwt
+        ],
+        #{work_dir => ?config(priv_dir, Config)}
     ),
     ok = emqx_authn_chains:initialize_authentication(?GLOBAL, []),
-    Config.
+    [{suite_apps, Apps} | Config].
 
-end_per_suite(_Config) ->
-    ok = emqx_common_test_helpers:stop_apps([emqx_auth, emqx_conf]).
+end_per_suite(Config) ->
+    ok = emqx_authz_test_lib:restore_authorizers(),
+    emqx_cth_suite:stop(?config(suite_apps, Config)).
 
 init_per_testcase(_TestCase, Config) ->
     emqx_authn_test_lib:delete_authenticators(
@@ -67,11 +73,6 @@ end_per_testcase(_TestCase, _Config) ->
         ?GLOBAL
     ),
     ok = emqx_authz_test_lib:restore_authorizers().
-
-set_special_configs(emqx_auth) ->
-    ok = emqx_authz_test_lib:reset_authorizers();
-set_special_configs(_) ->
-    ok.
 
 %%------------------------------------------------------------------------------
 %% Tests

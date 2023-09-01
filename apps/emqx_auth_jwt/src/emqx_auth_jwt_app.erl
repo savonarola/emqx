@@ -14,17 +14,15 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_auth_redis_app).
+-module(emqx_auth_jwt_app).
 
 -behaviour(application).
 
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(redis, emqx_authz_redis),
-    {ok, Sup} = emqx_auth_redis_sup:start_link(),
+    {ok, Sup} = emqx_auth_jwt_sup:start_link(),
     {ok, Sup}.
 
 stop(_State) ->
-    ok = emqx_authz:unregister_source(redis),
     ok.

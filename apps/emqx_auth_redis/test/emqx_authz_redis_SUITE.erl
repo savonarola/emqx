@@ -38,6 +38,7 @@ init_per_suite(Config) ->
         true ->
             Apps = emqx_cth_suite:start(
                 [
+                    emqx,
                     {emqx_conf,
                         "authorization.no_match = deny, authorization.cache.enable = false"},
                     emqx_auth,

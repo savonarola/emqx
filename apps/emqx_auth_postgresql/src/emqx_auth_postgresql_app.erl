@@ -26,5 +26,5 @@ start(_StartType, _StartArgs) ->
     {ok, Sup}.
 
 stop(_State) ->
-    ok = emqx_authz:unregister_source(http),
+    ok = emqx_authz:unregister_source(postgresql),
     ok.

@@ -126,6 +126,7 @@ init_per_suite(Config) ->
             emqx_auth_redis,
             emqx_auth_postgresql,
             emqx_auth_mysql,
+            emqx_auth_mongodb,
             emqx_management,
             {emqx_dashboard, "dashboard.listeners.http { enable = true, bind = 18083 }"}
         ],

@@ -14,17 +14,24 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_auth_redis_app).
+-module(emqx_auth_mongodb_sup).
 
--behaviour(application).
+-behaviour(supervisor).
 
--export([start/2, stop/1]).
+-export([start_link/0]).
 
-start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(redis, emqx_authz_redis),
-    {ok, Sup} = emqx_auth_redis_sup:start_link(),
-    {ok, Sup}.
+-export([init/1]).
 
-stop(_State) ->
-    ok = emqx_authz:unregister_source(redis),
-    ok.
+-define(SERVER, ?MODULE).
+
+start_link() ->
+    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+
+init([]) ->
+    SupFlags = #{
+        strategy => one_for_all,
+        intensity => 0,
+        period => 1
+    },
+    ChildSpecs = [],
+    {ok, {SupFlags, ChildSpecs}}.
