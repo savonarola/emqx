@@ -122,6 +122,8 @@ init_per_suite(Config) ->
             emqx_auth,
             emqx_auth_file,
             emqx_auth_http,
+            emqx_auth_mnesia,
+            emqx_auth_redis,
             emqx_management,
             {emqx_dashboard, "dashboard.listeners.http { enable = true, bind = 18083 }"}
         ],

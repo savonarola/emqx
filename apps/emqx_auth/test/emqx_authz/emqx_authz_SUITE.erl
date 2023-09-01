@@ -51,7 +51,9 @@ init_per_suite(Config) ->
                 "authorization { cache { enable = false }, no_match = deny, sources = [] }"},
             emqx_auth,
             emqx_auth_file,
-            emqx_auth_http
+            emqx_auth_http,
+            emqx_auth_mnesia,
+            emqx_auth_redis
         ],
         #{
             work_dir => filename:join(?config(priv_dir, Config), ?MODULE)

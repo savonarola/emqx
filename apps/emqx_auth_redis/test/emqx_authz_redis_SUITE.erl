@@ -34,25 +34,27 @@ groups() ->
     emqx_authz_test_lib:table_groups(t_run_case, cases()).
 
 init_per_suite(Config) ->
-    ok = stop_apps([emqx_resource]),
     case emqx_common_test_helpers:is_tcp_server_available(?REDIS_HOST, ?REDIS_DEFAULT_PORT) of
         true ->
-            ok = emqx_common_test_helpers:start_apps(
-                [emqx_conf, emqx_auth],
-                fun set_special_configs/1
+            Apps = emqx_cth_suite:start(
+                [
+                    {emqx_conf,
+                        "authorization.no_match = deny, authorization.cache.enable = false"},
+                    emqx_auth,
+                    emqx_auth_redis
+                ],
+                #{work_dir => ?config(priv_dir, Config)}
             ),
-            ok = start_apps([emqx_resource]),
             ok = create_redis_resource(),
-            Config;
+            [{suite_apps, Apps} | Config];
         false ->
             {skip, no_redis}
     end.
 
-end_per_suite(_Config) ->
+end_per_suite(Config) ->
     ok = emqx_authz_test_lib:restore_authorizers(),
     ok = emqx_resource:remove_local(?REDIS_RESOURCE),
-    ok = stop_apps([emqx_resource]),
-    ok = emqx_common_test_helpers:stop_apps([emqx_conf, emqx_auth]).
+    ok = emqx_cth_suite:stop_apps(?config(suite_apps, Config)).
 
 init_per_group(Group, Config) ->
     [{test_case, emqx_authz_test_lib:get_case(Group, cases())} | Config].
@@ -65,11 +67,6 @@ init_per_testcase(_TestCase, Config) ->
 end_per_testcase(_TestCase, _Config) ->
     _ = emqx_authz:set_feature_available(rich_actions, true),
     _ = cleanup_redis(),
-    ok.
-
-set_special_configs(emqx_auth) ->
-    ok = emqx_authz_test_lib:reset_authorizers();
-set_special_configs(_) ->
     ok.
 
 %%------------------------------------------------------------------------------
