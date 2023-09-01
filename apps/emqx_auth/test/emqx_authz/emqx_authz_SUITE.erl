@@ -54,7 +54,8 @@ init_per_suite(Config) ->
             emqx_auth_http,
             emqx_auth_mnesia,
             emqx_auth_redis,
-            emqx_auth_postgresql
+            emqx_auth_postgresql,
+            emqx_auth_mysql
         ],
         #{
             work_dir => filename:join(?config(priv_dir, Config), ?MODULE)
