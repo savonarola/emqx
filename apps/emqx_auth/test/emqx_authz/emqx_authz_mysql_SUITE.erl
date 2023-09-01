@@ -404,7 +404,8 @@ raw_mysql_authz_config() ->
             "SELECT permission, action, topic "
             "FROM acl WHERE username = ${username}"
         >>,
-        <<"server">> => <<?MYSQL_HOST>>
+        <<"server">> => <<?MYSQL_HOST>>,
+        <<"pool_size">> => <<"1">>
     }.
 
 q(Sql) ->
@@ -434,7 +435,7 @@ mysql_config() ->
         database => <<"mqtt">>,
         username => <<"root">>,
         password => <<"public">>,
-        pool_size => 8,
+        pool_size => 1,
         server => <<?MYSQL_HOST>>,
         ssl => #{enable => false}
     }.

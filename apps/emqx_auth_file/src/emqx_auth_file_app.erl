@@ -21,7 +21,7 @@
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(file, emqx_auth_file_acl),
+    ok = emqx_authz:register_source(file, emqx_authz_file),
     {ok, Sup} = emqx_auth_file_sup:start_link(),
     {ok, Sup}.
 

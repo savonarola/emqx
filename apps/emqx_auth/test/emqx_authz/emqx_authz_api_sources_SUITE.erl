@@ -21,6 +21,7 @@
 -import(emqx_mgmt_api_test_util, [request/3, uri/1]).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("common_test/include/ct.hrl").
 -include_lib("emqx/include/emqx_placeholder.hrl").
 
 -define(MONGO_SINGLE_HOST, "mongo").
@@ -101,27 +102,37 @@ groups() ->
     [].
 
 init_per_suite(Config) ->
-    ok = stop_apps([emqx_resource]),
     meck:new(emqx_resource, [non_strict, passthrough, no_history, no_link]),
     meck:expect(emqx_resource, create_local, fun(_, _, _, _) -> {ok, meck_data} end),
     meck:expect(emqx_resource, health_check, fun(St) -> {ok, St} end),
     meck:expect(emqx_resource, remove_local, fun(_) -> ok end),
     meck:expect(
-        emqx_auth_file_acl,
+        emqx_authz_file,
         acl_conf_file,
         fun() ->
             emqx_common_test_helpers:deps_path(emqx_auth_file, "etc/acl.conf")
         end
     ),
 
-    ok = emqx_mgmt_api_test_util:init_suite(
-        [emqx_conf, emqx_auth],
-        fun set_special_configs/1
+    Apps = emqx_cth_suite:start(
+        [
+            emqx,
+            {emqx_conf,
+                "authorization { cache { enable = false }, no_match = deny, sources = [] }"},
+            emqx_auth,
+            emqx_auth_file,
+            emqx_auth_http,
+            emqx_management,
+            {emqx_dashboard, "dashboard.listeners.http { enable = true, bind = 18083 }"}
+        ],
+        #{
+            work_dir => filename:join(?config(priv_dir, Config), ?MODULE)
+        }
     ),
-    ok = start_apps([emqx_resource]),
-    Config.
+    _ = emqx_common_test_http:create_default_app(),
+    [{suite_apps, Apps} | Config].
 
-end_per_suite(_Config) ->
+end_per_suite(Config) ->
     {ok, _} = emqx:update_config(
         [authorization],
         #{
@@ -130,21 +141,7 @@ end_per_suite(_Config) ->
             <<"sources">> => []
         }
     ),
-    %% resource and connector should be stop first,
-    %% or authz_[mysql|pgsql|redis..]_SUITE would be failed
-    ok = stop_apps([emqx_resource]),
-    emqx_mgmt_api_test_util:end_suite([emqx_auth, emqx_conf]),
-    meck:unload(emqx_resource),
-    ok.
-
-set_special_configs(emqx_dashboard) ->
-    emqx_dashboard_api_test_helpers:set_default_config();
-set_special_configs(emqx_auth) ->
-    {ok, _} = emqx:update_config([authorization, cache, enable], false),
-    {ok, _} = emqx:update_config([authorization, no_match], deny),
-    {ok, _} = emqx:update_config([authorization, sources], []),
-    ok;
-set_special_configs(_App) ->
+    emqx_cth_suite:stop(?config(suite_apps, Config)),
     ok.
 
 init_per_testcase(t_api, Config) ->
@@ -206,7 +203,7 @@ t_api(_) ->
         ],
         Sources
     ),
-    ?assert(filelib:is_file(emqx_auth_file_acl:acl_conf_file())),
+    ?assert(filelib:is_file(emqx_authz_file:acl_conf_file())),
 
     {ok, 204, _} = request(
         put,

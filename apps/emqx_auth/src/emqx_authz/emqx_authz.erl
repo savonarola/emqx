@@ -91,7 +91,7 @@ init() ->
     ok = register_source(client_info, emqx_authz_client_info),
 
     % ok = register_source(file, emqx_authz_file),
-    ok = register_source(http, emqx_authz_http),
+    % ok = register_source(http, emqx_authz_http),
     ok = register_source(mongodb, emqx_authz_mongodb),
     ok = register_source(mysql, emqx_authz_mysql),
     ok = register_source(redis, emqx_authz_redis),

@@ -42,9 +42,9 @@ apps() -> [emqx_conf, emqx_retainer, emqx_auth, emqx_authz, emqx_modules, emqx_t
 
 init_per_suite(Config) ->
     net_kernel:start(['master@127.0.0.1', longnames]),
-    ok = meck:new(emqx_auth_file_acl, [non_strict, passthrough, no_history, no_link]),
+    ok = meck:new(emqx_authz_file, [non_strict, passthrough, no_history, no_link]),
     meck:expect(
-        emqx_auth_file_acl,
+        emqx_authz_file,
         acl_conf_file,
         fun() ->
             emqx_common_test_helpers:deps_path(emqx_auth_file, "etc/acl.conf")

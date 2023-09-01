@@ -35,7 +35,8 @@ init_per_testcase(TestCase, Config) ->
     Apps = emqx_cth_suite:start(
         [
             {emqx_conf, "authorization.no_match = deny, authorization.cache.enable = false"},
-            emqx_auth
+            emqx_auth,
+            emqx_auth_file
         ],
         #{work_dir => filename:join(?config(priv_dir, Config), TestCase)}
     ),

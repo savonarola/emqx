@@ -39,20 +39,27 @@ init_per_suite(Config) ->
     meck:expect(emqx_resource, create_local, fun(_, _, _, _) -> {ok, meck_data} end),
     meck:expect(emqx_resource, remove_local, fun(_) -> ok end),
     meck:expect(
-        emqx_auth_file_acl,
+        emqx_authz_file,
         acl_conf_file,
         fun() ->
             emqx_common_test_helpers:deps_path(emqx_auth_file, "etc/acl.conf")
         end
     ),
-
-    ok = emqx_common_test_helpers:start_apps(
-        [emqx_conf, emqx_auth, emqx_auth_file],
-        fun set_special_configs/1
+    Apps = emqx_cth_suite:start(
+        [
+            {emqx_conf,
+                "authorization { cache { enable = false }, no_match = deny, sources = [] }"},
+            emqx_auth,
+            emqx_auth_file,
+            emqx_auth_http
+        ],
+        #{
+            work_dir => filename:join(?config(priv_dir, Config), ?MODULE)
+        }
     ),
-    Config.
+    [{suite_apps, Apps} | Config].
 
-end_per_suite(_Config) ->
+end_per_suite(Config) ->
     {ok, _} = emqx:update_config(
         [authorization],
         #{
@@ -61,7 +68,7 @@ end_per_suite(_Config) ->
             <<"sources">> => []
         }
     ),
-    emqx_common_test_helpers:stop_apps([emqx_auth_file, emqx_auth, emqx_conf]),
+    emqx_cth_suite:stop(?config(suite_apps, Config)),
     meck:unload(emqx_resource),
     ok.
 
@@ -73,7 +80,7 @@ init_per_testcase(TestCase, Config) when
     {ok, _} = emqx_authz:update(?CMD_REPLACE, []),
     {ok, _} = emqx:update_config([authorization, deny_action], disconnect),
     Config;
-init_per_testcase(_, Config) ->
+init_per_testcase(_TestCase, Config) ->
     {ok, _} = emqx_authz:update(?CMD_REPLACE, []),
     Config.
 
@@ -88,14 +95,6 @@ end_per_testcase(TestCase, _Config) when
     ok;
 end_per_testcase(_TestCase, _Config) ->
     emqx_common_test_helpers:call_janitor(),
-    ok.
-
-set_special_configs(emqx_auth) ->
-    {ok, _} = emqx:update_config([authorization, cache, enable], false),
-    {ok, _} = emqx:update_config([authorization, no_match], deny),
-    {ok, _} = emqx:update_config([authorization, sources], []),
-    ok;
-set_special_configs(_App) ->
     ok.
 
 -define(SOURCE1, #{
@@ -205,7 +204,7 @@ t_bad_file_source(_) ->
     BadActionErr = {invalid_authorization_action, pubsub},
     lists:foreach(
         fun({Source, Error}) ->
-            File = emqx_auth_file_acl:acl_conf_file(),
+            File = emqx_authz_file:acl_conf_file(),
             {ok, Bin1} = file:read_file(File),
             ?assertEqual(?UPDATE_ERROR(Error), emqx_authz:update(?CMD_REPLACE, [Source])),
             ?assertEqual(?UPDATE_ERROR(Error), emqx_authz:update(?CMD_PREPEND, Source)),
