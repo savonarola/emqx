@@ -1,6 +1,6 @@
 %% -*- mode: erlang -*-
 {application, emqx_auth_file, [
-    {description, "EMQX File-based ACL"},
+    {description, "EMQX File-based Authentication and Authorization"},
     {vsn, "0.1.0"},
     {registered, []},
     {mod, {emqx_auth_file_app, []}},

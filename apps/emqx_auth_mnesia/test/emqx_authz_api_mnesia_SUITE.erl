@@ -31,35 +31,27 @@ groups() ->
     [].
 
 init_per_suite(Config) ->
-    ok = emqx_mgmt_api_test_util:init_suite(
-        [emqx_conf, emqx_auth],
-        fun set_special_configs/1
-    ),
-    Config.
-
-end_per_suite(_Config) ->
-    {ok, _} = emqx:update_config(
-        [authorization],
+    Apps = emqx_cth_suite:start(
+        [
+            emqx,
+            {emqx_conf,
+                "authorization.cache { enable = false },"
+                "authorization.no_match = deny,"
+                "authorization.sources = [{type = built_in_database}]"},
+            emqx_auth,
+            emqx_auth_mnesia,
+            emqx_management,
+            {emqx_dashboard, "dashboard.listeners.http { enable = true, bind = 18083 }"}
+        ],
         #{
-            <<"no_match">> => <<"allow">>,
-            <<"cache">> => #{<<"enable">> => <<"true">>},
-            <<"sources">> => []
+            work_dir => filename:join(?config(priv_dir, Config), ?MODULE)
         }
     ),
-    emqx_mgmt_api_test_util:end_suite([emqx_auth, emqx_conf]),
-    ok.
-
-set_special_configs(emqx_dashboard) ->
-    emqx_dashboard_api_test_helpers:set_default_config();
-set_special_configs(emqx_auth) ->
-    {ok, _} = emqx:update_config([authorization, cache, enable], false),
-    {ok, _} = emqx:update_config([authorization, no_match], deny),
-    {ok, _} = emqx:update_config(
-        [authorization, sources],
-        [#{<<"type">> => <<"built_in_database">>}]
-    ),
-    ok;
-set_special_configs(_App) ->
+    _ = emqx_common_test_http:create_default_app(),
+    [{suite_apps, Apps} | Config].
+end_per_suite(_Config) ->
+    ok = emqx_cth_suite:stop(?config(suite_apps, _Config)),
+    _ = emqx_common_test_http:delete_default_app(),
     ok.
 
 %%------------------------------------------------------------------------------

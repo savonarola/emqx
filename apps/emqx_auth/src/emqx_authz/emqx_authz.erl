@@ -96,7 +96,7 @@ init() ->
     ok = register_source(mysql, emqx_authz_mysql),
     ok = register_source(redis, emqx_authz_redis),
     ok = register_source(postgresql, emqx_authz_postgresql),
-    ok = register_source(built_in_database, emqx_authz_mnesia),
+    % ok = register_source(built_in_database, emqx_authz_mnesia),
     emqx_authz_enterprise:register_sources().
 
 register_source(Type, Module) ->

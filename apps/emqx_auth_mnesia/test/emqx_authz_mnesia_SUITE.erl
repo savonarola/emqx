@@ -30,15 +30,19 @@ groups() ->
     [].
 
 init_per_suite(Config) ->
-    ok = emqx_common_test_helpers:start_apps(
-        [emqx_conf, emqx_auth],
-        fun set_special_configs/1
+    Apps = emqx_cth_suite:start(
+        [
+            {emqx_conf, "authorization.no_match = deny, authorization.cache.enable = false"},
+            emqx_auth,
+            emqx_auth_mnesia
+        ],
+        #{work_dir => ?config(priv_dir, Config)}
     ),
-    Config.
+    [{suite_apps, Apps} | Config].
 
 end_per_suite(_Config) ->
     ok = emqx_authz_test_lib:restore_authorizers(),
-    ok = emqx_common_test_helpers:stop_apps([emqx_conf, emqx_auth]).
+    emqx_cth_suite:stop(?config(suite_apps, _Config)).
 
 init_per_testcase(_TestCase, Config) ->
     ok = emqx_authz_test_lib:reset_authorizers(),
@@ -48,11 +52,6 @@ init_per_testcase(_TestCase, Config) ->
 end_per_testcase(_TestCase, _Config) ->
     _ = emqx_authz:set_feature_available(rich_actions, true),
     ok = emqx_authz_mnesia:purge_rules().
-
-set_special_configs(emqx_auth) ->
-    ok = emqx_authz_test_lib:reset_authorizers();
-set_special_configs(_) ->
-    ok.
 
 %%------------------------------------------------------------------------------
 %% Testcases

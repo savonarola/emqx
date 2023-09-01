@@ -141,6 +141,7 @@ end_per_suite(Config) ->
             <<"sources">> => []
         }
     ),
+    _ = emqx_common_test_http:delete_default_app(),
     emqx_cth_suite:stop(?config(suite_apps, Config)),
     ok.
 
