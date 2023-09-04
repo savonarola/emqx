@@ -96,7 +96,9 @@ stop_one_app(App) ->
 
 ensure_apps_started() ->
     ?SLOG(notice, #{msg => "(re)starting_emqx_apps"}),
-    lists:foreach(fun start_one_app/1, sorted_reboot_apps()),
+    Apps = sorted_reboot_apps(),
+    ?SLOG(info, #{msg => "emqx_apps_to_start", apps => Apps}),
+    lists:foreach(fun start_one_app/1, Apps),
     ?tp(emqx_machine_boot_apps_started, #{}).
 
 start_one_app(App) ->

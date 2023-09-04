@@ -16,8 +16,6 @@
 
 -module(emqx_authz_postgresql).
 
--include("emqx_authz.hrl").
--include_lib("emqx/include/emqx.hrl").
 -include_lib("emqx/include/logger.hrl").
 -include_lib("emqx/include/emqx_placeholder.hrl").
 

@@ -349,7 +349,7 @@ check_ssl_opts(Conf) ->
     lists:foreach(
         fun
             (#{<<"url">> := Url} = Source) ->
-                case emqx_authz_http:parse_url(Url) of
+                case emqx_authz_utils:parse_url(Url) of
                     {<<"https", _/binary>>, _, _} ->
                         case emqx_utils_maps:deep_find([<<"ssl">>, <<"enable">>], Source) of
                             {ok, true} -> true;

@@ -18,7 +18,7 @@
 
 -behaviour(minirest_api).
 
--include("emqx_authz.hrl").
+-include_lib("emqx_auth/include/emqx_authz.hrl").
 -include_lib("emqx/include/logger.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
 

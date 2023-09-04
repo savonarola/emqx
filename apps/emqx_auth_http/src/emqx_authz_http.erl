@@ -16,8 +16,6 @@
 
 -module(emqx_authz_http).
 
--include("emqx_authz.hrl").
--include_lib("emqx/include/emqx.hrl").
 -include_lib("emqx/include/logger.hrl").
 -include_lib("emqx/include/emqx_placeholder.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
@@ -30,8 +28,7 @@
     create/1,
     update/1,
     destroy/1,
-    authorize/4,
-    parse_url/1
+    authorize/4
 ]).
 
 -ifdef(TEST).
@@ -138,7 +135,7 @@ parse_config(
         request_timeout := ReqTimeout
     } = Conf
 ) ->
-    {BaseUrl0, Path, Query} = parse_url(RawUrl),
+    {BaseUrl0, Path, Query} = emqx_authz_utils:parse_url(RawUrl),
     {ok, BaseUrl} = emqx_http_lib:uri_parse(BaseUrl0),
     Conf#{
         method => Method,
@@ -157,25 +154,6 @@ parse_config(
         %% pool_type default value `random`
         pool_type => random
     }.
-
-parse_url(Url) ->
-    case string:split(Url, "//", leading) of
-        [Scheme, UrlRem] ->
-            case string:split(UrlRem, "/", leading) of
-                [HostPort, Remaining] ->
-                    BaseUrl = iolist_to_binary([Scheme, "//", HostPort]),
-                    case string:split(Remaining, "?", leading) of
-                        [Path, QueryString] ->
-                            {BaseUrl, <<"/", Path/binary>>, QueryString};
-                        [Path] ->
-                            {BaseUrl, <<"/", Path/binary>>, <<>>}
-                    end;
-                [HostPort] ->
-                    {iolist_to_binary([Scheme, "//", HostPort]), <<>>, <<>>}
-            end;
-        [Url] ->
-            throw({invalid_url, Url})
-    end.
 
 generate_request(
     Action,

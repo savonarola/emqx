@@ -19,7 +19,7 @@
 -include_lib("stdlib/include/ms_transform.hrl").
 -include_lib("emqx/include/logger.hrl").
 
--include("emqx_authz.hrl").
+-include_lib("emqx_auth/include/emqx_authz.hrl").
 
 -define(ACL_SHARDED, emqx_acl_sharded).
 

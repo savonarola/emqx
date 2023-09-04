@@ -532,7 +532,7 @@ defmodule EMQXUmbrella.MixProject do
     )
 
     Mix.Generator.copy_file(
-      "apps/emqx_authz/etc/acl.conf",
+      "apps/emqx_auth_file/etc/acl.conf",
       Path.join(etc, "acl.conf"),
       force: overwrite?
     )

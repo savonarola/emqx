@@ -35,7 +35,8 @@
     render_sql_params/2,
     client_vars/1,
     vars_for_rule_query/2,
-    parse_rule_from_row/2
+    parse_rule_from_row/2,
+    parse_url/1
 ]).
 
 -export([
@@ -208,6 +209,25 @@ vars_for_rule_query(Client, ?authz_action(PubSub, Qos) = Action) ->
         qos => Qos,
         retain => maps:get(retain, Action, false)
     }.
+
+parse_url(Url) ->
+    case string:split(Url, "//", leading) of
+        [Scheme, UrlRem] ->
+            case string:split(UrlRem, "/", leading) of
+                [HostPort, Remaining] ->
+                    BaseUrl = iolist_to_binary([Scheme, "//", HostPort]),
+                    case string:split(Remaining, "?", leading) of
+                        [Path, QueryString] ->
+                            {BaseUrl, <<"/", Path/binary>>, QueryString};
+                        [Path] ->
+                            {BaseUrl, <<"/", Path/binary>>, <<>>}
+                    end;
+                [HostPort] ->
+                    {iolist_to_binary([Scheme, "//", HostPort]), <<>>, <<>>}
+            end;
+        [Url] ->
+            throw({invalid_url, Url})
+    end.
 
 %%--------------------------------------------------------------------
 %% Internal functions
