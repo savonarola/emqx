@@ -14,19 +14,10 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_auth_mongodb_app).
+-ifndef(EMQX_AUTHZ_FILE_HRL).
+-define(EMQX_AUTHZ_FILE_HRL, true).
 
--include("emqx_authz_mongodb.hrl").
+-define(AUTHZ_TYPE, file).
+-define(AUTHZ_TYPE_BIN, <<"file">>).
 
--behaviour(application).
-
--export([start/2, stop/1]).
-
-start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(?AUTHZ_TYPE, emqx_authz_mongodb),
-    {ok, Sup} = emqx_auth_mongodb_sup:start_link(),
-    {ok, Sup}.
-
-stop(_State) ->
-    ok = emqx_authz:unregister_source(?AUTHZ_TYPE),
-    ok.
+-endif.

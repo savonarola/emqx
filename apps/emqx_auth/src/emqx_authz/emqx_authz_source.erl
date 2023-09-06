@@ -58,8 +58,12 @@
 %% Convert filepath values to the content of the files.
 -callback read_files(raw_source()) -> raw_source() | no_return().
 
+%% Merge default values to the source, for example, for exposing via API
+-callback merge_defaults(raw_source()) -> raw_source().
+
 -optional_callbacks([
     update/1,
     write_files/1,
-    read_files/1
+    read_files/1,
+    merge_defaults/1
 ]).

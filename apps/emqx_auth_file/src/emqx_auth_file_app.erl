@@ -16,15 +16,17 @@
 
 -module(emqx_auth_file_app).
 
+-include("emqx_authz_file.hrl").
+
 -behaviour(application).
 
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(file, emqx_authz_file),
+    ok = emqx_authz:register_source(?AUTHZ_TYPE, emqx_authz_file),
     {ok, Sup} = emqx_auth_file_sup:start_link(),
     {ok, Sup}.
 
 stop(_State) ->
-    ok = emqx_authz:unregister_source(file),
+    ok = emqx_authz:unregister_source(?AUTHZ_TYPE),
     ok.

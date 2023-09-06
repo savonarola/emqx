@@ -14,17 +14,17 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_auth_mongodb_app).
+-module(emqx_auth_ldap_app).
 
--include("emqx_authz_mongodb.hrl").
+-include("emqx_authz_ldap.hrl").
 
 -behaviour(application).
 
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(?AUTHZ_TYPE, emqx_authz_mongodb),
-    {ok, Sup} = emqx_auth_mongodb_sup:start_link(),
+    ok = emqx_authz:register_source(?AUTHZ_TYPE, emqx_authz_ldap),
+    {ok, Sup} = emqx_auth_mnesia_sup:start_link(),
     {ok, Sup}.
 
 stop(_State) ->

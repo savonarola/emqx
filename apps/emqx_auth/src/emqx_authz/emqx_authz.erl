@@ -32,6 +32,7 @@
     register_metrics/0,
     init/0,
     deinit/0,
+    merge_defaults/1,
     lookup/0,
     lookup/1,
     move/2,
@@ -89,7 +90,7 @@ init() ->
     emqx_conf:add_handler(?ROOT_KEY, ?MODULE),
     emqx_authz_source_registry:create(),
     ok = register_source(client_info, emqx_authz_client_info),
-    emqx_authz_enterprise:register_sources().
+    ok.
 
 register_source(Type, Module) ->
     ok = emqx_authz_source_registry:register(Type, Module),
@@ -598,6 +599,16 @@ type(#{<<"type">> := Type}) ->
     type(Type);
 type(Type) when is_atom(Type) orelse is_binary(Type) ->
     emqx_authz_source_registry:get(Type).
+
+merge_defaults(Source) ->
+    Type = type(Source),
+    Mod = authz_module(Type),
+    try
+        Mod:merge_defaults(Source)
+    catch
+        error:undef ->
+            Source
+    end.
 
 maybe_write_source_files(Source) ->
     Module = authz_module(type(Source)),

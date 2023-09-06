@@ -16,15 +16,17 @@
 
 -module(emqx_auth_mnesia_app).
 
+-include("emqx_authz_mnesia.hrl").
+
 -behaviour(application).
 
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(built_in_database, emqx_authz_mnesia),
+    ok = emqx_authz:register_source(?AUTHZ_TYPE, emqx_authz_mnesia),
     {ok, Sup} = emqx_auth_mnesia_sup:start_link(),
     {ok, Sup}.
 
 stop(_State) ->
-    ok = emqx_authz:unregister_source(built_in_database),
+    ok = emqx_authz:unregister_source(?AUTHZ_TYPE),
     ok.

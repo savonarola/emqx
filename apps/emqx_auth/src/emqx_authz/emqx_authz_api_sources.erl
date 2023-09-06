@@ -22,12 +22,10 @@
 -include_lib("emqx/include/logger.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
 
--import(hoconsc, [mk/1, mk/2, ref/2, array/1, enum/1]).
+-import(hoconsc, [mk/1, mk/2, ref/2, enum/1]).
 
 -define(BAD_REQUEST, 'BAD_REQUEST').
 -define(NOT_FOUND, 'NOT_FOUND').
-
--define(API_SCHEMA_MODULE, emqx_authz_api_schema).
 
 -export([
     get_raw_sources/0,
@@ -65,7 +63,19 @@ paths() ->
     ].
 
 fields(sources) ->
-    [{sources, mk(array(hoconsc:union(authz_sources_type_refs())), #{desc => ?DESC(sources)})}].
+    emqx_authz_schema:api_authz_fields();
+fields(position) ->
+    [
+        {position,
+            mk(
+                string(),
+                #{
+                    desc => ?DESC(position),
+                    required => true,
+                    in => body
+                }
+            )}
+    ].
 
 %%--------------------------------------------------------------------
 %% Schema for each URI
@@ -87,7 +97,7 @@ schema("/authorization/sources") ->
                 description => ?DESC(authorization_sources_post),
                 tags => ?TAGS,
                 'requestBody' => mk(
-                    hoconsc:union(authz_sources_type_refs()),
+                    emqx_authz_schema:api_source_type(),
                     #{desc => ?DESC(source_config)}
                 ),
                 responses =>
@@ -111,7 +121,7 @@ schema("/authorization/sources/:type") ->
                 responses =>
                     #{
                         200 => mk(
-                            hoconsc:union(authz_sources_type_refs()),
+                            emqx_authz_schema:api_source_type(),
                             #{desc => ?DESC(source)}
                         ),
                         404 => emqx_dashboard_swagger:error_codes([?NOT_FOUND], <<"Not Found">>)
@@ -122,7 +132,7 @@ schema("/authorization/sources/:type") ->
                 description => ?DESC(authorization_sources_type_put),
                 tags => ?TAGS,
                 parameters => parameters_field(),
-                'requestBody' => mk(hoconsc:union(authz_sources_type_refs())),
+                'requestBody' => mk(emqx_authz_schema:api_source_type()),
                 responses =>
                     #{
                         204 => <<"Authorization source updated successfully">>,
@@ -172,7 +182,7 @@ schema("/authorization/sources/:type/move") ->
                 parameters => parameters_field(),
                 'requestBody' =>
                     emqx_dashboard_swagger:schema_with_examples(
-                        ref(?API_SCHEMA_MODULE, position),
+                        ref(?MODULE, position),
                         position_example()
                     ),
                 responses =>
@@ -447,29 +457,10 @@ get_raw_sources() ->
     Schema = emqx_hocon:make_schema(emqx_authz_schema:authz_fields()),
     Conf = #{<<"sources">> => RawSources},
     #{<<"sources">> := Sources} = hocon_tconf:make_serializable(Schema, Conf, #{}),
-    merge_default_headers(Sources).
+    merge_defaults(Sources).
 
-merge_default_headers(Sources) ->
-    lists:map(
-        fun(Source) ->
-            case maps:find(<<"headers">>, Source) of
-                {ok, Headers} ->
-                    NewHeaders =
-                        case Source of
-                            #{<<"method">> := <<"get">>} ->
-                                (emqx_authz_schema:headers_no_content_type(converter))(Headers);
-                            #{<<"method">> := <<"post">>} ->
-                                (emqx_authz_schema:headers(converter))(Headers);
-                            _ ->
-                                Headers
-                        end,
-                    Source#{<<"headers">> => NewHeaders};
-                error ->
-                    Source
-            end
-        end,
-        Sources
-    ).
+merge_defaults(Sources) ->
+    lists:map(fun emqx_authz:merge_defaults/1, Sources).
 
 get_raw_source(Type) ->
     lists:filter(
@@ -519,7 +510,7 @@ parameters_field() ->
     [
         {type,
             mk(
-                enum(?API_SCHEMA_MODULE:authz_sources_types(simple)),
+                enum(emqx_authz_source_registry:types()),
                 #{in => path, desc => ?DESC(source_type)}
             )}
     ].
@@ -562,12 +553,6 @@ position_example() ->
                 value => #{<<"position">> => <<"after:file">>}
             }
     }.
-
-authz_sources_type_refs() ->
-    [
-        ref(?API_SCHEMA_MODULE, Type)
-     || Type <- emqx_authz_api_schema:authz_sources_types(detailed)
-    ].
 
 bin(Term) -> erlang:iolist_to_binary(io_lib:format("~p", [Term])).
 

@@ -16,15 +16,17 @@
 
 -module(emqx_auth_mysql_app).
 
+-include("emqx_authz_mysql.hrl").
+
 -behaviour(application).
 
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(mysql, emqx_authz_mysql),
+    ok = emqx_authz:register_source(?AUTHZ_TYPE, emqx_authz_mysql),
     {ok, Sup} = emqx_auth_mysql_sup:start_link(),
     {ok, Sup}.
 
 stop(_State) ->
-    ok = emqx_authz:unregister_source(mysql),
+    ok = emqx_authz:unregister_source(?AUTHZ_TYPE),
     ok.

@@ -1,7 +1,7 @@
 %%--------------------------------------------------------------------
 %% Copyright (c) 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
--module(emqx_ldap_authz_SUITE).
+-module(emqx_authz_ldap_SUITE).
 
 -compile(nowarn_export_all).
 -compile(export_all).
@@ -12,7 +12,7 @@
 
 -define(LDAP_HOST, "ldap").
 -define(LDAP_DEFAULT_PORT, 389).
--define(LDAP_RESOURCE, <<"emqx_ldap_authz_SUITE">>).
+-define(LDAP_RESOURCE, <<"emqx_authz_ldap_SUITE">>).
 
 all() ->
     emqx_authz_test_lib:all_with_table_case(?MODULE, t_run_case, cases()).

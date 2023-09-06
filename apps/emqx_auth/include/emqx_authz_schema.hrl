@@ -14,19 +14,21 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_auth_mongodb_app).
+-ifndef(EMQX_AUTHZ_SOURCES_HRL).
+-define(EMQX_AUTHZ_SOURCES_HRL, true).
 
--include("emqx_authz_mongodb.hrl").
+-define(SOURCE_SCHEMA_MODS, [
+    emqx_authz_file_schema,
+    emqx_authz_mnesia_schema,
+    emqx_authz_http_schema,
+    emqx_authz_redis_schema,
+    emqx_authz_mysql_schema,
+    emqx_authz_postgresql_schema,
+    emqx_authz_mongodb_schema
+]).
 
--behaviour(application).
+-define(EE_SOURCE_SCHEMA_MODS, [
+    emqx_authz_ldap_schema
+]).
 
--export([start/2, stop/1]).
-
-start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(?AUTHZ_TYPE, emqx_authz_mongodb),
-    {ok, Sup} = emqx_auth_mongodb_sup:start_link(),
-    {ok, Sup}.
-
-stop(_State) ->
-    ok = emqx_authz:unregister_source(?AUTHZ_TYPE),
-    ok.
+-endif.

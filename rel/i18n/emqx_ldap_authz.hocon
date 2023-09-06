@@ -1,4 +1,4 @@
-emqx_ldap_authz {
+emqx_authz_ldap {
 
 publish_attribute.desc:
 """Indicates which attribute is used to represent the allowed topics list of the `publish`."""

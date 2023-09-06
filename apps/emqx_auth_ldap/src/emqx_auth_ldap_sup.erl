@@ -14,19 +14,24 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_auth_mongodb_app).
+-module(emqx_auth_ldap_sup).
 
--include("emqx_authz_mongodb.hrl").
+-behaviour(supervisor).
 
--behaviour(application).
+-export([start_link/0]).
 
--export([start/2, stop/1]).
+-export([init/1]).
 
-start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(?AUTHZ_TYPE, emqx_authz_mongodb),
-    {ok, Sup} = emqx_auth_mongodb_sup:start_link(),
-    {ok, Sup}.
+-define(SERVER, ?MODULE).
 
-stop(_State) ->
-    ok = emqx_authz:unregister_source(?AUTHZ_TYPE),
-    ok.
+start_link() ->
+    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+
+init([]) ->
+    SupFlags = #{
+        strategy => one_for_all,
+        intensity => 0,
+        period => 1
+    },
+    ChildSpecs = [],
+    {ok, {SupFlags, ChildSpecs}}.

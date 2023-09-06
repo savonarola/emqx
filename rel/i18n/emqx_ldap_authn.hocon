@@ -1,4 +1,4 @@
-emqx_ldap_authn {
+emqx_authn_ldap {
 
 ldap.desc:
 """Configuration of authenticator using LDAP as authentication data source."""

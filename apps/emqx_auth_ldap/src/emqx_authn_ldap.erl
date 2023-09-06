@@ -2,7 +2,7 @@
 %% Copyright (c) 2023 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
 
--module(emqx_ldap_authn).
+-module(emqx_authn_ldap).
 
 -include_lib("emqx_auth/include/emqx_authn.hrl").
 -include_lib("emqx/include/logger.hrl").

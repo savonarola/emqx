@@ -26,6 +26,8 @@
 
 -define(TAB, ?MODULE).
 
+-type fuzzy_type() :: emqx_authz_source:source_type() | binary().
+
 -spec create() -> ok.
 create() ->
     _ = ets:new(?TAB, [named_table, public, set]),
@@ -47,7 +49,7 @@ unregister(Type) when is_atom(Type) ->
     _ = ets:delete(?TAB, atom_to_binary(Type)),
     ok.
 
--spec get(emqx_authz_source:source_type() | binary()) ->
+-spec get(fuzzy_type()) ->
     emqx_authz_source:source_type() | no_return().
 get(FuzzyType) when is_atom(FuzzyType) orelse is_binary(FuzzyType) ->
     case ets:lookup(?TAB, FuzzyType) of
@@ -57,7 +59,7 @@ get(FuzzyType) when is_atom(FuzzyType) orelse is_binary(FuzzyType) ->
             Type
     end.
 
--spec module(emqx_authz_source:source_type() | binary()) -> module() | no_return().
+-spec module(fuzzy_type()) -> module() | no_return().
 module(FuzzyType) when is_atom(FuzzyType) orelse is_binary(FuzzyType) ->
     case ets:lookup(?TAB, FuzzyType) of
         [] ->

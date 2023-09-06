@@ -16,15 +16,17 @@
 
 -module(emqx_auth_postgresql_app).
 
+-include("emqx_authz_postgresql.hrl").
+
 -behaviour(application).
 
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(postgresql, emqx_authz_postgresql),
+    ok = emqx_authz:register_source(?AUTHZ_TYPE, emqx_authz_postgresql),
     {ok, Sup} = emqx_auth_postgresql_sup:start_link(),
     {ok, Sup}.
 
 stop(_State) ->
-    ok = emqx_authz:unregister_source(postgresql),
+    ok = emqx_authz:unregister_source(?AUTHZ_TYPE),
     ok.

@@ -28,7 +28,8 @@
     create/1,
     update/1,
     destroy/1,
-    authorize/4
+    authorize/4,
+    merge_defaults/1
 ]).
 
 -ifdef(TEST).
@@ -115,6 +116,20 @@ authorize(
             }),
             ignore
     end.
+
+merge_defaults(#{<<"headers">> := Headers} = Source) ->
+    NewHeaders =
+        case Source of
+            #{<<"method">> := <<"get">>} ->
+                (emqx_authz_http_schema:headers_no_content_type(converter))(Headers);
+            #{<<"method">> := <<"post">>} ->
+                (emqx_authz_http_schema:headers(converter))(Headers);
+            _ ->
+                Headers
+        end,
+    Source#{<<"headers">> => NewHeaders};
+merge_defaults(Source) ->
+    Source.
 
 log_nomtach_msg(Status, Headers, Body) ->
     ?SLOG(

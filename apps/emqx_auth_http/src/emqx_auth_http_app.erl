@@ -16,15 +16,17 @@
 
 -module(emqx_auth_http_app).
 
+-include("emqx_authz_http.hrl").
+
 -behaviour(application).
 
 -export([start/2, stop/1]).
 
 start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(http, emqx_authz_http),
+    ok = emqx_authz:register_source(?AUTHZ_TYPE, emqx_authz_http),
     {ok, Sup} = emqx_auth_http_sup:start_link(),
     {ok, Sup}.
 
 stop(_State) ->
-    ok = emqx_authz:unregister_source(http),
+    ok = emqx_authz:unregister_source(?AUTHZ_TYPE),
     ok.

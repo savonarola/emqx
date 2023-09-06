@@ -14,19 +14,29 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_auth_mongodb_app).
+-module(emqx_authz_mnesia_schema).
 
--include("emqx_authz_mongodb.hrl").
+-include("emqx_authz_mnesia.hrl").
+-include_lib("hocon/include/hoconsc.hrl").
 
--behaviour(application).
+-behaviour(emqx_authz_schema).
 
--export([start/2, stop/1]).
+-export([
+    type/0,
+    fields/1,
+    source_refs/0,
+    select_union_member/1
+]).
 
-start(_StartType, _StartArgs) ->
-    ok = emqx_authz:register_source(?AUTHZ_TYPE, emqx_authz_mongodb),
-    {ok, Sup} = emqx_auth_mongodb_sup:start_link(),
-    {ok, Sup}.
+type() -> ?AUTHZ_TYPE.
 
-stop(_State) ->
-    ok = emqx_authz:unregister_source(?AUTHZ_TYPE),
-    ok.
+fields(builtin_db) ->
+    emqx_authz_schema:authz_common_fields(?AUTHZ_TYPE).
+
+source_refs() ->
+    [?R_REF(builtin_db)].
+
+select_union_member(#{<<"type">> := ?AUTHZ_TYPE_BIN}) ->
+    ?R_REF(builtin_db);
+select_union_member(_Value) ->
+    undefined.

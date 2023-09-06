@@ -14,18 +14,12 @@
 %% limitations under the License.
 %%--------------------------------------------------------------------
 
--module(emqx_ldap_authz).
+-module(emqx_authz_ldap).
 
--include_lib("emqx_auth/include/emqx_authz.hrl").
--include_lib("emqx/include/emqx.hrl").
--include_lib("hocon/include/hoconsc.hrl").
 -include_lib("emqx/include/logger.hrl").
--include_lib("emqx/include/emqx_placeholder.hrl").
 -include_lib("eldap/include/eldap.hrl").
 
 -behaviour(emqx_authz_source).
-
--define(PREPARE_KEY, ?MODULE).
 
 %% AuthZ Callbacks
 -export([
@@ -36,42 +30,10 @@
     authorize/4
 ]).
 
--export([fields/1]).
-
 -ifdef(TEST).
 -compile(export_all).
 -compile(nowarn_export_all).
 -endif.
-
-%%------------------------------------------------------------------------------
-%% Hocon Schema
-%%------------------------------------------------------------------------------
-
-fields(config) ->
-    emqx_authz_schema:authz_common_fields(ldap) ++
-        [
-            {publish_attribute, attribute_meta(publish_attribute, <<"mqttPublishTopic">>)},
-            {subscribe_attribute, attribute_meta(subscribe_attribute, <<"mqttSubscriptionTopic">>)},
-            {all_attribute, attribute_meta(all_attribute, <<"mqttPubSubTopic">>)},
-            {query_timeout,
-                ?HOCON(
-                    emqx_schema:timeout_duration_ms(),
-                    #{
-                        desc => ?DESC(query_timeout),
-                        default => <<"5s">>
-                    }
-                )}
-        ] ++
-        emqx_ldap:fields(config).
-
-attribute_meta(Name, Default) ->
-    ?HOCON(
-        string(),
-        #{
-            default => Default,
-            desc => ?DESC(Name)
-        }
-    ).
 
 %%------------------------------------------------------------------------------
 %% AuthZ Callbacks
