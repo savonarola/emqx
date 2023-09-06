@@ -510,7 +510,7 @@ parameters_field() ->
     [
         {type,
             mk(
-                enum(emqx_authz_source_registry:types()),
+                enum(emqx_authz_schema:source_types()),
                 #{in => path, desc => ?DESC(source_type)}
             )}
     ].

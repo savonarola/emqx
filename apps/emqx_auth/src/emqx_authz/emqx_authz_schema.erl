@@ -65,7 +65,7 @@
 roots() -> [].
 
 fields("authorization") ->
-    authz_fields();
+    emqx_schema:authz_fields() ++ authz_fields();
 fields("metrics_status_fields") ->
     [
         {"resource_metrics", ?HOCON(?R_REF("resource_metrics"), #{desc => ?DESC("metrics")})},
@@ -116,7 +116,11 @@ desc(?CONF_NS) ->
 %%--------------------------------------------------------------------
 
 injected_fields() ->
-    #{'roots.high' => emqx_schema:authz_fields() ++ authz_fields()}.
+    #{
+        'roots.high' => [
+            {authorization, ?HOCON(?R_REF("authorization"), #{desc => ?DESC("authorization")})}
+        ]
+    }.
 
 %%--------------------------------------------------------------------
 %% APIs for Direct Use

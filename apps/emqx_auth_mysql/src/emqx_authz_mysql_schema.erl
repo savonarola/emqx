@@ -39,7 +39,7 @@ source_refs() ->
     [?R_REF(mysql)].
 
 select_union_member(#{<<"type">> := ?AUTHZ_TYPE_BIN}) ->
-    ?R_REF(file);
+    ?R_REF(mysql);
 select_union_member(_Value) ->
     undefined.
 

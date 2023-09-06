@@ -45,7 +45,7 @@ fields(file) ->
                 )}
         ];
 fields(api_file) ->
-    emqx_authz_schema:authz_common_fields(file) ++
+    emqx_authz_schema:authz_common_fields(?AUTHZ_TYPE) ++
         [
             {rules,
                 ?HOCON(

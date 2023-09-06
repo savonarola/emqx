@@ -30,7 +30,7 @@
 
 type() -> ?AUTHZ_TYPE.
 
-fields(source) ->
+fields(ldap) ->
     emqx_authz_schema:authz_common_fields(?AUTHZ_TYPE) ++
         [
             {publish_attribute, attribute_meta(publish_attribute, <<"mqttPublishTopic">>)},
@@ -48,10 +48,10 @@ fields(source) ->
         emqx_ldap:fields(config).
 
 source_refs() ->
-    [?R_REF(source)].
+    [?R_REF(ldap)].
 
 select_union_member(#{<<"type">> := ?AUTHZ_TYPE_BIN}) ->
-    ?R_REF(file);
+    ?R_REF(ldap);
 select_union_member(_Value) ->
     undefined.
 
