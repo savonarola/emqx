@@ -39,7 +39,8 @@
     flush/1,
     load/1,
     render_and_load_app_config/1,
-    render_and_load_app_config/2
+    render_and_load_app_config/2,
+    copy_acl_conf/0
 ]).
 
 -export([
