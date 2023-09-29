@@ -89,6 +89,7 @@ init() ->
     emqx_conf:add_handler(?ROOT_KEY, ?MODULE),
     ok = emqx_hooks:put('client.authorize', {?MODULE, authorize_deny, []}, ?HP_AUTHZ),
     ok = register_source(client_info, emqx_authz_client_info),
+    ok = register_source(file, emqx_authz_file),
     ok.
 
 register_source(Type, Module) ->

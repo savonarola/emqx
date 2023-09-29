@@ -25,7 +25,7 @@ init_per_suite(Config) ->
     case emqx_common_test_helpers:is_tcp_server_available(?LDAP_HOST, ?LDAP_DEFAULT_PORT) of
         true ->
             ok = emqx_common_test_helpers:start_apps(
-                [emqx_conf, emqx_auth, emqx_auth_ldap, emqx_auth_file],
+                [emqx_conf, emqx_auth, emqx_auth_ldap],
                 fun set_special_configs/1
             ),
             ok = start_apps([emqx_resource]),

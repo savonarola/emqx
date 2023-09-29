@@ -35,6 +35,7 @@
 %%------------------------------------------------------------------------------
 
 start(_StartType, _StartArgs) ->
+    ct:print("emqx_auth_app:start/2"),
     %% required by test cases, ensure the injection of schema
     _ = emqx_conf_schema:roots(),
     {ok, Sup} = emqx_auth_sup:start_link(),

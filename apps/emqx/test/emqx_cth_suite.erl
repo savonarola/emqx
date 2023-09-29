@@ -335,12 +335,6 @@ default_appspec(emqx_auth, _SuiteOpts) ->
             authorization => #{sources => []}
         }
     };
-default_appspec(emqx_auth_file, _SuiteOpts) ->
-    #{
-        before_start => fun() ->
-            emqx_common_test_helpers:copy_acl_conf()
-        end
-    };
 default_appspec(emqx_conf, SuiteOpts) ->
     Config = #{
         node => #{
