@@ -25,7 +25,6 @@
 -elvis([{elvis_style, invalid_dynamic_call, disable}]).
 
 start(_StartType, _StartArgs) ->
-    ct:print("emqx_gateway_app:start/2"),
     {ok, Sup} = emqx_gateway_sup:start_link(),
     emqx_gateway_cli:load(),
     load_default_gateway_applications(),

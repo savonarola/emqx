@@ -36,7 +36,6 @@ end_per_suite(_Config) ->
 %%--------------------------------------------------------------------
 
 t_clean_authz_cache(_) ->
-    ct:print("config ~p", [emqx_config:get([])]),
     {ok, Client} = emqtt:start_link([{clientid, <<"emqx_c">>}]),
     {ok, _} = emqtt:connect(Client),
     {ok, _, _} = emqtt:subscribe(Client, <<"t2">>, 0),
