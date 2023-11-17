@@ -78,7 +78,7 @@ init_per_testcase(TestCase, Config) ->
     Cluster = [{Node, Spec} || Node <- Nodes],
     ClusterNodes = emqx_cth_cluster:start(
         Cluster,
-        #{work_dir => ?config(priv_dir, Config)}
+        #{work_dir => emqx_cth_suite:work_dir(TestCase, Config)}
     ),
     ok = snabbkaffe:start_trace(),
     [{cluster_nodes, ClusterNodes} | Config].
