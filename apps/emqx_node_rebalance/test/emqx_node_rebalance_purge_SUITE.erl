@@ -41,11 +41,13 @@ one_node_cases() ->
     emqx_common_test_helpers:all(?MODULE) -- two_nodes_cases().
 
 init_per_suite(Config) ->
-    ok = emqx_common_test_helpers:start_apps([]),
-    Config.
+    Apps = emqx_cth_suite:start([emqx], #{
+        work_dir => ?config(priv_dir, Config)
+    }),
+    [{apps, Apps} | Config].
 
-end_per_suite(_Config) ->
-    ok = emqx_common_test_helpers:stop_apps([]),
+end_per_suite(Config) ->
+    ok = emqx_cth_suite:stop(?config(apps, Config)),
     ok.
 
 init_per_group(one_node, Config) ->
