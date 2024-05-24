@@ -284,23 +284,22 @@ lookup_var([Prop | Rest], Data0) ->
     end.
 
 lookup(Prop, Data) when is_binary(Prop) ->
-    case do_one_lookup(Prop, Data) of
-        {error, undefined} ->
+    case Data of
+        #{Prop := Value} ->
+            {ok, Value};
+        #{} ->
             try binary_to_existing_atom(Prop, utf8) of
                 AtomKey ->
-                    do_one_lookup(AtomKey, Data)
+                    case Data of
+                        #{AtomKey := Value} ->
+                            {ok, Value};
+                        _ ->
+                            {error, undefined}
+                    end
             catch
                 error:badarg ->
                     {error, undefined}
             end;
-        {ok, Value} ->
-            {ok, Value}
-    end.
-
-do_one_lookup(Key, Data) ->
-    case Data of
-        #{Key := Value} ->
-            {ok, Value};
         _ ->
             {error, undefined}
     end.
