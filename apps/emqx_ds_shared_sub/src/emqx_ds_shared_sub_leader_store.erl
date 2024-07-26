@@ -37,8 +37,7 @@
 %%
 
 open() ->
-    %% FIXME
-    emqx_ds:open_db(?DS_DB, emqx_ds_schema:db_config([durable_storage, messages])).
+    emqx_ds:open_db(?DS_DB, emqx_ds_schema:db_config([durable_storage, queues])).
 
 close() ->
     emqx_ds:close_db(?DS_DB).
