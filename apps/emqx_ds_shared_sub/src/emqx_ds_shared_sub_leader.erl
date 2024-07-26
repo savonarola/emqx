@@ -4,8 +4,6 @@
 
 -module(emqx_ds_shared_sub_leader).
 
--behaviour(gen_statem).
-
 -include("emqx_ds_shared_sub_proto.hrl").
 -include("emqx_ds_shared_sub_config.hrl").
 
@@ -15,12 +13,16 @@
 -include_lib("snabbkaffe/include/trace.hrl").
 
 -export([
-    register/2,
-
     start_link/1,
-    child_spec/1,
-    id/1,
+    become/2
+]).
 
+-export([
+    group_name/1
+]).
+
+-behaviour(gen_statem).
+-export([
     callback_mode/0,
     init/1,
     handle_event/4,
@@ -94,43 +96,33 @@
 
 %% States
 
--define(leader_waiting_registration, leader_waiting_registration).
 -define(leader_active, leader_active).
 
 %% Events
 
--record(register, {
-    register_fun :: fun(() -> pid())
-}).
 -record(renew_streams, {}).
 -record(renew_leases, {}).
 -record(drop_timeout, {}).
+-record(renew_leader_claim, {}).
 
 %%--------------------------------------------------------------------
 %% API
 %%--------------------------------------------------------------------
 
-register(Pid, Fun) ->
-    gen_statem:call(Pid, #register{register_fun = Fun}).
-
-%%--------------------------------------------------------------------
-%% Internal API
-%%--------------------------------------------------------------------
-
-child_spec(#{share_topic_filter := ShareTopicFilter} = Options) ->
-    #{
-        id => id(ShareTopicFilter),
-        start => {?MODULE, start_link, [Options]},
-        restart => temporary,
-        shutdown => 5000,
-        type => worker
-    }.
-
 start_link(Options) ->
     gen_statem:start_link(?MODULE, [Options], []).
 
-id(ShareTopicFilter) ->
-    {?MODULE, ShareTopicFilter}.
+become(ShareTopicFilter, Claim) ->
+    Data0 = init_data(ShareTopicFilter),
+    Data1 = attach_claim(Claim, Data0),
+    Actions = init_claim_renewal(Data1),
+    gen_statem:enter_loop(?MODULE, [], ?leader_active, Data1, Actions).
+
+%%--------------------------------------------------------------------
+
+group_name(#share{group = ShareGroup, topic = Topic}) ->
+    %% TODO: More observable encoding.
+    emqx_topic:join([ShareGroup, binary:encode_hex(Topic)]).
 
 %%--------------------------------------------------------------------
 %% gen_statem callbacks
@@ -138,8 +130,12 @@ id(ShareTopicFilter) ->
 
 callback_mode() -> [handle_event_function, state_enter].
 
-init([#{share_topic_filter := #share{topic = Topic} = ShareTopicFilter} = _Options]) ->
-    Data = #{
+init([#{share_topic_filter := ShareTopicFilter} = _Options]) ->
+    Data = init_data(ShareTopicFilter),
+    {ok, ?leader_active, Data}.
+
+init_data(#share{topic = Topic} = ShareTopicFilter) ->
+    #{
         group_id => ShareTopicFilter,
         topic => Topic,
         start_time => now_ms(),
@@ -147,20 +143,15 @@ init([#{share_topic_filter := #share{topic = Topic} = ShareTopicFilter} = _Optio
         stream_owners => #{},
         agents => #{},
         rank_progress => emqx_ds_shared_sub_leader_rank_progress:init()
-    },
-    {ok, ?leader_waiting_registration, Data}.
+    }.
 
-%%--------------------------------------------------------------------
-%% waiting_registration state
+attach_claim(Claim, Data) ->
+    Data#{leader_claim => Claim}.
 
-handle_event({call, From}, #register{register_fun = Fun}, ?leader_waiting_registration, Data) ->
-    Self = self(),
-    case Fun() of
-        Self ->
-            {next_state, ?leader_active, Data, {reply, From, {ok, Self}}};
-        OtherPid ->
-            {stop_and_reply, normal, {reply, From, {ok, OtherPid}}}
-    end;
+init_claim_renewal(_Data = #{leader_claim := Claim}) ->
+    Interval = emqx_ds_shared_sub_leader_store:heartbeat_interval(Claim),
+    [{{timeout, #renew_leader_claim{}}, Interval, #renew_leader_claim{}}].
+
 %%--------------------------------------------------------------------
 %% repalying state
 handle_event(enter, _OldState, ?leader_active, #{topic := Topic} = _Data) ->
@@ -193,6 +184,14 @@ handle_event({timeout, #drop_timeout{}}, #drop_timeout{}, ?leader_active, Data0)
     Data1 = drop_timeout_agents(Data0),
     {keep_state, Data1,
         {{timeout, #drop_timeout{}}, ?dq_config(leader_drop_timeout_interval_ms), #drop_timeout{}}};
+handle_event({timeout, #renew_leader_claim{}}, #renew_leader_claim{}, ?leader_active, Data0) ->
+    case renew_leader_claim(Data0) of
+        Data1 = #{} ->
+            Actions = init_claim_renewal(Data1),
+            {keep_state, Data1, Actions};
+        Error ->
+            {stop, Error}
+    end;
 %%--------------------------------------------------------------------
 %% agent events
 handle_event(
@@ -249,6 +248,43 @@ terminate(_Reason, _State, _Data) ->
 %%--------------------------------------------------------------------
 %% Event handlers
 %%--------------------------------------------------------------------
+
+%%--------------------------------------------------------------------
+
+renew_leader_claim(Data = #{group_id := ShareTopicFilter, leader_claim := Claim}) ->
+    TS = emqx_message:timestamp_now(),
+    Group = group_name(ShareTopicFilter),
+    case emqx_ds_shared_sub_leader_store:renew_leadership(Group, Claim, TS) of
+        {ok, RenewedClaim} ->
+            ?tp(debug, shared_sub_leader_claim_renewed, #{
+                id => ShareTopicFilter,
+                group => Group,
+                claim => Claim,
+                renewed => RenewedClaim
+            }),
+            attach_claim(Claim, Data);
+        {exists, UnexpectedClaim} ->
+            ?tp(warning, "Shared subscription leadership lost unexpectedly", #{
+                id => ShareTopicFilter,
+                group => Group,
+                claim => Claim,
+                lost_to => UnexpectedClaim
+            }),
+            {error, {leadership_lost, UnexpectedClaim}};
+        {error, Class, Reason} = Error ->
+            ?tp(warning, "Shared subscription leadership renewal failed", #{
+                id => ShareTopicFilter,
+                group => Group,
+                claim => Claim,
+                reason => Reason
+            }),
+            case Class of
+                %% Will retry.
+                recoverable -> Data;
+                %% Will have to crash.
+                unrecoverable -> Error
+            end
+    end.
 
 %%--------------------------------------------------------------------
 %% Renew streams
