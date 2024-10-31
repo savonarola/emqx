@@ -162,7 +162,11 @@ defmodule EMQXUmbrella.MixProject do
       common_dep(:erlavro),
       # in conflict by erlavro
       common_dep(:snappyer),
-      common_dep(:crc32cer)
+      common_dep(:crc32cer),
+      common_dep(:phoenix_live_dashboard),
+      common_dep(:telemetry_metrics),
+      common_dep(:telemetry_poller)
+
     ]
   end
 
@@ -289,6 +293,11 @@ defmodule EMQXUmbrella.MixProject do
   def common_dep(:crc32cer), do: {:crc32cer, "0.1.11", override: true}
   def common_dep(:jesse), do: {:jesse, github: "emqx/jesse", tag: "1.8.1.1"}
   def common_dep(:erlavro), do: {:erlavro, github: "emqx/erlavro", tag: "2.10.0", override: true}
+  def common_dep(:phoenix_live_dashboard), do: {:phoenix_live_dashboard, "~> 0.8.3"}
+  def common_dep(:telemetry_metrics), do: {:telemetry_metrics, "~> 1.0"}
+  def common_dep(:telemetry_poller), do: {:telemetry_poller, "~> 1.0"}
+
+
 
   ###############################################################################################
   # BEGIN DEPRECATED FOR MIX BLOCK
