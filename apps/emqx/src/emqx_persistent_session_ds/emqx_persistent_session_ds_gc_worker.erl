@@ -18,8 +18,6 @@
 -behaviour(gen_server).
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
--include_lib("stdlib/include/qlc.hrl").
--include_lib("stdlib/include/ms_transform.hrl").
 
 -include("session_internals.hrl").
 
