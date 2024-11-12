@@ -42,8 +42,8 @@
     on_unsubscribe/4,
     on_disconnect/2,
 
-    on_streams_replay/3,
-    on_info/3,
+    on_streams_replay/2,
+    on_info/4,
 
     to_map/2
 ]).
@@ -305,33 +305,6 @@ schedule_unsubscribe(
     end.
 
 %%--------------------------------------------------------------------
-%% renew_streams
-
--spec renew_streams(
-    emqx_persistent_session_ds_state:t(),
-    emqx_persistent_session_ds_stream_scheduler:t(),
-    t()
-) ->
-    {emqx_persistent_session_ds_state:t(), emqx_persistent_session_ds_stream_scheduler:t(), t()}.
-renew_streams(S0, SchedS0, #{agent := Agent0} = SharedS0) ->
-    {StreamLeaseEvents, Agent} =
-        emqx_persistent_session_ds_shared_subs_agent:renew_streams(Agent0),
-    StreamLeaseEvents =/= [] andalso
-        ?tp(debug, shared_subs_new_stream_lease_events, #{
-            stream_lease_events => StreamLeaseEvents
-        }),
-    {S, SchedS} = lists:foldl(
-        fun
-            (#{type := lease} = Event, {S, SS}) -> handle_lease_stream(Event, SharedS0, S, SS);
-            (#{type := revoke} = Event, {S, SS}) -> handle_revoke_stream(Event, S, SS)
-        end,
-        {S0, SchedS0},
-        StreamLeaseEvents
-    ),
-    SharedS = SharedS0#{agent => Agent},
-    {S, SchedS, SharedS}.
-
-%%--------------------------------------------------------------------
 %% renew_streams internal functions
 
 handle_lease_stream(#{share_topic_filter := ShareTopicFilter} = Event, SharedS, S, SchedS) ->
@@ -409,24 +382,19 @@ revoke_stream(ShareTopicFilter, Stream, S0, SchedS0) ->
 %%--------------------------------------------------------------------
 %% on_streams_replay
 
--spec on_streams_replay(
-    emqx_persistent_session_ds_state:t(),
-    emqx_persistent_session_ds_stream_scheduler:t(),
-    t()
-) -> {emqx_persistent_session_ds_state:t(), emqx_persistent_session_ds_stream_scheduler:t(), t()}.
-on_streams_replay(S0, SchedS0, SharedS0) ->
-    {S, SchedS, #{agent := Agent0, scheduled_actions := ScheduledActions0} = SharedS1} =
-        renew_streams(S0, SchedS0, SharedS0),
+-spec on_streams_replay(emqx_persistent_session_ds_state:t(), t()) ->
+    {emqx_persistent_session_ds_state:t(), emqx_persistent_session_ds_stream_scheduler:t(), t()}.
+on_streams_replay(S, #{agent := Agent0, scheduled_actions := ScheduledActions0} = SharedS0) ->
     Progresses = all_stream_progresses(S, Agent0),
     Agent1 = emqx_persistent_session_ds_shared_subs_agent:on_stream_progress(
         Agent0, Progresses
     ),
     {Agent, ScheduledActions} = run_scheduled_actions(S, Agent1, ScheduledActions0),
-    SharedS = SharedS1#{
+    SharedS = SharedS0#{
         agent => Agent,
         scheduled_actions => ScheduledActions
     },
-    {S, SchedS, SharedS}.
+    {S, SharedS}.
 
 %%--------------------------------------------------------------------
 %% on_streams_replay internal functions
@@ -568,13 +536,35 @@ terminate_streams(S0) ->
 %%--------------------------------------------------------------------
 %% on_info
 
--spec on_info(emqx_persistent_session_ds_state:t(), t(), term()) ->
+-spec on_info(
+    emqx_persistent_session_ds_state:t(),
+    emqx_persistent_session_ds_stream_scheduler:t(),
+    t(),
+    term()
+) ->
     {emqx_persistent_session_ds_state:t(), t()}.
-on_info(S, #{agent := Agent0} = SharedSubS0, Info) ->
-    {StreamLeaseEvents, Agent1} = emqx_persistent_session_ds_shared_subs_agent:on_info(Agent0, Info),
-
+on_info(S0, SchedS0, #{agent := Agent0} = SharedSubS0, Info) ->
+    ?tp(warning, shared_subs_info, #{info => Info}),
+    {StreamLeaseEvents, Agent1} = emqx_persistent_session_ds_shared_subs_agent:on_info(
+        Agent0, Info
+    ),
     SharedSubS1 = SharedSubS0#{agent => Agent1},
-    {S, SharedSubS1}.
+    handle_events(S0, SchedS0, SharedSubS1, StreamLeaseEvents).
+
+handle_events(S0, SchedS0, SharedS0, StreamLeaseEvents) ->
+    StreamLeaseEvents =/= [] andalso
+        ?tp(debug, shared_subs_new_stream_lease_events, #{
+            stream_lease_events => StreamLeaseEvents
+        }),
+    {S, SchedS} = lists:foldl(
+        fun
+            (#{type := lease} = Event, {S, SS}) -> handle_lease_stream(Event, SharedS0, S, SS);
+            (#{type := revoke} = Event, {S, SS}) -> handle_revoke_stream(Event, S, SS)
+        end,
+        {S0, SchedS0},
+        StreamLeaseEvents
+    ),
+    {S, SchedS, SharedS0}.
 
 %%--------------------------------------------------------------------
 %% to_map

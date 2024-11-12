@@ -413,8 +413,12 @@ handle_state_timeout(GSM, update_stream_state_timeout, _Message) ->
     handle_stream_progress(GSM, []).
 
 handle_info(
-    #{state_timers := Timers} = GSM, #state_timeout{message = Message, name = Name, id = Id} = _Info
+    #{state_timers := Timers} = GSM, #state_timeout{message = Message, name = Name, id = Id} = Info
 ) ->
+    ?tp(warning, shared_sub_group_sm_handle_info, #{
+        info => Info,
+        gsm => GSM
+    }),
     case Timers of
         #{Name := #timer{id = Id}} ->
             handle_state_timeout(GSM, Name, Message);
@@ -422,7 +426,11 @@ handle_info(
             %% Stale timer
             GSM
     end;
-handle_info(GSM, _Info) ->
+handle_info(GSM, Info) ->
+    ?tp(warning, shared_sub_group_sm_handle_info_no_timers, #{
+        info => Info,
+        gsm => GSM
+    }),
     GSM.
 
 %%--------------------------------------------------------------------

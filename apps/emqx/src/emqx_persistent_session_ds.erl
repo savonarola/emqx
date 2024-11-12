@@ -697,14 +697,13 @@ handle_timeout(ClientInfo, expire_awaiting_rel, Session) ->
 handle_timeout(
     _ClientInfo,
     ?TIMER_SHARED_SUB,
-    Session0 = #{s := S0, stream_scheduler_s := SchedS0, shared_sub_s := SharedSubS0}
+    Session0 = #{s := S0, shared_sub_s := SharedSubS0}
 ) ->
-    {S, SchedS, SharedSubS} = emqx_persistent_session_ds_shared_subs:on_streams_replay(
-        S0, SchedS0, SharedSubS0
+    {S, SharedSubS} = emqx_persistent_session_ds_shared_subs:on_streams_replay(
+        S0, SharedSubS0
     ),
     Session = Session0#{
         s := S,
-        stream_scheduler_s := SchedS,
         shared_sub_s := SharedSubS,
         ?TIMER_SHARED_SUB := undefined
     },
@@ -719,10 +718,16 @@ handle_timeout(_ClientInfo, Timeout, Session) ->
 
 -spec handle_info(term(), session(), clientinfo()) -> session().
 handle_info(
-    ?shared_sub_message(Msg), Session = #{s := S0, shared_sub_s := SharedSubS0}, _ClientInfo
+    ?shared_sub_message(Msg),
+    Session = #{s := S0, shared_sub_s := SharedSubS0, stream_scheduler_s := SchedS0},
+    _ClientInfo
 ) ->
-    {S, SharedSubS} = emqx_persistent_session_ds_shared_subs:on_info(S0, SharedSubS0, Msg),
-    ensure_state_commit_timer(Session#{s := S, shared_sub_s := SharedSubS});
+    {S, SchedS, SharedSubS} = emqx_persistent_session_ds_shared_subs:on_info(
+        S0, SchedS0, SharedSubS0, Msg
+    ),
+    ensure_state_commit_timer(Session#{
+        s := S, shared_sub_s := SharedSubS, stream_scheduler_s := SchedS
+    });
 handle_info(AsyncReply = #poll_reply{}, Session, ClientInfo) ->
     push_now(handle_ds_reply(AsyncReply, Session, ClientInfo));
 handle_info(#new_stream_event{subref = Ref}, Session, _ClientInfo) ->
@@ -866,16 +871,16 @@ renew_streams(TopicFilter, Session0 = #{s := S0}) ->
     end.
 
 stream_housekeeping(Session) ->
-    #{s := S0, shared_sub_s := SharedSubS0, stream_scheduler_s := SchedS0} = Session,
+    #{s := S0, shared_sub_s := SharedSubS0} = Session,
     %% `gc' and `renew_streams' methods may drop unsubscribed streams.
     %% Shared subscription handler must have a chance to see
     %% unsubscribed streams in the fully replayed state.
-    {S1, SchedS, SharedSubS} = emqx_persistent_session_ds_shared_subs:on_streams_replay(
-        S0, SchedS0, SharedSubS0
+    {S1, SharedSubS} = emqx_persistent_session_ds_shared_subs:on_streams_replay(
+        S0, SharedSubS0
     ),
     %% Take the opportunity to remove obsolete stream states:
     S = emqx_persistent_session_ds_subs:gc(S1),
-    Session#{s := S, shared_sub_s := SharedSubS, stream_scheduler_s := SchedS}.
+    Session#{s := S, shared_sub_s := SharedSubS}.
 
 %%--------------------------------------------------------------------
 

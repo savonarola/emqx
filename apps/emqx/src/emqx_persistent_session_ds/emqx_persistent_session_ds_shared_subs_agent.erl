@@ -120,7 +120,7 @@ on_disconnect(Agent, StreamProgresses) ->
 on_stream_progress(Agent, StreamProgress) ->
     ?shared_subs_agent:on_stream_progress(Agent, StreamProgress).
 
--spec on_info(t(), term()) -> t().
+-spec on_info(t(), term()) -> {[event()], t()}.
 on_info(Agent, Info) ->
     ?shared_subs_agent:on_info(Agent, Info).
 

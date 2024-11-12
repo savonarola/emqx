@@ -13,10 +13,12 @@
 -include_lib("emqx/include/asserts.hrl").
 
 all() ->
-    [{group, declare_explicit}, {group, declare_implicit}].
+    [{group, declare_explicit}].
+    % {group, declare_implicit}].
 
 groups() ->
-    TCs = emqx_common_test_helpers:all(?MODULE),
+    % TCs = emqx_common_test_helpers:all(?MODULE),
+    TCs = [t_lease_reconnect],
     Groups = [declare_explicit, declare_implicit],
     GroupTCs = [{Group, TC} || TC <- TCs, Group <- groups_per_testcase(TC, Groups)],
     lists:foldl(

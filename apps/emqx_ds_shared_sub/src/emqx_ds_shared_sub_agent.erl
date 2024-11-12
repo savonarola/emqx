@@ -173,8 +173,7 @@ on_disconnect(#{groups := Groups0} = State, StreamProgresses) ->
 
 -spec on_info(t(), term()) -> t().
 on_info(State, ?leader_lease_streams_match(GroupId, Leader, StreamProgresses, Version)) ->
-    ?SLOG(debug, #{
-        msg => leader_lease_streams,
+    ?tp(warning, ds_shared_sub_agent_leader_lease_streams, #{
         group_id => GroupId,
         streams => StreamProgresses,
         version => Version,
@@ -186,8 +185,7 @@ on_info(State, ?leader_lease_streams_match(GroupId, Leader, StreamProgresses, Ve
         )
     end);
 on_info(State, ?leader_renew_stream_lease_match(GroupId, Version)) ->
-    ?SLOG(debug, #{
-        msg => leader_renew_stream_lease,
+    ?tp(warning, ds_shared_sub_agent_leader_renew_stream_lease, #{
         group_id => GroupId,
         version => Version
     }),
@@ -195,8 +193,7 @@ on_info(State, ?leader_renew_stream_lease_match(GroupId, Version)) ->
         emqx_ds_shared_sub_group_sm:handle_leader_renew_stream_lease(GSM, Version)
     end);
 on_info(State, ?leader_renew_stream_lease_match(GroupId, VersionOld, VersionNew)) ->
-    ?SLOG(debug, #{
-        msg => leader_renew_stream_lease,
+    ?tp(warning, ds_shared_sub_agent_leader_renew_stream_lease, #{
         group_id => GroupId,
         version_old => VersionOld,
         version_new => VersionNew
@@ -205,8 +202,7 @@ on_info(State, ?leader_renew_stream_lease_match(GroupId, VersionOld, VersionNew)
         emqx_ds_shared_sub_group_sm:handle_leader_renew_stream_lease(GSM, VersionOld, VersionNew)
     end);
 on_info(State, ?leader_update_streams_match(GroupId, VersionOld, VersionNew, StreamsNew)) ->
-    ?SLOG(debug, #{
-        msg => leader_update_streams,
+    ?tp(warning, ds_shared_sub_agent_leader_update_streams, #{
         group_id => GroupId,
         version_old => VersionOld,
         version_new => VersionNew,
@@ -218,8 +214,7 @@ on_info(State, ?leader_update_streams_match(GroupId, VersionOld, VersionNew, Str
         )
     end);
 on_info(State, ?leader_invalidate_match(GroupId)) ->
-    ?SLOG(debug, #{
-        msg => leader_invalidate,
+    ?tp(warning, ds_shared_sub_agent_leader_invalidate, #{
         group_id => GroupId
     }),
     with_group_sm_events(State, GroupId, fun(GSM) ->
@@ -227,7 +222,15 @@ on_info(State, ?leader_invalidate_match(GroupId)) ->
     end);
 %% Generic messages sent by group_sm's to themselves (timeouts).
 on_info(State, #message_to_group_sm{group_id = GroupId, message = Message}) ->
+    ?tp(warning, ds_shared_sub_agent_message_to_group_sm, #{
+        message => Message,
+        group_id => GroupId
+    }),
     with_group_sm_events(State, GroupId, fun(GSM) ->
+        ?tp(warning, ds_shared_sub_agent_message_to_group_sm_inside_with_group_sm_events, #{
+            message => Message,
+            group_id => GroupId
+        }),
         emqx_ds_shared_sub_group_sm:handle_info(GSM, Message)
     end).
 
@@ -300,7 +303,7 @@ with_group_sm_events(State, GroupId, Fun) ->
         #{groups := #{GroupId := GSM0} = Groups} ->
             case Fun(GSM0) of
                 {Events, GSM1} ->
-                    {Events, State#{groups => Groups#{GroupId => GSM1}}};
+                    {add_group_id(Events, GroupId), State#{groups => Groups#{GroupId => GSM1}}};
                 GSM1 ->
                     {[], State#{groups => Groups#{GroupId => GSM1}}}
             end;
@@ -310,6 +313,9 @@ with_group_sm_events(State, GroupId, Fun) ->
             }),
             {[], State}
     end.
+
+add_group_id(Events, GroupId) ->
+    [Event#{share_topic_filter => GroupId} || Event <- Events].
 
 
 
