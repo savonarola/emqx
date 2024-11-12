@@ -45,7 +45,6 @@
     on_streams_replay/3,
     on_info/3,
 
-    renew_streams/3,
     to_map/2
 ]).
 
@@ -572,7 +571,8 @@ terminate_streams(S0) ->
 -spec on_info(emqx_persistent_session_ds_state:t(), t(), term()) ->
     {emqx_persistent_session_ds_state:t(), t()}.
 on_info(S, #{agent := Agent0} = SharedSubS0, Info) ->
-    Agent1 = emqx_persistent_session_ds_shared_subs_agent:on_info(Agent0, Info),
+    {StreamLeaseEvents, Agent1} = emqx_persistent_session_ds_shared_subs_agent:on_info(Agent0, Info),
+
     SharedSubS1 = SharedSubS0#{agent => Agent1},
     {S, SharedSubS1}.
 

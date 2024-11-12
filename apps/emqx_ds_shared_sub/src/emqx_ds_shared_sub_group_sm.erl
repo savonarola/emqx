@@ -27,7 +27,6 @@
     handle_info/2,
 
     %% API
-    fetch_stream_events/1,
     handle_stream_progress/2,
     handle_disconnect/2
 ]).
@@ -101,7 +100,6 @@
     share_topic_filter => emqx_persistent_session_ds:share_topic_filter(),
     agent => emqx_ds_shared_sub_proto:agent(),
     send_after => fun((non_neg_integer(), term()) -> reference()),
-    stream_lease_events => list(stream_lease_event()),
 
     state => state(),
     state_data => state_data(),
@@ -130,23 +128,6 @@ new(#{
         send_after => SendAfter
     },
     transition(GSM0, ?connecting, #{}).
-
--spec fetch_stream_events(t()) ->
-    {t(), [emqx_ds_shared_sub_agent:external_lease_event()]}.
-fetch_stream_events(
-    #{
-        state := _State,
-        share_topic_filter := ShareTopicFilter,
-        stream_lease_events := Events0
-    } = GSM
-) ->
-    Events1 = lists:map(
-        fun(Event) ->
-            Event#{share_topic_filter => ShareTopicFilter}
-        end,
-        Events0
-    ),
-    {GSM#{stream_lease_events => []}, Events1}.
 
 -spec handle_disconnect(t(), emqx_ds_shared_sub_proto:agent_stream_progress()) -> t().
 handle_disconnect(#{state := ?connecting} = GSM, _StreamProgresses) ->
@@ -464,10 +445,9 @@ transition(GSM0, NewState, NewStateData, LeaseEvents) ->
     GSM2 = GSM1#{
         state => NewState,
         state_data => NewStateData,
-        state_timers => #{},
-        stream_lease_events => LeaseEvents
+        state_timers => #{}
     },
-    run_enter_callback(GSM2).
+    {LeaseEvents, run_enter_callback(GSM2)}.
 
 agent_metadata(#{id := Id} = _GSM) ->
     #{id => Id}.
