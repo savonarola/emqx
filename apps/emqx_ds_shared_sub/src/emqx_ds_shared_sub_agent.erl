@@ -146,9 +146,11 @@ on_subscribe(State0, ShareTopicFilter, _SubOpts) ->
 on_unsubscribe(State, ShareTopicFilter, GroupProgress) ->
     delete_shared_subscription(State, ShareTopicFilter, GroupProgress).
 
-    -spec on_stream_progress(t(), #{
+-spec on_stream_progress(t(), #{
     share_topic_filter() => [emqx_persistent_session_ds_shared_subs:agent_stream_progress()]
 }) -> t().
+on_stream_progress(State, StreamProgresses) when map_size(StreamProgresses) == 0 ->
+    State;
 on_stream_progress(State, StreamProgresses) ->
     maps:fold(
         fun(ShareTopicFilter, GroupProgresses, StateAcc) ->
@@ -185,7 +187,7 @@ on_info(State, ?leader_lease_streams_match(GroupId, Leader, StreamProgresses, Ve
         )
     end);
 on_info(State, ?leader_renew_stream_lease_match(GroupId, Version)) ->
-    ?tp(warning, ds_shared_sub_agent_leader_renew_stream_lease, #{
+    ?tp(debug, ds_shared_sub_agent_leader_renew_stream_lease, #{
         group_id => GroupId,
         version => Version
     }),
@@ -193,7 +195,7 @@ on_info(State, ?leader_renew_stream_lease_match(GroupId, Version)) ->
         emqx_ds_shared_sub_group_sm:handle_leader_renew_stream_lease(GSM, Version)
     end);
 on_info(State, ?leader_renew_stream_lease_match(GroupId, VersionOld, VersionNew)) ->
-    ?tp(warning, ds_shared_sub_agent_leader_renew_stream_lease, #{
+    ?tp(debug, ds_shared_sub_agent_leader_renew_stream_lease, #{
         group_id => GroupId,
         version_old => VersionOld,
         version_new => VersionNew
@@ -222,15 +224,7 @@ on_info(State, ?leader_invalidate_match(GroupId)) ->
     end);
 %% Generic messages sent by group_sm's to themselves (timeouts).
 on_info(State, #message_to_group_sm{group_id = GroupId, message = Message}) ->
-    ?tp(warning, ds_shared_sub_agent_message_to_group_sm, #{
-        message => Message,
-        group_id => GroupId
-    }),
     with_group_sm_events(State, GroupId, fun(GSM) ->
-        ?tp(warning, ds_shared_sub_agent_message_to_group_sm_inside_with_group_sm_events, #{
-            message => Message,
-            group_id => GroupId
-        }),
         emqx_ds_shared_sub_group_sm:handle_info(GSM, Message)
     end).
 

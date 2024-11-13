@@ -48,13 +48,13 @@
 
 -type stream_lease_event() ::
     #{
-        type => lease,
-        stream => emqx_ds:stream(),
-        progress => progress()
+        type := lease,
+        stream := emqx_ds:stream(),
+        progress := progress()
     }
     | #{
-        type => revoke,
-        stream => emqx_ds:stream()
+        type := revoke,
+        stream := emqx_ds:stream()
     }.
 
 %% GroupSM States
@@ -210,7 +210,7 @@ handle_replaying(GSM0) ->
 -spec handle_renew_lease_timeout(t()) -> t().
 handle_renew_lease_timeout(#{agent := Agent, share_topic_filter := ShareTopicFilter} = GSM) ->
     ?tp(warning, renew_lease_timeout, #{agent => Agent, share_topic_filter => ShareTopicFilter}),
-    transition(GSM, ?connecting, #{}).
+    transition_and_revoke_all(GSM, ?connecting, #{}).
 
 %%-----------------------------------------------------------------------
 %% Updating state
@@ -286,7 +286,7 @@ handle_leader_update_streams(
         maps:keys(Streams1)
     ),
     StreamLeaseEvents = AddEvents ++ RevokeEvents,
-    ?tp(debug, shared_sub_group_sm_leader_update_streams, #{
+    ?tp(warning, shared_sub_group_sm_leader_update_streams, #{
         id => Id,
         stream_lease_events => StreamLeaseEvents
     }),
@@ -321,7 +321,7 @@ handle_leader_update_streams(GSM, VersionOld, VersionNew, _StreamProgresses) ->
         version_old => VersionOld,
         version_new => VersionNew
     }),
-    transition(GSM, ?connecting, #{}).
+    transition_and_revoke_all(GSM, ?connecting, #{}).
 
 -spec handle_leader_renew_stream_lease(t(), emqx_ds_shared_sub_proto:version()) -> t().
 handle_leader_renew_stream_lease(
@@ -359,7 +359,7 @@ handle_leader_renew_stream_lease(GSM, VersionOld, VersionNew) ->
         version_old => VersionOld,
         version_new => VersionNew
     }),
-    transition(GSM, ?connecting, #{}).
+    transition_and_revoke_all(GSM, ?connecting, #{}).
 
 -spec handle_stream_progress(t(), list(emqx_ds_shared_sub_proto:agent_stream_progress())) ->
     t().
@@ -409,7 +409,7 @@ handle_leader_invalidate(#{agent := Agent, share_topic_filter := ShareTopicFilte
         agent => Agent,
         share_topic_filter => ShareTopicFilter
     }),
-    transition(GSM, ?connecting, #{}).
+    transition_and_revoke_all(GSM, ?connecting, #{}).
 
 %%-----------------------------------------------------------------------
 %% Internal API
@@ -426,7 +426,7 @@ handle_state_timeout(GSM, update_stream_state_timeout, _Message) ->
 handle_info(
     #{state_timers := Timers} = GSM, #state_timeout{message = Message, name = Name, id = Id} = Info
 ) ->
-    ?tp(warning, shared_sub_group_sm_handle_info, #{
+    ?tp(debug, shared_sub_group_sm_handle_info, #{
         info => Info,
         gsm => GSM
     }),
@@ -438,7 +438,7 @@ handle_info(
             GSM
     end;
 handle_info(GSM, Info) ->
-    ?tp(warning, shared_sub_group_sm_handle_info_no_timers, #{
+    ?tp(debug, shared_sub_group_sm_handle_info_no_timers, #{
         info => Info,
         gsm => GSM
     }),
@@ -473,6 +473,19 @@ transition(GSM0, NewState, NewStateData, LeaseEvents) ->
         _ ->
             {LeaseEvents, GSM3}
     end.
+
+transition_and_revoke_all(#{state_data := #{streams := Streams} = StateData} = GSM0, NewState, NewStateData) ->
+    StreamLeaseEvents = lists:map(
+        fun(Stream) ->
+            #{
+                type => revoke,
+                stream => Stream
+            }
+        end,
+        maps:keys(Streams)
+    ),
+    GSM1 = GSM0#{state_data => StateData#{streams => #{}}},
+    transition(GSM1, NewState, NewStateData, StreamLeaseEvents).
 
 agent_metadata(#{id := Id} = _GSM) ->
     #{id => Id}.
