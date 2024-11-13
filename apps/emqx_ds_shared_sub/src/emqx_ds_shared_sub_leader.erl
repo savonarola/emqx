@@ -509,16 +509,19 @@ drop_timeout_agents(#{agents := Agents} = Data) ->
                     _AgentState},
             DataAcc
         ) ->
+            UpdatedDeadlineReached = (UpdateDeadline < Now),
+            NoReplayingDeadlineReached =
+                is_integer(NoReplayingDeadline) andalso NoReplayingDeadline < Now,
             case
-                (UpdateDeadline < Now) orelse
-                    (is_integer(NoReplayingDeadline) andalso NoReplayingDeadline < Now)
+                UpdatedDeadlineReached or NoReplayingDeadlineReached
             of
                 true ->
-                    ?SLOG(debug, #{
-                        msg => leader_agent_timeout,
+                    ?tp(warning, shared_sub_leader_agent_timeout, #{
                         now => Now,
                         update_deadline => UpdateDeadline,
                         not_replaying_deadline => NoReplayingDeadline,
+                        update_deadline_reached => UpdatedDeadlineReached,
+                        not_replaying_deadline_reached => NoReplayingDeadlineReached,
                         agent => Agent
                     }),
                     drop_invalidate_agent(DataAcc, Agent);

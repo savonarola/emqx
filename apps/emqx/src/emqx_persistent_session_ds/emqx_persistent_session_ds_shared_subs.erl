@@ -275,8 +275,9 @@ on_unsubscribe(SessionId, ShareTopicFilter, S0, SharedSubS0) ->
             ?tp(persistent_session_ds_subscription_delete, #{
                 session_id => SessionId, share_topic_filter => ShareTopicFilter
             }),
-            S = emqx_persistent_session_ds_state:del_subscription(ShareTopicFilter, S0),
-            SharedSubS = schedule_unsubscribe(S, SharedSubS0, SubId, ShareTopicFilter),
+            S1 = emqx_persistent_session_ds_state:del_subscription(ShareTopicFilter, S0),
+            SharedSubS1 = schedule_unsubscribe(S1, SharedSubS0, SubId, ShareTopicFilter),
+            {S, SharedSubS} = on_streams_gc(S1, SharedSubS1),
             {ok, S, SharedSubS, Subscription}
     end.
 
@@ -367,7 +368,7 @@ accept_stream(
                     sub_state_id = SStateId
                 },
             S = emqx_persistent_session_ds_state:put_stream(Key, NewSRS, S0),
-            SchedS = emqx_persistent_session_ds_stream_scheduler:on_enqueue(
+            {_, SchedS} = emqx_persistent_session_ds_stream_scheduler:on_enqueue(
                 _IsReplay = false, Key, NewSRS, S, SchedS0
             ),
             {S, SchedS};
@@ -398,6 +399,8 @@ revoke_stream(ShareTopicFilter, Stream, S0, SchedS0) ->
 
 -spec on_streams_replay(emqx_persistent_session_ds_state:t(), t(), [emqx_ds:stream()]) ->
     {emqx_persistent_session_ds_state:t(), t()}.
+on_streams_replay(S, SharedS, []) ->
+    {S, SharedS};
 %% No-op if there are no shared subscriptions
 on_streams_replay(S, #{topic_filters := TopicFilters} = SharedS, _StreamKeys) when
     map_size(TopicFilters) == 0
@@ -435,6 +438,13 @@ all_stream_progresses(S, _Agent, NeedUnacked) ->
     CommQos2 = emqx_persistent_session_ds_state:get_seqno(?committed(?QOS_2), S),
     fold_shared_stream_states(
         fun(ShareTopicFilter, _SubId, Stream, SRS, ProgressesAcc0) ->
+            ?tp(warning, shared_subs_all_stream_progresses, #{
+                stream => Stream,
+                srs => SRS,
+                fully_acked => is_stream_fully_acked(CommQos1, CommQos2, SRS),
+                comm_qos1 => CommQos1,
+                comm_qos2 => CommQos2
+            }),
             case
                 is_stream_started(CommQos1, CommQos2, SRS) and
                     (NeedUnacked or is_stream_fully_acked(CommQos1, CommQos2, SRS))
@@ -456,6 +466,9 @@ all_stream_progresses(S, _Agent, NeedUnacked) ->
     ).
 
 run_scheduled_actions(S, #{scheduled_actions := ScheduledActions} = SharedS0) ->
+    ?tp(warning, shared_subs_run_scheduled_actions, #{
+        scheduled_actions => ScheduledActions
+    }),
     maps:fold(
         fun(ShareTopicFilter, Action0, SharedS) ->
             run_scheduled_action(S, SharedS, ShareTopicFilter, Action0)
@@ -530,7 +543,15 @@ filter_unfinished_streams(S, StreamKeysToWait) ->
                     %% in completed state before deletion
                     true;
                 SRS ->
-                    not is_stream_fully_acked(CommQos1, CommQos2, SRS)
+                    Unfinished = not is_stream_fully_acked(CommQos1, CommQos2, SRS),
+                    ?tp(warning, shared_subs_filter_unfinished_streams, #{
+                        stream_key => Key,
+                        srs => SRS,
+                        unfinished => Unfinished,
+                        comm_qos1 => CommQos1,
+                        comm_qos2 => CommQos2
+                    }),
+                    Unfinished
             end
         end,
         StreamKeysToWait
@@ -602,7 +623,7 @@ terminate_streams(S0) ->
     t(),
     term()
 ) ->
-    {emqx_persistent_session_ds_state:t(), t()}.
+    {_NeedPush :: boolean(), emqx_persistent_session_ds_state:t(), t()}.
 on_info(S0, SchedS0, #{agent := Agent0} = SharedSubS0, Info) ->
     {StreamLeaseEvents, Agent1} = emqx_persistent_session_ds_shared_subs_agent:on_info(
         Agent0, Info
@@ -611,12 +632,12 @@ on_info(S0, SchedS0, #{agent := Agent0} = SharedSubS0, Info) ->
     handle_events(S0, SchedS0, SharedSubS1, StreamLeaseEvents).
 
 handle_events(S0, SchedS0, SharedS0, []) ->
-    {S0, SchedS0, SharedS0};
-handle_events(S0, SchedS0, #{agent := Agent0} = SharedS0, StreamLeaseEvents) ->
+    {false, S0, SchedS0, SharedS0};
+handle_events(S0, SchedS0, SharedS0, StreamLeaseEvents) ->
     ?tp(debug, shared_subs_new_stream_lease_events, #{
         stream_lease_events => StreamLeaseEvents
     }),
-    {S, SchedS} = lists:foldl(
+    {S1, SchedS} = lists:foldl(
         fun
             (#{type := lease} = Event, {S, SS}) -> handle_lease_stream(Event, SharedS0, S, SS);
             (#{type := revoke} = Event, {S, SS}) -> handle_revoke_stream(Event, S, SS)
@@ -624,12 +645,8 @@ handle_events(S0, SchedS0, #{agent := Agent0} = SharedS0, StreamLeaseEvents) ->
         {S0, SchedS0},
         StreamLeaseEvents
     ),
-    Progresses = all_stream_progresses(S, Agent0),
-    Agent1 = emqx_persistent_session_ds_shared_subs_agent:on_stream_progress(
-        Agent0, Progresses
-    ),
-    SharedS = SharedS0#{agent => Agent1},
-    {S, SchedS, SharedS}.
+    {S, SharedS} = on_streams_gc(S1, SharedS0),
+    {true, S, SchedS, SharedS}.
 
 %%--------------------------------------------------------------------
 %% to_map
@@ -702,17 +719,18 @@ stream_progress(
         it_begin = BeginIt
     } = SRS
 ) ->
-    Iterator =
+    {FullyAcked, Iterator} =
         case is_stream_fully_acked(CommQos1, CommQos2, SRS) of
-            true -> EndIt;
-            false -> BeginIt
+            true -> {true, EndIt};
+            false -> {false, BeginIt}
         end,
     #{
         stream => Stream,
         progress => #{
             iterator => Iterator
         },
-        use_finished => is_use_finished(SRS)
+        use_finished => is_use_finished(SRS),
+        fully_acked => FullyAcked
     }.
 
 fold_shared_subs(Fun, Acc, S) ->
@@ -722,13 +740,6 @@ fold_shared_subs(Fun, Acc, S) ->
             (_, _Sub, Acc0) -> Acc0
         end,
         Acc,
-        S
-    ).
-
-share_topic_filters(S) ->
-    fold_shared_subs(
-        fun(ShareTopicFilter, #{sub_id := SubId}, Acc) -> Acc#{SubId => ShareTopicFilter} end,
-        #{},
         S
     ).
 
