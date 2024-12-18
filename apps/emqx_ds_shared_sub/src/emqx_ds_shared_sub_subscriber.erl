@@ -34,7 +34,7 @@
 
 -type options() :: #{
     session_id := emqx_persistent_session_ds:id(),
-    id := emqx_ds_shared_sub_proto:agent(),
+    id := emqx_ds_shared_sub_proto:ssubscriber_id(),
     share_topic_filter := emqx_persistent_session_ds:share_topic_filter(),
     send_after := fun((non_neg_integer(), term()) -> reference())
 }.
