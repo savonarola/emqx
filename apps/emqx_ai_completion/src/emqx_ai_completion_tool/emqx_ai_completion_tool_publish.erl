@@ -54,7 +54,7 @@ tool_specs() ->
     [
         #{
             name => publish,
-            description => ~b"Publish a message with a given payload and qos to a topic",
+            description => <<"Publish a message with a given payload and qos to a topic">>,
             function => fun publish/1,
             parameters => ?R_REF(?MODULE, publish)
         }

@@ -15,10 +15,8 @@
 -spec start(application:start_type(), term()) -> {ok, pid()}.
 start(_Type, _Args) ->
     {ok, Sup} = emqx_ai_completion_sup:start_link(),
-    ok = emqx_ai_completion:register_hooks(),
     {ok, Sup}.
 
 -spec stop(term()) -> ok.
 stop(_State) ->
-    ok = emqx_ai_completion:unregister_hooks(),
     ok.
