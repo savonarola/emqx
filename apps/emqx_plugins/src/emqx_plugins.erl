@@ -29,8 +29,7 @@
 -export([
     describe/1,
     plugin_schema/1,
-    plugin_i18n/1,
-    raw_plugin_config_content/1
+    plugin_i18n/1
 ]).
 
 %% Package operations
@@ -124,10 +123,6 @@ plugin_schema(NameVsn) ->
 plugin_i18n(NameVsn) ->
     ?CATCH(emqx_plugins_fs:read_i18n(NameVsn)).
 
--spec raw_plugin_config_content(name_vsn()) -> {ok, raw_plugin_config_content()} | {error, any()}.
-raw_plugin_config_content(NameVsn) ->
-    ?CATCH(read_plugin_hocon(NameVsn)).
-
 %%--------------------------------------------------------------------
 %% Package operations
 
@@ -219,7 +214,7 @@ ensure_disabled(NameVsn) ->
 -spec purge(name_vsn()) -> ok.
 purge(NameVsn) ->
     _ = maybe_purge_plugin_config(NameVsn),
-    emqx_plugins_fs:purge_plugin(NameVsn).
+    emqx_plugins_fs:purge_installed(NameVsn).
 
 %% @doc Delete the package file.
 -spec delete_package(name_vsn()) -> ok.
@@ -294,12 +289,6 @@ get_config(NameVsn) ->
 -spec get_config(name_vsn(), term()) -> plugin_config_map().
 get_config(NameVsn, Default) ->
     persistent_term:get(?PLUGIN_PERSIS_CONFIG_KEY(bin(NameVsn)), Default).
-
-%% RPC target, kept for backward compatibility.
--spec get_config(name_vsn(), ?CONFIG_FORMAT_MAP, any()) ->
-    {ok, plugin_config_map() | term()}.
-get_config(NameVsn, ?CONFIG_FORMAT_MAP, Default) ->
-    {ok, get_config(NameVsn, Default)}.
 
 %% @doc Update plugin's config.
 %% RPC call from Management API or CLI.
@@ -553,10 +542,23 @@ do_ensure_started(NameVsn) ->
     end.
 
 %%--------------------------------------------------------------------
+%% RPC targets
+%%--------------------------------------------------------------------
 
--doc """
-Converts exception errors into `{error, Reason}` return values
-""".
+%% Redundant arguments are kept for backward compatibility.
+-spec get_config(name_vsn(), ?CONFIG_FORMAT_MAP, any()) ->
+    {ok, plugin_config_map() | term()}.
+get_config(NameVsn, ?CONFIG_FORMAT_MAP, Default) ->
+    {ok, get_config(NameVsn, Default)}.
+
+get_tar(NameVsn) ->
+    emqx_plugins_fs:get_tar(NameVsn).
+
+%%--------------------------------------------------------------------
+%% Internal functions
+%%--------------------------------------------------------------------
+
+%% @doc Converts exception errors into `{error, Reason}` return values
 catch_errors(Label, F) ->
     try
         F()
@@ -594,16 +596,24 @@ do_read_plugin(NameVsn, Options) ->
         {ok, Info}
     end.
 
-read_plugin_hocon(NameVsn) ->
-    read_plugin_hocon(NameVsn, #{read_mode => ?RAW_BIN}).
-read_plugin_hocon(NameVsn, Options) ->
-    emqx_plugins_fs:read_hocon(NameVsn, Options).
+ensure_installed_locally(NameVsn) ->
+    emqx_plugins_fs:ensure_installed(
+        NameVsn,
+        fun() ->
+            case do_read_plugin(NameVsn) of
+                {ok, _} ->
+                    ok;
+                {error, _} = Error ->
+                    Error
+            end
+        end
+    ).
 
 ensure_exists_and_installed(NameVsn) ->
-    case emqx_plugins_fs:ensure_installed(NameVsn) of
+    case ensure_installed_locally(NameVsn) of
         ok ->
             ok;
-        {error, no_local_tar} ->
+        {error, #{reason := plugin_tarball_not_found}} ->
             do_get_from_cluster(NameVsn);
         {error, Reason} ->
             {error, Reason}
@@ -614,7 +624,7 @@ do_get_from_cluster(NameVsn) ->
     case get_plugin_tar_from_any_node(Nodes, NameVsn, []) of
         {ok, TarContent} ->
             ok = emqx_plugins_fs:write_tar(NameVsn, TarContent),
-            ok = emqx_plugins_fs:install_from_local_tar(NameVsn);
+            ok = ensure_installed_locally(NameVsn);
         {error, NodeErrors} when Nodes =/= [] ->
             ErrMeta = #{
                 msg => "failed_to_copy_plugin_from_other_nodes",
@@ -633,10 +643,6 @@ do_get_from_cluster(NameVsn) ->
             ?SLOG(error, ErrMeta),
             {error, ErrMeta}
     end.
-
-%% RPC target
-get_tar(NameVsn) ->
-    emqx_plugins_fs:get_tar(NameVsn).
 
 get_plugin_tar_from_any_node([], _NameVsn, Errors) ->
     {error, Errors};
@@ -684,7 +690,7 @@ populate_plugin_readme(_NameVsn, _Options, Info) ->
     Info.
 
 populate_plugin_status(NameVsn, Info) ->
-    {ok, AppName, _AppVsn} = emqx_plugins_utils:parse_name_vsn(NameVsn),
+    {AppName, _AppVsn} = emqx_plugins_utils:parse_name_vsn(NameVsn),
     RunningSt =
         case application:get_key(AppName, vsn) of
             {ok, _} ->
@@ -732,7 +738,7 @@ check_plugin(
                 [_ | _] = Apps,
                 %% validate if the list is all <app>-<vsn> strings
                 lists:foreach(
-                    fun(App) -> {ok, _, _} = emqx_plugins_utils:parse_name_vsn(App) end, Apps
+                    fun(App) -> _ = emqx_plugins_utils:parse_name_vsn(App) end, Apps
                 )
             catch
                 _:_ ->
@@ -767,7 +773,7 @@ load_code_start_apps(RelNameVsn, #{<<"rel_apps">> := Apps}) ->
         AppNames =
             lists:map(
                 fun(AppNameVsn) ->
-                    {ok, AppName, AppVsn} = emqx_plugins_utils:parse_name_vsn(AppNameVsn),
+                    {AppName, AppVsn} = emqx_plugins_utils:parse_name_vsn(AppNameVsn),
                     EbinDir = filename:join([LibDir, AppNameVsn, "ebin"]),
                     case load_plugin_app(AppName, AppVsn, EbinDir, RunningApps) of
                         ok -> AppName;
@@ -892,7 +898,7 @@ is_protected_app(iex) -> true;
 is_protected_app(_) -> false.
 
 parse_name_vsn_for_stopping(NameVsn) ->
-    {ok, AppName, _AppVsn} = emqx_plugins_utils:parse_name_vsn(NameVsn),
+    {AppName, _AppVsn} = emqx_plugins_utils:parse_name_vsn(NameVsn),
     case is_protected_app(AppName) of
         true ->
             false;
@@ -902,7 +908,7 @@ parse_name_vsn_for_stopping(NameVsn) ->
 %% ELSE ifdef(EMQX_ELIXIR)
 -else.
 parse_name_vsn_for_stopping(NameVsn) ->
-    {ok, AppName, _AppVsn} = emqx_plugins_utils:parse_name_vsn(NameVsn),
+    {AppName, _AppVsn} = emqx_plugins_utils:parse_name_vsn(NameVsn),
     {true, AppName}.
 %% END ifdef(EMQX_ELIXIR)
 -endif.
@@ -1170,18 +1176,18 @@ cp_default_config_file(NameVsn) ->
     end.
 
 ensure_config_map(NameVsn) ->
-    case read_plugin_hocon(NameVsn, #{read_mode => ?JSON_MAP}) of
-        {ok, ConfigJsonMap} ->
+    case emqx_plugins_fs:read_hocon(NameVsn) of
+        {ok, Config} ->
             case with_plugin_avsc(NameVsn) of
                 true ->
-                    do_ensure_config_map(NameVsn, ConfigJsonMap);
+                    do_ensure_config_map(NameVsn, Config);
                 false ->
                     ?SLOG(debug, #{
                         msg => "put_plugin_config_directly",
                         hint => "plugin_without_config_schema",
                         name_vsn => NameVsn
                     }),
-                    put_config(NameVsn, ConfigJsonMap, ?plugin_without_config_schema)
+                    put_config(NameVsn, Config, ?plugin_without_config_schema)
             end;
         {error, Reason} ->
             ?SLOG(warning, #{
