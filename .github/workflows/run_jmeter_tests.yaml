@@ -88,6 +88,12 @@ jobs:
           echo "check logs failed"
           exit 1
         fi
+    - name: dump docker compose logs
+      if: failure()
+      run: |
+        docker compose \
+          -f .ci/docker-compose-file/docker-compose-emqx-cluster.yaml \
+          logs --no-color > ./jmeter_logs/docker_compose.log
     - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
       if: always()
       with:
@@ -160,7 +166,10 @@ jobs:
     - name: dump docker compose logs
       if: failure()
       run: |
-        docker compose -f .ci/docker-compose-file/docker-compose-emqx-cluster.yaml logs --no-color > ./jmeter_logs/emqx.log
+        docker compose \
+          -f .ci/docker-compose-file/docker-compose-emqx-cluster.yaml \
+          -f .ci/docker-compose-file/docker-compose-pgsql-tls.yaml \
+          logs --no-color > ./jmeter_logs/docker_compose.log
     - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
       if: always()
       with:
@@ -196,7 +205,7 @@ jobs:
     - name: docker compose up
       timeout-minutes: 5
       env:
-        PGSQL_TAG: ${{ matrix.mysql_tag }}
+        MYSQL_TAG: ${{ matrix.mysql_tag }}
       run: |
         docker compose \
           -f .ci/docker-compose-file/docker-compose-emqx-cluster.yaml \
@@ -227,6 +236,13 @@ jobs:
           echo "check logs failed"
           exit 1
         fi
+    - name: dump docker compose logs
+      if: failure()
+      run: |
+        docker compose \
+          -f .ci/docker-compose-file/docker-compose-emqx-cluster.yaml \
+          -f .ci/docker-compose-file/docker-compose-mysql-tls.yaml \
+          logs --no-color > ./jmeter_logs/docker_compose.log
     - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
       if: always()
       with:
@@ -285,6 +301,12 @@ jobs:
           echo "check logs failed"
           exit 1
         fi
+    - name: dump docker compose logs
+      if: failure()
+      run: |
+        docker compose \
+          -f .ci/docker-compose-file/docker-compose-emqx-cluster.yaml \
+          logs --no-color > ./jmeter_logs/docker_compose.log
     - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
       if: always()
       with:
@@ -335,6 +357,12 @@ jobs:
           echo "check logs failed"
           exit 1
         fi
+    - name: dump docker compose logs
+      if: failure()
+      run: |
+        docker compose \
+          -f .ci/docker-compose-file/docker-compose-emqx-cluster.yaml \
+          logs --no-color > ./jmeter_logs/docker_compose.log  
     - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
       if: always()
       with:
