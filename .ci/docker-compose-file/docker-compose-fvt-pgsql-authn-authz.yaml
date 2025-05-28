@@ -1,0 +1,116 @@
+x-default-emqx: &default-emqx
+    image: ${_EMQX_DOCKER_IMAGE_TAG}
+    env_file:
+      - conf.cluster.env
+    depends_on:
+      pgsql_server_tls:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD"
+        - "bash"
+        - "-c"
+        - |
+          set -x
+          status=$$(/opt/emqx/bin/emqx_ctl cluster status)
+          node1_status=$$(echo "$$status" | grep "node1.emqx.io" | grep "running")
+          node2_status=$$(echo "$$status" | grep "node2.emqx.io" | grep "running")
+          if [ -z "$$node1_status" ] || [ -z "$$node2_status" ]; then
+            exit 1
+          fi
+      interval: 5s
+      timeout: 25s
+      retries: 5
+
+services:
+  haproxy:
+    container_name: haproxy
+    image: public.ecr.aws/docker/library/haproxy:2.4
+    depends_on:
+      emqx1:
+        condition: service_healthy
+      emqx2:
+        condition: service_healthy
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+      - ../../apps/emqx/etc/certs/cert.pem:/usr/local/etc/haproxy/certs/cert.pem
+      - ../../apps/emqx/etc/certs/key.pem:/usr/local/etc/haproxy/certs/key.pem
+      - ../../apps/emqx/etc/certs/cacert.pem:/usr/local/etc/haproxy/certs/cacert.pem
+    ports:
+      - "18083:18083"
+    networks:
+      - emqx_bridge
+    working_dir: /usr/local/etc/haproxy
+    command:
+      - bash
+      - -c
+      - |
+        set -x
+        cat /usr/local/etc/haproxy/certs/cert.pem /usr/local/etc/haproxy/certs/key.pem > /var/lib/haproxy/emqx.pem
+        haproxy -f /usr/local/etc/haproxy/haproxy.cfg
+
+  emqx1:
+    <<: *default-emqx
+    container_name: node1.emqx.io
+    environment:
+      - "EMQX_HOST=node1.emqx.io"
+    networks:
+      emqx_bridge:
+        aliases:
+        - node1.emqx.io
+
+  emqx2:
+    <<: *default-emqx
+    container_name: node2.emqx.io
+    environment:
+      - "EMQX_HOST=node2.emqx.io"
+    networks:
+      emqx_bridge:
+        aliases:
+        - node2.emqx.io
+
+  pgsql_server_tls:
+    container_name: pgsql-tls
+    build:
+      context: ./
+      dockerfile: ./pgsql/Dockerfile
+      args:
+        POSTGRES_USER: postgres
+        BUILD_FROM: public.ecr.aws/docker/library/postgres:${PGSQL_TAG}
+    image: emqx_pgsql:${PGSQL_TAG}
+    restart: always
+    environment:
+      POSTGRES_DB: mqtt
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: public
+    ports:
+      - "5433:5432"
+    command:
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/server.crt
+      - -c
+      - ssl_key_file=/var/lib/postgresql/server.key
+      - -c
+      - ssl_ca_file=/var/lib/postgresql/root.crt
+      - -c
+      - hba_file=/var/lib/postgresql/pg_hba.conf
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "root", "-d", "mqtt"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - emqx_bridge
+
+networks:
+  emqx_bridge:
+    driver: bridge
+    name: emqx_bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.100.239.0/24
+          gateway: 172.100.239.1

@@ -1,0 +1,125 @@
+x-default-emqx: &default-emqx
+    image: ${_EMQX_DOCKER_IMAGE_TAG}
+    env_file:
+      - conf.cluster.env
+    depends_on:
+      mysql_server_tls:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx_ctl", "status"]
+      interval: 5s
+      timeout: 25s
+      retries: 5
+
+services:
+  haproxy:
+    container_name: haproxy
+    image: public.ecr.aws/docker/library/haproxy:2.4
+    depends_on:
+      emqx1:
+        condition: service_healthy
+      emqx2:
+        condition: service_healthy
+    volumes:
+      - ./haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg
+      - ../../apps/emqx/etc/certs/cert.pem:/usr/local/etc/haproxy/certs/cert.pem
+      - ../../apps/emqx/etc/certs/key.pem:/usr/local/etc/haproxy/certs/key.pem
+      - ../../apps/emqx/etc/certs/cacert.pem:/usr/local/etc/haproxy/certs/cacert.pem
+    ports:
+      - "18083:18083"
+    networks:
+      - emqx_bridge
+    working_dir: /usr/local/etc/haproxy
+    command:
+      - bash
+      - -c
+      - |
+        set -x
+        cat /usr/local/etc/haproxy/certs/cert.pem /usr/local/etc/haproxy/certs/key.pem > /var/lib/haproxy/emqx.pem
+        haproxy -f /usr/local/etc/haproxy/haproxy.cfg
+
+  emqx1:
+    <<: *default-emqx
+    container_name: node1.emqx.io
+    environment:
+      - "EMQX_HOST=node1.emqx.io"
+    networks:
+      emqx_bridge:
+        aliases:
+        - node1.emqx.io
+
+  emqx2:
+    <<: *default-emqx
+    container_name: node2.emqx.io
+    environment:
+      - "EMQX_HOST=node2.emqx.io"
+    networks:
+      emqx_bridge:
+        aliases:
+        - node2.emqx.io
+
+  mysql_server_tls:
+    container_name: mysql-tls
+    image: public.ecr.aws/docker/library/mysql:${MYSQL_TAG}
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: public
+      MYSQL_DATABASE: mqtt
+      MYSQL_USER: user
+      MYSQL_PASSWORD: public
+    volumes:
+      - ./certs/ca.crt:/etc/certs/ca-cert.pem
+      - ./certs/server.crt:/etc/certs/server-cert.pem
+      - ./certs/server.key:/etc/certs/server-key.pem
+      - ./certs/client.pem:/etc/certs/client.pem
+      - ./certs/client.key:/etc/certs/client.key
+    ports:
+      - "3307:3306"
+    networks:
+      - emqx_bridge
+    command:
+      - --bind-address=0.0.0.0
+      - --port=3306
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --lower-case-table-names=1
+      - --max-allowed-packet=128M
+      # Severely limit maximum number of prepared statements the server must permit
+      # so that we hit potential resource exhaustion earlier in tests.
+      - --max-prepared-stmt-count=64
+      - --ssl-ca=/etc/certs/ca-cert.pem
+      - --ssl-cert=/etc/certs/server-cert.pem
+      - --ssl-key=/etc/certs/server-key.pem
+      - --require-secure-transport=ON
+    healthcheck:
+      test:
+        - "CMD"
+        - "mysql"
+        - "-h"
+        - "localhost"
+        - "-P"
+        - "3306"
+        - "-u"
+        - "user"
+        - "-ppublic"
+        - "--ssl-ca=/etc/certs/ca-cert.pem"
+        - "--ssl-cert=/etc/certs/client.pem"
+        - "--ssl-key=/etc/certs/client.key"
+        - "-e"
+        - "SELECT 1"
+        - "mqtt"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+
+networks:
+  emqx_bridge:
+    driver: bridge
+    name: emqx_bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.100.239.0/24
+          gateway: 172.100.239.1

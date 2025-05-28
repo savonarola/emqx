@@ -34,4 +34,3 @@ services:
       - --require-secure-transport=ON
       - --tls-version=TLSv1.2,TLSv1.3
       - --ssl-cipher=ECDHE-RSA-AES256-GCM-SHA384
-

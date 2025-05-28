@@ -135,11 +135,15 @@ jobs:
         PGSQL_TAG: ${{ matrix.pgsql_tag }}
       run: |
         docker compose \
-          -f .ci/docker-compose-file/docker-compose-emqx-cluster.yaml \
-          -f .ci/docker-compose-file/docker-compose-pgsql-tls.yaml \
+          -f .ci/docker-compose-file/docker-compose-fvt-pgsql-authn-authz.yaml \
           up --wait --build
         echo HAPROXY_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' haproxy) >> $GITHUB_ENV
         echo PGSQL_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' pgsql-tls) >> $GITHUB_ENV
+    - name: healthcheck logs
+      if: failure()
+      run: |
+        mkdir -p ./jmeter_logs
+        docker inspect --format "{{json .State.Health }}" pgsql-tls > ./jmeter_logs/pgsql-tls-healthcheck.log
     - name: run jmeter
       run: |
         jmeter/bin/jmeter.sh \
@@ -167,8 +171,7 @@ jobs:
       if: failure()
       run: |
         docker compose \
-          -f .ci/docker-compose-file/docker-compose-emqx-cluster.yaml \
-          -f .ci/docker-compose-file/docker-compose-pgsql-tls.yaml \
+          -f .ci/docker-compose-file/docker-compose-fvt-pgsql-authn-authz.yaml \
           logs --no-color > ./jmeter_logs/docker_compose.log
     - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
       if: always()
@@ -208,11 +211,15 @@ jobs:
         MYSQL_TAG: ${{ matrix.mysql_tag }}
       run: |
         docker compose \
-          -f .ci/docker-compose-file/docker-compose-emqx-cluster.yaml \
-          -f .ci/docker-compose-file/docker-compose-mysql-tls.yaml \
+          -f .ci/docker-compose-file/docker-compose-fvt-mysql-authn-authz.yaml \
           up --wait --build
         echo HAPROXY_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' haproxy) >> $GITHUB_ENV
         echo MYSQL_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' mysql-tls) >> $GITHUB_ENV
+    - name: healthcheck logs
+      if: failure()
+      run: |
+        mkdir -p ./jmeter_logs
+        docker inspect --format "{{json .State.Health }}" mysql-tls > ./jmeter_logs/mysql-tls-healthcheck.log
     - name: run jmeter
       run: |
         jmeter/bin/jmeter.sh \
@@ -239,9 +246,9 @@ jobs:
     - name: dump docker compose logs
       if: failure()
       run: |
+        mkdir -p ./jmeter_logs
         docker compose \
-          -f .ci/docker-compose-file/docker-compose-emqx-cluster.yaml \
-          -f .ci/docker-compose-file/docker-compose-mysql-tls.yaml \
+          -f .ci/docker-compose-file/docker-compose-fvt-mysql-authn-authz.yaml \
           logs --no-color > ./jmeter_logs/docker_compose.log
     - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
       if: always()
