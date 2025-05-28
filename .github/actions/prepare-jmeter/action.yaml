@@ -5,8 +5,8 @@ runs:
   steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       with:
-        repository: emqx/emqx-fvt
-        ref: broker-autotest-v5
+        repository: savonarola/emqx-fvt
+        ref: 250529-fix-mysql-authz-flakyness
         path: scripts
     - uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
       with:
