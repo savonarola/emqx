@@ -73,7 +73,16 @@
 ]).
 
 %% internal exports:
--export([db_dir/1, base_dir/0, generation_get/2, get_gvars/1, ls_shards/1, get_stats/1]).
+-export([
+    db_dir/1,
+    base_dir/0,
+    generation_get/2,
+    generation_current/1,
+    generations_since/2,
+    get_gvars/1,
+    ls_shards/1,
+    get_stats/1
+]).
 
 -export_type([
     rocksdb_options/0,
