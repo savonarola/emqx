@@ -84,6 +84,14 @@
     get_stats/1
 ]).
 
+%% Metadata serialization API (old iterator):
+-export([
+    old_stream_to_new/2,
+    new_stream_to_old/1,
+    old_iterator_to_new/2,
+    new_iterator_to_old/1
+]).
+
 -export_type([
     rocksdb_options/0,
     gen_id/0,
@@ -108,6 +116,12 @@
 
 -include("emqx_ds.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+-include("../gen_src/DSBuiltinSLSkipstreamV1.hrl").
+-include("../gen_src/DSBuiltinMetadata.hrl").
+
+-elvis([{elvis_style, atom_naming_convention, disable}]).
+%% https://github.com/erlang/otp/issues/9841
+-dialyzer({nowarn_function, [encode_inner_it/1, decode_inner_it/2]}).
 
 -define(REF(ShardId), {via, gproc, {n, l, {?MODULE, ShardId}}}).
 
@@ -583,7 +597,7 @@ make_iterator(
                         ?generation => GenId,
                         ?enc => Iter
                     }};
-                {error, _} = Err ->
+                {error, _, _} = Err ->
                     Err
             end;
         not_found ->
@@ -878,6 +892,13 @@ take_snapshot(ShardId) ->
 accept_snapshot(ShardId) ->
     ok = drop_shard(ShardId),
     handle_accept_snapshot(ShardId).
+
+-doc "List shards of the DB".
+-spec ls_shards(emqx_ds:db()) -> [emqx_ds:shard()].
+ls_shards(DB) ->
+    ShardMS = {n, l, {?MODULE, {DB, '$1'}}},
+    MS = {{ShardMS, '_', '_'}, [], ['$1']},
+    gproc:select({local, names}, [MS]).
 
 %%================================================================================
 %% gen_server for the shard
@@ -1443,6 +1464,118 @@ cf_ref(Name, CFRefs) ->
 -spec cf_handle(_Name :: string(), cf_refs()) -> rocksdb:cf_handle().
 cf_handle(Name, CFRefs) ->
     element(2, cf_ref(Name, CFRefs)).
+
+%%--------------------------------------------------------------------------------
+%% Metadata serialization
+%%--------------------------------------------------------------------------------
+
+-define(meta_generic, 0:8).
+-define(meta_lts_v1, 1:8).
+
+%% Note: functions in this group don't comply to the usual pattern
+%% where calls are dynamically dispatched to the callback module based
+%% on the schema. This is because metadata (de)serialization should be
+%% supported even for generations that are gone or otherwise
+%% unavailable.
+
+old_stream_to_new(Shard, ?stream_v2(Generation, Inner)) ->
+    #'Stream'{
+        shard = Shard,
+        generation = Generation,
+        inner = encode_inner_stream(Inner)
+    }.
+
+new_stream_to_old(#'Stream'{
+    shard = Shard,
+    generation = Generation,
+    inner = InnerBin
+}) ->
+    maybe
+        {ok, Inner} ?= decode_inner_stream(InnerBin),
+        {ok, Shard, ?stream_v2(Generation, Inner)}
+    end.
+
+encode_inner_stream({stream, Bin}) when is_binary(Bin) ->
+    %% Skipstream LTS v1 (the only actively used layout) gets special
+    %% treatment:
+    <<?meta_lts_v1, Bin/binary>>;
+encode_inner_stream(A) ->
+    %% Default case:
+    Bin = term_to_binary(A),
+    <<?meta_generic, Bin/binary>>.
+
+decode_inner_stream(<<?meta_lts_v1, Bin/binary>>) ->
+    %% Skipstream LTS v1 gets special treatment:
+    {ok, {stream, Bin}};
+decode_inner_stream(<<?meta_generic, Bin/binary>>) ->
+    %% Default case:
+    try binary_to_term(Bin, [safe]) of
+        Term ->
+            {ok, Term}
+    catch
+        EC:Err ->
+            {error, {invalid_erlang_term, EC, Err}}
+    end;
+decode_inner_stream(Other) ->
+    {error, {unknown_stream_format, Other}}.
+
+old_iterator_to_new(Shard, #{?tag := ?IT, ?generation := Gen, ?enc := Inner}) ->
+    {StaticBin, PosBin} = encode_inner_it(Inner),
+    #'Iterator'{
+        shard = Shard,
+        generation = Gen,
+        innerPos = PosBin,
+        innerStatic = StaticBin
+    }.
+
+new_iterator_to_old(#'Iterator'{
+    shard = Shard,
+    generation = Gen,
+    innerPos = PosBin,
+    innerStatic = StaticBin
+}) ->
+    maybe
+        {ok, Inner} ?= decode_inner_it(StaticBin, PosBin),
+        {ok, Shard, #{?tag => ?IT, ?generation => Gen, ?enc => Inner}}
+    end.
+
+encode_inner_it({it, StaticIdx, LastKey, CompressedTF, _}) ->
+    %% Skipstream LTS v1 (the only actively used layout) gets special
+    %% treatment:
+    {ok, Bin} = 'DSBuiltinSLSkipstreamV1':encode(
+        'IteratorSkipstreamLTSV1', #'IteratorSkipstreamLTSV1'{
+            static = StaticIdx,
+            lastKey = LastKey,
+            compressedTf = CompressedTF
+        }
+    ),
+    {<<?meta_lts_v1>>, Bin};
+encode_inner_it(Inner) ->
+    %% Default case:
+    {<<?meta_generic>>, term_to_binary(Inner)}.
+
+decode_inner_it(<<?meta_lts_v1>>, Bin) ->
+    %% Skipstream LTS v1 (the only actively used layout) gets special
+    %% treatment:
+    maybe
+        {ok, #'IteratorSkipstreamLTSV1'{
+            static = StaticIdx,
+            lastKey = LastKey,
+            compressedTf = CompressedTF
+        }} ?= 'DSBuiltinSLSkipstreamV1':decode('IteratorSkipstreamLTSV1', Bin),
+        {ok, {it, StaticIdx, LastKey, CompressedTF, []}}
+    end;
+decode_inner_it(<<?meta_generic>>, Bin) ->
+    %% Default case:
+    try binary_to_term(Bin, [safe]) of
+        Term ->
+            {ok, Term}
+    catch
+        _EC:Err ->
+            {error, {invalid_erlang_term, Err}}
+    end;
+decode_inner_it(Other, Bin) ->
+    {error, {unknown_iterator_format, Other, Bin}}.
 
 %%--------------------------------------------------------------------------------
 %% Schema access
