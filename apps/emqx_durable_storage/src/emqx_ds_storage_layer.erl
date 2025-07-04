@@ -1657,13 +1657,6 @@ get_gvars(DBShard) ->
     #{gvars := GVars} = get_schema_runtime(DBShard),
     GVars.
 
--doc "List shards of the DB".
--spec ls_shards(emqx_ds:db()) -> [emqx_ds:shard()].
-ls_shards(DB) ->
-    ShardMS = {n, l, {?MODULE, {DB, '$1'}}},
-    MS = {{ShardMS, '_', '_'}, [], ['$1']},
-    gproc:select({local, names}, [MS]).
-
 -spec get_stats(emqx_ds:db()) -> map().
 get_stats(DB) ->
     maps:from_list(
