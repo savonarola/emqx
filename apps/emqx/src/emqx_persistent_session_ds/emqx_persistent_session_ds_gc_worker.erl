@@ -170,25 +170,10 @@ do_gc(#{min_last_alive := MinLastAlive}, SessionCounts, SessionId, Metadata) ->
     #{
         ?last_alive_at := SessionLastAliveAt,
         ?node_epoch_id := NodeEpochId,
-        ?expiry_interval := EI,
-        ?will_message := MaybeWillMessage,
-        ?clientinfo := ClientInfo
+        ?expiry_interval := EI
     } = Metadata,
     LastAliveAt = session_last_alive_at(SessionLastAliveAt, NodeEpochId),
     IsExpired = LastAliveAt + EI < MinLastAlive,
-    case
-        should_send_will_message(
-            MaybeWillMessage, ClientInfo, IsExpired, LastAliveAt, MinLastAlive
-        )
-    of
-        {true, PreparedMessage} ->
-            _ = emqx_broker:publish(PreparedMessage),
-            ok = emqx_persistent_session_ds_state:clear_will_message_now(SessionId),
-            ?tp(session_gc_published_will_msg, #{id => SessionId, msg => PreparedMessage}),
-            ok;
-        false ->
-            ok
-    end,
     case IsExpired of
         true ->
             emqx_persistent_session_ds:destroy_session(SessionId),
@@ -201,24 +186,6 @@ do_gc(#{min_last_alive := MinLastAlive}, SessionCounts, SessionId, Metadata) ->
             SessionCounts;
         false ->
             inc_epoch_session_count(SessionCounts, NodeEpochId)
-    end.
-
-should_send_will_message(undefined, _ClientInfo, _IsExpired, _LastAliveAt, _MinLastAlive) ->
-    false;
-should_send_will_message(WillMsg, ClientInfo, IsExpired, LastAliveAt, MinLastAlive) ->
-    WillDelayIntervalS = emqx_channel:will_delay_interval(WillMsg),
-    WillDelayInterval = timer:seconds(WillDelayIntervalS),
-    PastWillDelay = LastAliveAt + WillDelayInterval < MinLastAlive,
-    case PastWillDelay orelse IsExpired of
-        true ->
-            case emqx_channel:prepare_will_message_for_publishing(ClientInfo, WillMsg) of
-                {ok, PreparedMessage} ->
-                    {true, PreparedMessage};
-                {error, _} ->
-                    false
-            end;
-        false ->
-            false
     end.
 
 do_check_session(SessionId) ->
