@@ -221,7 +221,6 @@ commit(
 list_sessions(Gen) ->
     {L, _Errors} = emqx_ds:fold_topic(
         fun(_Slab, _Stream, {Topic, _TS, _Guard}, Acc) ->
-            %% FIXME check slab
             [?top_guard, Id] = Topic,
             [Id | Acc]
         end,

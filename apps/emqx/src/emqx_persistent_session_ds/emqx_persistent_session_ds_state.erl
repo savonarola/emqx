@@ -239,14 +239,14 @@ commit(Rec, Opts = #{lifetime := _, sync := _}) ->
     check_sequence(Rec),
     emqx_persistent_session_ds_state_v2:commit(generation(), Rec, Opts).
 
--spec on_commit_reply(term(), t()) -> t() | no_commit.
+-spec on_commit_reply(term(), t()) -> {ok, t()} | ignore | {error, _}.
 on_commit_reply(
     ?ds_tx_commit_reply(Ref, Reply),
     S = #{?id := ClientId, ?checkpoint_ref := Ref}
 ) ->
     case emqx_ds:tx_commit_outcome(?DB, Ref, Reply) of
         {ok, _CommitSerial} ->
-            S#{?checkpoint_ref := undefined};
+            {ok, S#{?checkpoint_ref := undefined}};
         ?err_rec(Reason) ->
             ?tp(
                 warning,
@@ -257,7 +257,7 @@ on_commit_reply(
                     client => ClientId
                 }
             ),
-            S#{?checkpoint_ref := undefined};
+            {ok, S#{?checkpoint_ref := undefined}};
         ?err_unrec(Reason) ->
             ?tp(
                 error,
@@ -268,10 +268,10 @@ on_commit_reply(
                     client => ClientId
                 }
             ),
-            exit(?sessds_commit_failure)
+            {error, Reason}
     end;
 on_commit_reply(_, _) ->
-    no_commit.
+    ignore.
 
 -spec create_new(emqx_persistent_session_ds:id()) -> t().
 create_new(SessionId) ->

@@ -693,22 +693,27 @@ handle_info(
     %%
     %% Is it a state commit reply?
     case emqx_persistent_session_ds_state:on_commit_reply(Info, S0) of
+        {ok, S} ->
+            %% Yes, session checkpoint just completed.
+            ensure_state_commit_timer(Session#{s := S});
+        {error, _Reason} ->
+            %% Yes, session checkpoint just failed.
+            exit(commit_failure);
         ignore ->
             %% No. Is it a DS subscription crash then?
             case emqx_persistent_session_ds_stream_scheduler:handle_down(Info, S0, SchedS0) of
-                ignore ->
-                    ?tp(warning, ?sessds_unknown_message, #{message => Info}),
-                    Session;
                 {drop_buffer, StreamKey, SchedS} ->
+                    %% Yes, drop the buffer:
                     Buf = emqx_persistent_session_ds_buffer:drop_stream(StreamKey, Buf0),
                     Session#{
                         stream_scheduler_s := SchedS,
                         buffer := Buf
-                    }
-            end;
-        S ->
-            %% Yes, session checkpoint just completed.
-            ensure_state_commit_timer(Session#{s := S})
+                    };
+                ignore ->
+                    %% No, unknown message:
+                    ?tp(warning, ?sessds_unknown_message, #{message => Info}),
+                    Session
+            end
     end.
 
 %%--------------------------------------------------------------------
