@@ -77,10 +77,11 @@ If it fails it may be because the local node itself is isolated.
     ls_epochs/0, ls_epochs/1,
     last_heartbeat/1,
     now_ms/0,
-    dead_hand_topic/3,
-    started_topic/3,
-    handle_timeout/4,
-    epoch/0
+    epoch/0,
+    generation/1,
+    cfg_heartbeat_interval/0,
+    cfg_missed_heartbeats/0,
+    cfg_replay_retry_interval/0
 ]).
 
 -export_type([]).
@@ -98,9 +99,6 @@ If it fails it may be because the local node itself is isolated.
 
 -define(tx_side_effects, {?MODULE, side_effects}).
 -define(on_success(BODY), tx_on_success(fun() -> BODY end)).
-
--define(type_bits, 32).
--define(max_type, (1 bsl ?type_bits - 1)).
 
 -record(s, {
     regs = #{} :: #{type() => module()},
@@ -140,16 +138,20 @@ It's not equal to the last epoch heartbeat.
 
 -optional_callbacks([timer_deprected_since/0]).
 
+%% States:
+%%
+%%  Unless at least one timer type is registered, this application
+%%  lies dormant:
+-define(s_dormant, dormant).
+%%  There's no current epoch:
+-define(s_isolated, isolated).
+%%  Normal operation:
+-define(s_normal, normal).
+
 -type state() :: ?s_dormant | ?s_isolated | ?s_normal.
 
 %% Timeouts:
 -define(heartbeat, heartbeat).
-
-%% Topics:
--define(top_deadhand, <<"d">>).
--define(top_started, <<"s">>).
--define(top_heartbeat, <<"h">>).
--define(top_nodes, <<"n">>).
 
 -define(epoch_start, <<"s">>).
 -define(epoch_end, <<"e">>).
@@ -188,24 +190,7 @@ dead_hand(Type, Key, Value, Delay) when
 ->
     ?tp(debug, ?tp_new_dead_hand, #{type => Type, key => Key, val => Value, delay => Delay}),
     Epoch = epoch(),
-    Result = epoch_trans(
-        Epoch,
-        fun() ->
-            tx_del_dead_hand(Type, Key),
-            tx_del_started(Type, Key),
-            emqx_ds:tx_write({
-                dead_hand_topic(Type, Epoch, Key),
-                Delay,
-                Value
-            })
-        end
-    ),
-    case Result of
-        {atomic, _, _} ->
-            emqx_durable_timer_worker:cancel(Type, Epoch, Key);
-        Err = {error, _, _} ->
-            Err
-    end.
+    emqx_durable_timer_worker:dead_hand(Type, Epoch, Key, Value, Delay).
 
 -spec apply_after(type(), key(), value(), delay()) -> ok | emqx_ds:error(_).
 apply_after(Type, Key, Value, Delay) when
@@ -219,44 +204,14 @@ apply_after(Type, Key, Value, Delay) when
     ?tp(debug, ?tp_new_apply_after, #{type => Type, key => Key, val => Value, delay => Delay}),
     NotEarlierThan = now_ms() + Delay,
     Epoch = epoch(),
-    Result = epoch_trans(
-        Epoch,
-        fun() ->
-            tx_del_dead_hand(Type, Key),
-            tx_del_started(Type, Key),
-            Now = now_ms(),
-            emqx_ds:tx_write({
-                started_topic(Type, Epoch, Key),
-                max(Now, NotEarlierThan),
-                Value
-            }),
-            Now
-        end
-    ),
-    case Result of
-        {atomic, _Serial, _SafeNow} ->
-            emqx_durable_timer_worker:apply_after(Type, Epoch, Key, Value, NotEarlierThan);
-        Err = {error, _, _} ->
-            Err
-    end.
+    %% This function may crash. Add a retry mechanism?
+    emqx_durable_timer_worker:apply_after(Type, Epoch, Key, Value, NotEarlierThan).
 
 -spec delete(type(), key()) -> ok | emqx_ds:error(_).
 delete(Type, Key) when Type >= 0, Type =< ?max_type, is_binary(Key) ->
     ?tp(debug, ?tp_delete, #{type => Type, key => Key}),
     Epoch = epoch(),
-    Result = epoch_trans(
-        Epoch,
-        fun() ->
-            tx_del_dead_hand(Type, Key),
-            tx_del_started(Type, Key)
-        end
-    ),
-    case Result of
-        {atomic, _, _} ->
-            emqx_durable_timer_worker:cancel(Type, Epoch, Key);
-        Err = {error, _, _} ->
-            Err
-    end.
+    emqx_durable_timer_worker:cancel(Type, Epoch, Key).
 
 %%================================================================================
 %% behavior callbacks
@@ -322,24 +277,6 @@ terminate(_Reason, _State, _D) ->
 %%================================================================================
 %% Internal exports
 %%================================================================================
-
--spec handle_timeout(type(), module(), key(), value()) -> ok.
-handle_timeout(Type, CBM, Key, Value) ->
-    ?tp(debug, ?tp_fire, #{type => Type, key => Key, val => Value}),
-    try
-        CBM:handle_durable_timeout(Key, Value),
-        ok
-    catch
-        _:_ ->
-            ok
-    end.
-
-trans_opts(_Type, Epoch, _Key) ->
-    #{
-        db => ?DB_GLOB,
-        generation => generation(?DB_GLOB),
-        shard => {auto, Epoch}
-    }.
 
 lts_threshold_cb(0, _) ->
     infinity;
@@ -413,13 +350,7 @@ last_heartbeat(Epoch) when is_binary(Epoch) ->
 
 -spec now_ms() -> integer().
 now_ms() ->
-    erlang:monotonic_time(millisecond).
-
-dead_hand_topic(Type, NodeEpochId, Key) ->
-    [?top_deadhand, <<Type:?type_bits>>, NodeEpochId, Key].
-
-started_topic(Type, NodeEpochId, Key) ->
-    [?top_started, <<Type:?type_bits>>, NodeEpochId, Key].
+    erlang:monotonic_time(millisecond) + erlang:time_offset(millisecond).
 
 -spec epoch() -> epoch().
 epoch() ->
@@ -534,7 +465,8 @@ ensure_tables() ->
             n_sites => NSites,
             replication_factor => RFactor,
             atomic_batches => true,
-            append_only => false
+            append_only => false,
+            reads => leader_preferred
         }
     ).
 
@@ -601,12 +533,6 @@ tx_update_epoch(Node, Epoch, Val) ->
         end
     ).
 
-tx_del_dead_hand(Type, Key) ->
-    emqx_ds:tx_del_topic(dead_hand_topic(Type, '+', Key)).
-
-tx_del_started(Type, Key) ->
-    emqx_ds:tx_del_topic(started_topic(Type, '+', Key)).
-
 generation(_DB) ->
     1.
 
@@ -632,6 +558,9 @@ cfg_heartbeat_interval() ->
 
 cfg_missed_heartbeats() ->
     application:get_env(?APP, missed_heartbeats, 30_000).
+
+cfg_replay_retry_interval() ->
+    application:get_env(?APP, replay_retry_interval, 500).
 
 -doc """
 A wrapper for transactions that operate on a particular epoch.

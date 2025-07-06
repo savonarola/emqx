@@ -45,6 +45,11 @@ Warning: heartbeat and health configuration must be consistent across the cluste
   Default: 5000 ms.
 - `missed_heartbeats`: If remote node fails to update the heartbeat withing this period of time (in ms), it's considered down.
   Default: 30_000 ms.
+- `replay_retry_interval`: Timers are executed by replaying a DS topic.
+  When fetching batches from DS fails, last batch will be retried after this interval.
+
+  Note: failures in the timers' handle timeout callback are NOT retried.
+
 
 # HTTP APIs
 

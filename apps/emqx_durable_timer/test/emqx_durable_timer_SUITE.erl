@@ -108,6 +108,7 @@ t_lazy_initialization(Config) ->
         end,
         [
             fun no_unexpected/1,
+            fun no_replay_failures/1,
             fun verify_timers/1,
             fun verify_activation/1
         ]
@@ -118,7 +119,7 @@ t_lazy_initialization(Config) ->
 t_normal_execution(Config) ->
     Cluster = cluster(?FUNCTION_NAME, Config, 1, []),
     ?check_trace(
-        #{timetrap => 30_000},
+        #{timetrap => 15_000},
         try
             [Node] = emqx_cth_cluster:start(Cluster),
             ?assertMatch(ok, ?ON(Node, emqx_durable_test_timer:init())),
@@ -170,7 +171,7 @@ t_normal_execution(Config) ->
                     Node,
                     begin
                         %% Derive topic name:
-                        DHT = emqx_durable_timer:dead_hand_topic(
+                        DHT = emqx_durable_timer_worker:dead_hand_topic(
                             emqx_durable_test_timer:durable_timer_type(),
                             emqx_durable_timer:epoch(),
                             '+'
@@ -191,7 +192,7 @@ t_normal_execution(Config) ->
         after
             emqx_cth_cluster:stop(Cluster)
         end,
-        [fun no_unexpected/1, fun verify_timers/1]
+        [fun no_unexpected/1, fun no_replay_failures/1, fun verify_timers/1]
     ).
 
 %% This testcase verifies the functionality related to timer
@@ -210,7 +211,7 @@ t_cancellation(Config) ->
             ?ON(
                 Node,
                 begin
-                    DHT = emqx_durable_timer:dead_hand_topic(
+                    DHT = emqx_durable_timer_worker:dead_hand_topic(
                         emqx_durable_test_timer:durable_timer_type(),
                         emqx_durable_timer:epoch(),
                         '+'
@@ -228,7 +229,7 @@ t_cancellation(Config) ->
             ?ON(
                 Node,
                 begin
-                    AAT = emqx_durable_timer:started_topic(
+                    AAT = emqx_durable_timer_worker:started_topic(
                         emqx_durable_test_timer:durable_timer_type(),
                         emqx_durable_timer:epoch(),
                         '+'
@@ -246,6 +247,7 @@ t_cancellation(Config) ->
         end,
         [
             fun no_unexpected/1,
+            fun no_replay_failures/1,
             fun verify_timers/1,
             fun(Trace) ->
                 ?assertMatch([], ?of_kind(?tp_fire, Trace))
@@ -257,13 +259,21 @@ t_cancellation(Config) ->
 %% Trace specs
 %%------------------------------------------------------------------------------
 
+%% Verify that the workes didn't have to retry fetching batches. This
+%% property should hold as long as DS state is not degraded.
+no_replay_failures(Trace) ->
+    ?assertMatch([], ?of_kind(?tp_replay_failed, Trace)).
+
+%% This property is specific for the testcase.
 verify_activation(Trace) ->
     ?strict_causality(
         #{?snk_kind := ?tp_test_register, ?snk_meta := #{node := N}},
-        #{?snk_kind := ?tp_state_change, to := ?s_isolated, ?snk_meta := #{node := N}},
+        #{?snk_kind := ?tp_state_change, to := isolated, ?snk_meta := #{node := N}},
         Trace
     ).
 
+%% Verify that none of the workers encountered an unknwon message.
+%% This should alwasy hold.
 no_unexpected(Trace) ->
     ?assertMatch([], ?of_kind(?tp_unknown_event, Trace)).
 
@@ -280,6 +290,8 @@ no_unexpected(Trace) ->
     errors = []
 }).
 
+%% Verify arbitrary sequence of operations with the timers, node
+%% restarts and side effects.
 verify_timers(Trace) ->
     do_verify_timers(Trace, #vs{}).
 
