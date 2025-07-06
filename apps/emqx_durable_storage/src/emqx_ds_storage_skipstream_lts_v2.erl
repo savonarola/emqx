@@ -193,7 +193,7 @@ cook_blob_writes(S = #s{}, TXID, [{Topic, TS0, Value0} | Rest], Acc) ->
             ok
     end,
     %% Verify that TS fits in the TSB:
-    TS < (1 bsl (8 * TSB)) orelse
+    (TS >= 0 andalso TS < (1 bsl (8 * TSB))) orelse
         throw({unrecoverable, {timestamp_is_too_large, TS}}),
     {Static, Varying} = emqx_ds_lts:topic_key(Trie, TFun, Topic),
     Value =
