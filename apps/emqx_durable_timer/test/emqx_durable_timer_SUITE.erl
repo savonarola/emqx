@@ -37,7 +37,7 @@ t_lazy_initialization(Config) ->
                 Node,
                 begin
                     {DBs, _} = lists:unzip(emqx_ds:which_dbs()),
-                    ?defer_assert(?assertNot(lists:member(global_timers, DBs)))
+                    ?defer_assert(?assertNot(lists:member(?DB_GLOB, DBs)))
                 end
             ),
             %%
@@ -54,7 +54,7 @@ t_lazy_initialization(Config) ->
                 Node,
                 begin
                     {DBs, _} = lists:unzip(emqx_ds:which_dbs()),
-                    ?defer_assert(?assert(lists:member(global_timers, DBs)))
+                    ?defer_assert(?assert(lists:member(?DB_GLOB, DBs)))
                 end
             ),
             %%
@@ -177,11 +177,11 @@ t_normal_execution(Config) ->
                         ),
                         %% 1. Set up a dead hand timer with key <<3>>
                         ok = emqx_durable_test_timer:dead_hand(<<3>>, <<1>>, 0),
-                        ?assertMatch([_], emqx_ds:dirty_read(global_timers, DHT)),
+                        ?assertMatch([_], emqx_ds:dirty_read(?DB_GLOB, DHT)),
                         %% 2. Override it with a regular timer:
                         ok = emqx_durable_test_timer:apply_after(<<3>>, <<2>>, 100),
                         %% First version of the timer is gone:
-                        ?assertMatch([], emqx_ds:dirty_read(global_timers, DHT))
+                        ?assertMatch([], emqx_ds:dirty_read(?DB_GLOB, DHT))
                     end
                 ),
                 #{?snk_kind := ?tp_fire, key := <<3>>, val := <<2>>},
@@ -216,10 +216,10 @@ t_cancellation(Config) ->
                         '+'
                     ),
                     emqx_durable_test_timer:dead_hand(<<0>>, <<0>>, 5_000),
-                    ?assertMatch([_], emqx_ds:dirty_read(global_timers, DHT)),
+                    ?assertMatch([_], emqx_ds:dirty_read(?DB_GLOB, DHT)),
                     %% Cancel it and verify that the record is deleted:
                     emqx_durable_test_timer:cancel(<<0>>),
-                    ?assertMatch([], emqx_ds:dirty_read(global_timers, DHT))
+                    ?assertMatch([], emqx_ds:dirty_read(?DB_GLOB, DHT))
                 end
             ),
             %% 2. Test apply_after cancellation.
@@ -234,10 +234,10 @@ t_cancellation(Config) ->
                         '+'
                     ),
                     emqx_durable_test_timer:apply_after(AAKey, <<1>>, Delay),
-                    ?assertMatch([_], emqx_ds:dirty_read(global_timers, AAT)),
+                    ?assertMatch([_], emqx_ds:dirty_read(?DB_GLOB, AAT)),
                     %% Cancel it and verify that the record is deleted:
                     emqx_durable_test_timer:cancel(AAKey),
-                    ?assertMatch([], emqx_ds:dirty_read(global_timers, AAT))
+                    ?assertMatch([], emqx_ds:dirty_read(?DB_GLOB, AAT))
                 end
             ),
             ct:sleep(2 * Delay)

@@ -102,8 +102,6 @@ If it fails it may be because the local node itself is isolated.
 -define(type_bits, 32).
 -define(max_type, (1 bsl ?type_bits - 1)).
 
--define(DB_GLOB, global_timers).
-
 -record(s, {
     regs = #{} :: #{type() => module()},
     this_epoch :: epoch() | undefined,
@@ -204,7 +202,7 @@ dead_hand(Type, Key, Value, Delay) when
     ),
     case Result of
         {atomic, _, _} ->
-            emqx_durable_timer_worker:cancel(Type, Key);
+            emqx_durable_timer_worker:cancel(Type, Epoch, Key);
         Err = {error, _, _} ->
             Err
     end.
@@ -236,8 +234,8 @@ apply_after(Type, Key, Value, Delay) when
         end
     ),
     case Result of
-        {atomic, _Serial, SafeNow} ->
-            emqx_durable_timer_worker:apply_after(Type, SafeNow, Key, Value, Delay);
+        {atomic, _Serial, _SafeNow} ->
+            emqx_durable_timer_worker:apply_after(Type, Epoch, Key, Value, NotEarlierThan);
         Err = {error, _, _} ->
             Err
     end.
@@ -255,7 +253,7 @@ delete(Type, Key) when Type >= 0, Type =< ?max_type, is_binary(Key) ->
     ),
     case Result of
         {atomic, _, _} ->
-            emqx_durable_timer_worker:cancel(Type, Key);
+            emqx_durable_timer_worker:cancel(Type, Epoch, Key);
         Err = {error, _, _} ->
             Err
     end.
@@ -290,21 +288,16 @@ handle_event(enter, PrevState, ?s_isolated, S0) ->
                 S0
         end,
     %% Shut down the workers.
-    emqx_durable_timer_sup:stop_workers(),
+    emqx_durable_timer_sup:stop_worker_sup(),
     %% Erase epoch:
     optvar:unset(?epoch_optvar),
     {keep_state, S, {state_timeout, 0, ?heartbeat}};
 %% Normal:
-handle_event(enter, PrevState, ?s_normal, #s{regs = Regs, this_epoch = Epoch}) ->
+handle_event(enter, PrevState, ?s_normal, S = #s{this_epoch = Epoch}) ->
     ?tp(debug, ?tp_state_change, #{from => PrevState, to => ?s_normal, epoch => Epoch}),
     %% Restart workers:
-    ok = emqx_durable_timer_sup:start_workers(),
-    maps:foreach(
-        fun(Type, CBM) ->
-            ok = emqx_durable_timer_sup:start_type(Type, CBM, Epoch)
-        end,
-        Regs
-    ),
+    ok = emqx_durable_timer_sup:start_worker_sup(),
+    start_workers(S),
     %% Set epoch:
     optvar:set(?epoch_optvar, Epoch),
     {keep_state_and_data, {state_timeout, cfg_heartbeat_interval(), ?heartbeat}};
@@ -674,6 +667,33 @@ epoch_trans(Epoch, Fun) ->
 
 tx_on_success(Fun) ->
     put(?tx_side_effects, [Fun | get(?tx_side_effects)]).
+
+start_workers(#s{regs = Regs, this_epoch = Epoch}) ->
+    Shards = shards(),
+    maps:foreach(
+        fun(Type, CBM) ->
+            lists:foreach(
+                fun(Shard) ->
+                    emqx_durable_timer_sup:start_worker(Type, Epoch, Shard, CBM, true)
+                end,
+                Shards
+            )
+        end,
+        Regs
+    ).
+
+shards() ->
+    Gen = generation(?DB_GLOB),
+    maps:fold(
+        fun({Shard, G}, _Info, Acc) ->
+            case G of
+                Gen -> [Shard | Acc];
+                _ -> Acc
+            end
+        end,
+        [],
+        emqx_ds:list_generations_with_lifetimes(?DB_GLOB)
+    ).
 
 -ifdef(TEST).
 drop_tables() ->

@@ -6,13 +6,13 @@
 -behavior(supervisor).
 
 %% API:
--export([start_link/0, start_workers/0, stop_workers/0, start_type/3]).
+-export([start_link/0, start_worker_sup/0, stop_worker_sup/0, start_worker/5]).
 
 %% behavior callbacks:
 -export([init/1]).
 
 %% internal exports:
--export([start_link_types_sup/0, start_link_type_sup/3]).
+-export([start_link_workers_sup/0]).
 
 -export_type([]).
 
@@ -21,13 +21,7 @@
 %%================================================================================
 
 -define(TOP, ?MODULE).
--define(TYPES_SUP, emqx_durable_timer_types_sup).
--record(type_sup, {
-    type :: emqx_durable_timer:type(), cbm :: module(), epoch :: emqx_durable_timer:epoch()
-}).
-
--define(type_name(TYPE), {n, l, {emqx_durable_timer_type_sup, TYPE}}).
--define(via(NAME), {via, gproc, NAME}).
+-define(WORKERS_SUP, emqx_durable_timer_workers).
 
 %%================================================================================
 %% API functions
@@ -37,8 +31,8 @@
 start_link() ->
     supervisor:start_link({local, ?TOP}, ?MODULE, ?TOP).
 
--spec start_workers() -> ok.
-start_workers() ->
+-spec start_worker_sup() -> ok.
+start_worker_sup() ->
     case supervisor:restart_child(?TOP, types_sup) of
         {ok, _} ->
             ok;
@@ -48,35 +42,23 @@ start_workers() ->
             ok
     end.
 
--spec stop_workers() -> ok.
-stop_workers() ->
+-spec stop_worker_sup() -> ok.
+stop_worker_sup() ->
     ok = supervisor:terminate_child(?TOP, types_sup).
 
--spec start_type(emqx_ds:type(), module(), emqx_durable_timer:epoch()) -> ok.
-start_type(Type, CBM, Epoch) ->
-    case supervisor:start_child(?TYPES_SUP, [Type, CBM, Epoch]) of
-        {ok, _} ->
-            ok;
-        {error, {already_started, _}} ->
-            ok;
-        Err ->
-            Err
-    end.
+-spec start_worker(
+    emqx_ds:type(), emqx_durable_timer:epoch(), emqx_ds:shard(), module(), boolean()
+) -> ok.
+start_worker(Type, Epoch, Shard, CBM, Active) ->
+    start_simple_child(?WORKERS_SUP, [Type, Epoch, Shard, CBM, Active]).
 
 %%================================================================================
 %% Internal exports
 %%================================================================================
 
--spec start_link_types_sup() -> supervisor:startlink_ret().
-start_link_types_sup() ->
-    supervisor:start_link({local, ?TYPES_SUP}, ?MODULE, ?TYPES_SUP).
-
--spec start_link_type_sup(emqx_durable_timer:type(), module(), emqx_durable_timer:epoch()) ->
-    supervisor:startlink_ret().
-start_link_type_sup(Type, CBM, Epoch) ->
-    supervisor:start_link(?via(?type_name(Type)), ?MODULE, #type_sup{
-        type = Type, cbm = CBM, epoch = Epoch
-    }).
+-spec start_link_workers_sup() -> supervisor:startlink_ret().
+start_link_workers_sup() ->
+    supervisor:start_link({local, ?WORKERS_SUP}, ?MODULE, ?WORKERS_SUP).
 
 %%================================================================================
 %% behavior callbacks
@@ -86,7 +68,7 @@ init(?TOP) ->
     Children = [
         #{
             id => types_sup,
-            start => {?MODULE, start_link_types_sup, []},
+            start => {?MODULE, start_link_workers_sup, []},
             shutdown => infinity,
             restart => permanent,
             type => supervisor
@@ -105,33 +87,17 @@ init(?TOP) ->
         period => 10
     },
     {ok, {SupFlags, Children}};
-init(?TYPES_SUP) ->
+init(?WORKERS_SUP) ->
     Children = [
         #{
-            id => type,
-            start => {?MODULE, start_link_type_sup, []},
-            shutdown => infinity,
-            type => supervisor
+            id => worker,
+            start => {emqx_durable_timer_worker, start_link, []},
+            shutdown => 5_000,
+            type => worker
         }
     ],
     SupFlags = #{
         strategy => simple_one_for_one,
-        intensity => 10,
-        period => 10
-    },
-    {ok, {SupFlags, Children}};
-init(#type_sup{type = Type, cbm = CBM, epoch = Epoch}) ->
-    Children = [
-        #{
-            id => worker,
-            start => {emqx_durable_timer_worker, start_link, [Type, CBM, Epoch]},
-            shutdown => brutal_kill,
-            intensity => 0,
-            period => 0
-        }
-    ],
-    SupFlags = #{
-        stratgey => one_for_all,
         intensity => 10,
         period => 10
     },
@@ -140,3 +106,13 @@ init(#type_sup{type = Type, cbm = CBM, epoch = Epoch}) ->
 %%================================================================================
 %% Internal functions
 %%================================================================================
+
+start_simple_child(Sup, Args) ->
+    case supervisor:start_child(Sup, Args) of
+        {ok, _} ->
+            ok;
+        {error, {already_started, _}} ->
+            ok;
+        Err ->
+            Err
+    end.
