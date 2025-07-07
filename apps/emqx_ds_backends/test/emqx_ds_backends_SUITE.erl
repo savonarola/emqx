@@ -54,7 +54,7 @@ t_02_smoke_iterate(Config) ->
     ],
     ?assertMatch(ok, emqx_ds:store_batch(DB, Msgs, #{sync => true})),
     timer:sleep(1000),
-    [{_, Stream}] = emqx_ds:get_streams(DB, TopicFilter, StartTime),
+    {[{_, Stream}], []} = emqx_ds:get_streams(DB, TopicFilter, StartTime, #{}),
     {ok, Iter0} = emqx_ds:make_iterator(DB, Stream, TopicFilter, StartTime),
     {ok, _Iter, Batch} = emqx_ds_test_helpers:consume_iter(DB, Iter0),
     emqx_ds_test_helpers:diff_messages(?msg_fields, Msgs, Batch).
@@ -76,7 +76,7 @@ t_05_restart(Config) ->
     ],
     ?assertMatch(ok, emqx_ds:store_batch(DB, Msgs, #{sync => true})),
     timer:sleep(1_000),
-    [{_, Stream}] = emqx_ds:get_streams(DB, TopicFilter, StartTime),
+    {[{_, Stream}], []} = emqx_ds:get_streams(DB, TopicFilter, StartTime, #{}),
     {ok, Iter0} = emqx_ds:make_iterator(DB, Stream, TopicFilter, StartTime),
     %% Restart the application:
     ?tp(warning, emqx_ds_SUITE_restart_app, #{}),
@@ -288,7 +288,7 @@ t_11_batch_preconditions(Config) ->
             %% There's no messages in the DB.
             ?assertEqual(
                 [],
-                emqx_ds_test_helpers:consume(DB, emqx_topic:words(<<"t/#">>))
+                emqx_ds:dirty_read(DB, emqx_topic:words(<<"t/#">>))
             )
         end,
         []
@@ -348,7 +348,7 @@ t_12_batch_precondition_conflicts(Config) ->
             [{precondition_failed, #message{payload = IOwner}}] = Failures,
             WinnerBatch = lists:nth(binary_to_integer(IOwner), ConflictBatches),
             BatchMessages = lists:sort(WinnerBatch#dsbatch.operations),
-            DBMessages = emqx_ds_test_helpers:consume(DB, emqx_topic:words(<<"t/#">>)),
+            DBMessages = emqx_ds:dirty_read(DB, emqx_topic:words(<<"t/#">>)),
             emqx_ds_test_helpers:diff_messages(
                 ?msg_fields,
                 lists:sort(BatchMessages),
@@ -476,7 +476,7 @@ t_drop_generation_with_used_once_iterator(Config) ->
     {ok, Iter0} = emqx_ds:make_iterator(DB, Stream0, TopicFilter, StartTime),
     {ok, Iter1, Batch1} = emqx_ds:next(DB, Iter0, 1),
     ?assertNotEqual(end_of_stream, Iter1),
-    emqx_ds_test_helpers:diff_messages(?msg_fields, [Msg0], [Msg || {_Key, Msg} <- Batch1]),
+    emqx_ds_test_helpers:diff_messages(?msg_fields, [Msg0], Batch1),
 
     ok = emqx_ds:add_generation(DB),
     ok = emqx_ds:drop_generation(DB, GenId0),
@@ -680,11 +680,11 @@ t_sub_catchup(Config) ->
                         size = 5,
                         payload =
                             {ok, _, [
-                                {_, #message{payload = <<"0">>}},
-                                {_, #message{payload = <<"1">>}},
-                                {_, #message{payload = <<"2">>}},
-                                {_, #message{payload = <<"3">>}},
-                                {_, #message{payload = <<"4">>}}
+                                #message{payload = <<"0">>},
+                                #message{payload = <<"1">>},
+                                #message{payload = <<"2">>},
+                                #message{payload = <<"3">>},
+                                #message{payload = <<"4">>}
                             ]}
                     }
                 ],
@@ -701,11 +701,11 @@ t_sub_catchup(Config) ->
                         size = 5,
                         payload =
                             {ok, _, [
-                                {_, #message{payload = <<"5">>}},
-                                {_, #message{payload = <<"6">>}},
-                                {_, #message{payload = <<"7">>}},
-                                {_, #message{payload = <<"8">>}},
-                                {_, #message{payload = <<"9">>}}
+                                #message{payload = <<"5">>},
+                                #message{payload = <<"6">>},
+                                #message{payload = <<"7">>},
+                                #message{payload = <<"8">>},
+                                #message{payload = <<"9">>}
                             ]}
                     }
                 ],
@@ -757,8 +757,8 @@ t_sub_realtime(Config) ->
                         size = 2,
                         payload =
                             {ok, _, [
-                                {_, #message{payload = <<"1">>}},
-                                {_, #message{payload = <<"2">>}}
+                                #message{payload = <<"1">>},
+                                #message{payload = <<"2">>}
                             ]}
                     }
                 ],
@@ -777,8 +777,8 @@ t_sub_realtime(Config) ->
                         size = 2,
                         payload =
                             {ok, _, [
-                                {_, #message{payload = <<"3">>}},
-                                {_, #message{payload = <<"4">>}}
+                                #message{payload = <<"3">>},
+                                #message{payload = <<"4">>}
                             ]}
                     }
                 ],
@@ -865,7 +865,7 @@ t_sub_slow(Config) ->
                         size = 1,
                         payload =
                             {ok, _, [
-                                {_, #message{payload = <<"0">>}}
+                                #message{payload = <<"0">>}
                             ]}
                     }
                 ],
@@ -884,8 +884,8 @@ t_sub_slow(Config) ->
                         size = 2,
                         payload =
                             {ok, _, [
-                                {_, #message{payload = <<"1">>}},
-                                {_, #message{payload = <<"2">>}}
+                                #message{payload = <<"1">>},
+                                #message{payload = <<"2">>}
                             ]}
                     }
                 ],
@@ -909,8 +909,8 @@ t_sub_slow(Config) ->
                         seqno = 5,
                         payload =
                             {ok, _, [
-                                {_, #message{payload = <<"3">>}},
-                                {_, #message{payload = <<"4">>}}
+                                #message{payload = <<"3">>},
+                                #message{payload = <<"4">>}
                             ]}
                     }
                 ],
@@ -945,11 +945,11 @@ t_sub_catchup_unrecoverable(Config) ->
                         size = 5,
                         payload =
                             {ok, _, [
-                                {_, #message{payload = <<"0">>}},
-                                {_, #message{payload = <<"1">>}},
-                                {_, #message{payload = <<"2">>}},
-                                {_, #message{payload = <<"3">>}},
-                                {_, #message{payload = <<"4">>}}
+                                #message{payload = <<"0">>},
+                                #message{payload = <<"1">>},
+                                #message{payload = <<"2">>},
+                                #message{payload = <<"3">>},
+                                #message{payload = <<"4">>}
                             ]}
                     }
                 ],
@@ -1547,9 +1547,9 @@ t_21_ttv_subscription(Config) ->
                         size = 3,
                         payload =
                             {ok, _, [
-                                {_, {Topic0, _, <<0>>}},
-                                {_, {Topic0, _, <<1>>}},
-                                {_, {Topic0, _, <<2>>}}
+                                {Topic0, _, <<0>>},
+                                {Topic0, _, <<1>>},
+                                {Topic0, _, <<2>>}
                             ]}
                     }
                 ],
@@ -1565,8 +1565,8 @@ t_21_ttv_subscription(Config) ->
                         size = 2,
                         payload =
                             {ok, _, [
-                                {_, {Topic1, _, <<3>>}},
-                                {_, {Topic1, _, <<4>>}}
+                                {Topic1, _, <<3>>},
+                                {Topic1, _, <<4>>}
                             ]}
                     }
                 ],
@@ -1582,8 +1582,8 @@ t_21_ttv_subscription(Config) ->
                         size = 2,
                         payload =
                             {ok, _, [
-                                {_, {Topic2, _, <<5>>}},
-                                {_, {Topic2, _, <<6>>}}
+                                {Topic2, _, <<5>>},
+                                {Topic2, _, <<6>>}
                             ]}
                     }
                 ],
@@ -1599,10 +1599,10 @@ t_21_ttv_subscription(Config) ->
                         size = 4,
                         payload =
                             {ok, _, [
-                                {_, {Topic1, _, <<3>>}},
-                                {_, {Topic1, _, <<4>>}},
-                                {_, {Topic2, _, <<5>>}},
-                                {_, {Topic2, _, <<6>>}}
+                                {Topic1, _, <<3>>},
+                                {Topic1, _, <<4>>},
+                                {Topic2, _, <<5>>},
+                                {Topic2, _, <<6>>}
                             ]}
                     }
                 ],
@@ -1630,8 +1630,8 @@ t_21_ttv_subscription(Config) ->
                         size = 2,
                         payload =
                             {ok, _, [
-                                {_, {Topic0, _, <<7>>}},
-                                {_, {Topic0, _, <<8>>}}
+                                {Topic0, _, <<7>>},
+                                {Topic0, _, <<8>>}
                             ]}
                     }
                 ],
@@ -1646,7 +1646,7 @@ t_21_ttv_subscription(Config) ->
                         size = 1,
                         payload =
                             {ok, _, [
-                                {_, {Topic1, _, <<9>>}}
+                                {Topic1, _, <<9>>}
                             ]}
                     }
                 ],
@@ -1661,7 +1661,7 @@ t_21_ttv_subscription(Config) ->
                         size = 1,
                         payload =
                             {ok, _, [
-                                {_, {Topic2, _, <<10>>}}
+                                {Topic2, _, <<10>>}
                             ]}
                     }
                 ],
@@ -1676,8 +1676,8 @@ t_21_ttv_subscription(Config) ->
                         size = 2,
                         payload =
                             {ok, _, [
-                                {_, {Topic1, _, <<9>>}},
-                                {_, {Topic2, _, <<10>>}}
+                                {Topic1, _, <<9>>},
+                                {Topic2, _, <<10>>}
                             ]}
                     }
                 ],
@@ -1834,6 +1834,113 @@ t_23_ttv_metadata_serialization(Config) ->
         []
     ).
 
+%% This testcase verifies `emqx_ds:tx_on_success' API.
+t_24_tx_side_effects(Config) ->
+    DB = ?FUNCTION_NAME,
+    Opts = maps:merge(opts(Config), #{
+        store_ttv => true,
+        storage => {emqx_ds_storage_skipstream_lts_v2, #{}}
+    }),
+    TxOpts = #{db => DB, shard => {auto, <<>>}, generation => 1, retries => 10},
+    %% Emit a trace as a side effect:
+    SideEffect = fun(Id, Expected) ->
+        ?ds_tx_on_success(?tp(test_side_effect, #{id => Id, expected => Expected}))
+    end,
+    ?check_trace(
+        begin
+            ?assertMatch(
+                ok,
+                emqx_ds_open_db(DB, Opts)
+            ),
+            %% This function verifies that transaction wrapper didn't
+            %% leave any garbage in the process dictionary:
+            PD = get(),
+            CheckPD = fun() ->
+                ?assertMatch([], get() -- PD)
+            end,
+            %% 1. Verify that side effects of an empty transaction are
+            %% executed:
+            ?assertMatch(
+                {nop, ok},
+                emqx_ds:trans(
+                    TxOpts,
+                    fun() ->
+                        SideEffect(1, true)
+                    end
+                )
+            ),
+            CheckPD(),
+            %% 2. Verify that side effects not executed on exception:
+            ?assertError(
+                _,
+                emqx_ds:trans(
+                    TxOpts,
+                    fun() ->
+                        SideEffect(2, false),
+                        error(crash)
+                    end
+                )
+            ),
+            CheckPD(),
+            %% 3. Verify that side effect is applied only once when
+            %% transaction is successful, but is restarted before
+            %% completion:
+            put(restart_count, 5),
+            ?assertMatch(
+                {atomic, _, ok},
+                emqx_ds:trans(
+                    TxOpts,
+                    fun() ->
+                        SideEffect(3, true),
+                        emqx_ds:tx_write({[], 0, <<>>}),
+                        case get(restart_count) of
+                            0 ->
+                                erase(restart_count),
+                                ok;
+                            N ->
+                                put(restart_count, N - 1),
+                                emqx_ds:reset_trans()
+                        end
+                    end
+                )
+            ),
+            CheckPD(),
+            %% 4. Async transaction, successful:
+            {async, Ref1, _} = emqx_ds:trans(
+                TxOpts#{sync => false},
+                fun() ->
+                    SideEffect(4, true),
+                    emqx_ds:tx_write({[], 0, <<>>})
+                end
+            ),
+            receive
+                ?ds_tx_commit_reply(Ref1, Reply1) ->
+                    {ok, _} = emqx_ds:tx_commit_outcome(DB, Ref1, Reply1)
+            end,
+            CheckPD(),
+            %% 4. Async transaction, aborted:
+            {async, Ref2, _} = emqx_ds:trans(
+                TxOpts#{sync => false},
+                fun() ->
+                    SideEffect(5, false),
+                    emqx_ds:tx_ttv_assert_absent([], 0)
+                end
+            ),
+            receive
+                ?ds_tx_commit_reply(Ref2, Reply2) ->
+                    {error, unrecoverable, _} = emqx_ds:tx_commit_outcome(DB, Ref2, Reply2)
+            end,
+            CheckPD()
+        end,
+        fun(_, Trace) ->
+            ?assertMatch(
+                [1, 3, 4],
+                ?projection(id, ?of_kind(test_side_effect, Trace)),
+                "Sequence of IDs of the expected side effects"
+            )
+        end
+    ).
+
 message(ClientId, Topic, Payload, PublishedAt) ->
     Msg = message(Topic, Payload, PublishedAt),
     Msg#message{from = ClientId}.
@@ -1931,6 +2038,8 @@ init_per_testcase(TC, Config) ->
     }),
     ct:pal("Started apps: ~p", [Apps]),
     timer:sleep(1000),
+    %% Hack, fixme:
+    emqx_bpapi:start(),
     [{apps, Apps}, {tc, TC} | Config].
 
 end_per_testcase(TC, Config) ->
@@ -1989,7 +2098,7 @@ make_stream(Config) ->
     DB = proplists:get_value(tc, Config),
     publish_seq(DB, <<"t">>, 0, 0),
     timer:sleep(100),
-    [{_, Stream}] = emqx_ds:get_streams(DB, [<<"t">>], 0),
+    {[{_, Stream}], []} = emqx_ds:get_streams(DB, [<<"t">>], 0, #{}),
     Stream.
 
 %% @doc Publish sequence of integers from `Start' to `End' to a topic:

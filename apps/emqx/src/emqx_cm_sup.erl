@@ -51,7 +51,8 @@ init([]) ->
             Registry,
             RegistryKeeper,
             Manager,
-            DSSessionSup%,
+            %,
+            DSSessionSup
             %% DSSessionBookkeeper
         ],
     {ok, {SupFlags, Children}}.

@@ -376,14 +376,16 @@ get_subscription(TopicFilter, Rec) ->
     emqx_persistent_session_ds:id(), emqx_types:topic() | emqx_types:share()
 ) ->
     [emqx_persistent_session_ds_subs:subscription()].
-cold_get_subscription(_SessionId, _Topic) ->
-    [].
-%% AllData = read_iterate(
-%%     SessionId,
-%%     [?subscription_domain_bin, '+']
-%% ),
-%% Data = [D || #{ext_key := ExtK} = D <- AllData, ExtK =:= Topic],
-%% lists:map(fun(#{val := V}) -> V end, Data).
+cold_get_subscription(SessionId, Topic) ->
+    AllSubs = emqx_persistent_session_ds_state_v2:pmap_dirty_read(
+        generation(), ?subscriptions, SessionId
+    ),
+    case AllSubs of
+        #{Topic := Val} ->
+            [Val];
+        #{} ->
+            []
+    end.
 
 -spec fold_subscriptions(fun(), Acc, t()) -> Acc.
 fold_subscriptions(Fun, Acc, Rec) ->

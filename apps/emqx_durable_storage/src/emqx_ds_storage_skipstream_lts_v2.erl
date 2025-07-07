@@ -52,7 +52,7 @@
 -elvis([{elvis_style, max_anonymous_function_arity, disable}]).
 
 %% https://github.com/erlang/otp/issues/9841
--dialyzer({nowarn_function, [it2ext/2, ext2it/1]}).
+-dialyzer({nowarn_function, [encode_ext_it_static/2, decode_ext_it_static/1]}).
 
 %%================================================================================
 %% Type declarations
@@ -345,31 +345,26 @@ make_iterator(_DB, _Shard, S, Stream, TopicFilter, StartPos) ->
     maybe
         {ok, Static, Varying, ItPos} ?=
             make_internal_iterator(S, Stream, TopicFilter, StartPos),
-        {ok, it2ext(Static, Varying), ItPos}
+        {ok, encode_ext_it_static(Static, Varying), ItPos}
     end.
 
 unpack_iterator(_DBShard, #s{trie = Trie}, ItStaticBin) ->
-    {Static, CompressedTF} = ext2it(ItStaticBin),
+    {Static, CompressedTF} = decode_ext_it_static(ItStaticBin),
     maybe
         {ok, TF} ?= decompress_tf(Trie, Static, CompressedTF),
         {ok, Static, TF}
     end.
 
 next(_DB, _Shard, S, ItStaticBin, ItPos0, BatchSize, _Now, IsCurrent) ->
-    {Static, CompressedTF} = ext2it(ItStaticBin),
-    case next_internal(S, Static, CompressedTF, ItPos0, BatchSize, IsCurrent) of
-        {ok, ItPos, Batch} ->
-            {ok, ItPos, Batch};
-        Other ->
-            Other
-    end.
+    {Static, CompressedTF} = decode_ext_it_static(ItStaticBin),
+    next_internal(fun next_cb_without_key/6, S, Static, CompressedTF, ItPos0, BatchSize, IsCurrent).
 
 scan_stream(
     _DB, _Shard, S = #s{trie = Trie}, Static, TF, Pos, BatchSize, _Now, IsCurrent
 ) ->
     maybe
         {ok, CompressedTF} ?= compress_tf(Trie, Static, TF),
-        next_internal(S, Static, CompressedTF, Pos, BatchSize, IsCurrent)
+        next_internal(fun next_cb_with_key/6, S, Static, CompressedTF, Pos, BatchSize, IsCurrent)
     end.
 
 lookup(_Shard, #s{trie = Trie, gs = GS, ts_bytes = TSB}, Topic, Time) ->
@@ -388,7 +383,7 @@ message_match_context(#s{trie = Trie}, Stream, _, {Topic, TS, _Value}) ->
     end.
 
 iterator_match_context(#s{ts_bytes = TSB}, ItStaticBin, ItPos) ->
-    {_Static, CompressedTF} = ext2it(ItStaticBin),
+    {_Static, CompressedTF} = decode_ext_it_static(ItStaticBin),
     <<ItTS:(TSB * 8), _/binary>> = ItPos,
     fun({CompressedTopic, TS}) ->
         TS > ItTS andalso emqx_topic:match(CompressedTopic, CompressedTF)
@@ -409,7 +404,7 @@ make_internal_iterator(
     StartPos
 ) ->
     ?tp_ignore_side_effects_in_prod(emqx_ds_storage_skipstream_lts_make_blob_iterator, #{
-        static_index => StaticIdx, topic_filter => TopicFilter
+        static_index => StaticIdx, topic_filter => TopicFilter, start_pos => StartPos
     }),
     maybe
         {ok, CompressedTF} ?= compress_tf(Trie, StaticIdx, TopicFilter),
@@ -417,11 +412,7 @@ make_internal_iterator(
         {ok, StaticIdx, CompressedTF, LastSK}
     end.
 
-next_internal(#s{gs = GS}, Static, CompressedTF, ItPos0, BatchSize, IsCurrent) ->
-    Fun = fun(TopicStructure, DSKey, Varying, TS, Val, Acc) ->
-        Topic = emqx_ds_lts:decompress_topic(TopicStructure, Varying),
-        [{DSKey, {Topic, TS, Val}} | Acc]
-    end,
+next_internal(Fun, #s{gs = GS}, Static, CompressedTF, ItPos0, BatchSize, IsCurrent) ->
     Interval = {'(', ItPos0, infinity},
     case emqx_ds_gen_skipstream_lts:fold(GS, Static, CompressedTF, Interval, BatchSize, [], Fun) of
         {ok, _, []} when not IsCurrent ->
@@ -431,6 +422,14 @@ next_internal(#s{gs = GS}, Static, CompressedTF, ItPos0, BatchSize, IsCurrent) -
         {error, _, _} = Err ->
             Err
     end.
+
+next_cb_without_key(TopicStructure, _DSKey, Varying, TS, Val, Acc) ->
+    Topic = emqx_ds_lts:decompress_topic(TopicStructure, Varying),
+    [{Topic, TS, Val} | Acc].
+
+next_cb_with_key(TopicStructure, DSKey, Varying, TS, Val, Acc) ->
+    Topic = emqx_ds_lts:decompress_topic(TopicStructure, Varying),
+    [{DSKey, {Topic, TS, Val}} | Acc].
 
 get_streams(Trie, TopicFilter) ->
     lists:map(
@@ -488,8 +487,9 @@ trie_cf(GenId) ->
 
 %%%%%%%% External iterator format %%%%%%%%%%
 
-%% @doc Transform iterator from/to the external serializable representation
-it2ext(Static, Varying) ->
+%% @doc Transform iterator static part (not Pos!) from/to the external
+%% serializable representation:
+encode_ext_it_static(Static, Varying) ->
     {ok, Bin} = 'DSBuiltinSLSkipstreamV2':encode(
         'Iterator',
         #'Iterator'{
@@ -499,7 +499,7 @@ it2ext(Static, Varying) ->
     ),
     Bin.
 
-ext2it(Bin) ->
+decode_ext_it_static(Bin) ->
     {ok, #'Iterator'{static = Static, topicFilter = Varying}} = 'DSBuiltinSLSkipstreamV2':decode(
         'Iterator', Bin
     ),

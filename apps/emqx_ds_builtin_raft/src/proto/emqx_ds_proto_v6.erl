@@ -9,11 +9,9 @@
 -export([
     drop_db/2,
     store_batch/5,
-    get_streams/5,
+    get_streams/6,
     make_iterator/6,
-    next/5,
-    poll/6,
-    update_iterator/5,
+    make_iterator_ttv/6,
     add_generation/2,
     list_generations_with_lifetimes/3,
     drop_generation/4,
@@ -22,9 +20,40 @@
     get_delete_streams/5,
     make_delete_iterator/6,
     delete_next/6,
-    %% introduced in v6
+
+    %% Changed in v6: return results without keys.
+    next/5,
     next_ttv/5
 ]).
+
+%% = Changelog =
+%% == v6 ==
+%% === poll ===
+%%
+%% API has been removed.
+%%
+%% === update_iterator ===
+%%
+%% API has been removed.
+%%
+%% === get_streams ===
+%%
+%% 1. StartTime is passed as is, without conversion to microseconds.
+%%
+%% 2. Added support for `generation_min'
+%%
+%% === make_iterator/6 ===
+%%
+%% StartTime is passed as is, without conversion to microseconds.
+%%
+%% === make_iterator_ttv/6 ===
+%%
+%% Added new function.
+%%
+%% === next/6 ===
+%%
+%% No longer returns the keys
+%%
 
 %% behavior callbacks:
 -export([introduced_in/0]).
@@ -45,11 +74,14 @@ drop_db(Node, DB) ->
     emqx_ds:db(),
     emqx_ds_replication_layer:shard_id(),
     emqx_ds:topic_filter(),
-    emqx_ds:time()
+    emqx_ds:time(),
+    emqx_ds:generation()
 ) ->
     [{integer(), emqx_ds_storage_layer:stream()}].
-get_streams(Node, DB, Shard, TopicFilter, Time) ->
-    erpc:call(Node, emqx_ds_replication_layer, do_get_streams_v2, [DB, Shard, TopicFilter, Time]).
+get_streams(Node, DB, Shard, TopicFilter, Time, MinGeneration) ->
+    erpc:call(Node, emqx_ds_replication_layer, do_get_streams_v3, [
+        DB, Shard, TopicFilter, Time, MinGeneration
+    ]).
 
 -spec make_iterator(
     node(),
@@ -61,7 +93,21 @@ get_streams(Node, DB, Shard, TopicFilter, Time) ->
 ) ->
     emqx_ds:make_iterator_result().
 make_iterator(Node, DB, Shard, Stream, TopicFilter, StartTime) ->
-    erpc:call(Node, emqx_ds_replication_layer, do_make_iterator_v2, [
+    erpc:call(Node, emqx_ds_replication_layer, do_make_iterator_v3, [
+        DB, Shard, Stream, TopicFilter, StartTime
+    ]).
+
+-spec make_iterator_ttv(
+    node(),
+    emqx_ds:db(),
+    emqx_ds_replication_layer:shard_id(),
+    emqx_ds_storage_layer_ttv:stream(),
+    emqx_ds:topic_filter(),
+    emqx_ds:time()
+) ->
+    emqx_ds:make_iterator_result().
+make_iterator_ttv(Node, DB, Shard, Stream, TopicFilter, StartTime) ->
+    erpc:call(Node, emqx_ds_replication_layer, do_make_iterator_ttv_v1, [
         DB, Shard, Stream, TopicFilter, StartTime
     ]).
 
@@ -70,22 +116,22 @@ make_iterator(Node, DB, Shard, Stream, TopicFilter, StartTime) ->
     emqx_ds:db(),
     emqx_ds_replication_layer:shard_id(),
     emqx_ds_storage_layer:iterator(),
-    pos_integer()
+    emqx_ds:next_limit()
 ) ->
     emqx_rpc:call_result(emqx_ds:next_result()).
-next(Node, DB, Shard, Iter, BatchSize) ->
-    emqx_rpc:call(Shard, Node, emqx_ds_replication_layer, do_next_v1, [DB, Shard, Iter, BatchSize]).
+next(Node, DB, Shard, Iter, NextLimit) ->
+    emqx_rpc:call(Shard, Node, emqx_ds_replication_layer, do_next_v2, [DB, Shard, Iter, NextLimit]).
 
 -spec next_ttv(
     node(),
     emqx_ds:db(),
     emqx_ds:shard(),
     emqx_ds_storage_layer_ttv:iterator(),
-    pos_integer()
+    emqx_ds:next_limit()
 ) ->
     emqx_rpc:call_result(emqx_ds:next_result()).
-next_ttv(Node, DB, Shard, Iter, BatchSize) ->
-    emqx_rpc:call(Shard, Node, emqx_ds_replication_layer, do_next_ttv, [DB, Iter, BatchSize]).
+next_ttv(Node, DB, Shard, Iter, NextLimit) ->
+    emqx_rpc:call(Shard, Node, emqx_ds_replication_layer, do_next_ttv, [DB, Iter, NextLimit]).
 
 -spec store_batch(
     node(),
@@ -98,34 +144,6 @@ next_ttv(Node, DB, Shard, Iter, BatchSize) ->
 store_batch(Node, DB, Shard, Batch, Options) ->
     emqx_rpc:call(Shard, Node, emqx_ds_replication_layer, do_store_batch_v1, [
         DB, Shard, Batch, Options
-    ]).
-
-%% Candidate for removal:
--spec update_iterator(
-    node(),
-    emqx_ds:db(),
-    emqx_ds_replication_layer:shard_id(),
-    emqx_ds_storage_layer:iterator(),
-    emqx_ds:message_key()
-) ->
-    emqx_ds:make_iterator_result().
-update_iterator(Node, DB, Shard, OldIter, DSKey) ->
-    erpc:call(Node, emqx_ds_replication_layer, do_update_iterator_v2, [
-        DB, Shard, OldIter, DSKey
-    ]).
-
--spec poll(
-    node(),
-    node(),
-    emqx_ds:db(),
-    emqx_ds_replication_layer:shard_id(),
-    [{emqx_ds_beamformer:return_addr(_), emqx_ds_storage_layer:iterator()}],
-    emqx_ds:poll_opts()
-) ->
-    ok.
-poll(DestNode, SourceNode, DB, Shard, Iterators, PollOpts) ->
-    erpc:call(DestNode, emqx_ds_replication_layer, do_poll_v1, [
-        SourceNode, DB, Shard, Iterators, PollOpts
     ]).
 
 -spec add_generation([node()], emqx_ds:db()) ->
@@ -208,5 +226,4 @@ delete_next(Node, DB, Shard, Iter, Selector, BatchSize) ->
 %% behavior callbacks
 %%================================================================================
 
-introduced_in() ->
-    "5.11.0".
+introduced_in() -> "6.0.0".

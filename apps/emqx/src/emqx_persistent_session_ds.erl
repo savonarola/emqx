@@ -1197,7 +1197,7 @@ process_batch(IsReplay, S, SubState, ClientInfo, FirstSeqNoQos1, FirstSeqNoQos2,
 
 do_process_batch(_Ctx, LastSeqNoQos1, LastSeqNoQos2, [], Inflight) ->
     {Inflight, LastSeqNoQos1, LastSeqNoQos2};
-do_process_batch(Ctx, FirstSeqNoQos1, FirstSeqNoQos2, [{_DSMsgKey, Msg0} | Batch], Inflight0) ->
+do_process_batch(Ctx, FirstSeqNoQos1, FirstSeqNoQos2, [Msg0 | Batch], Inflight0) ->
     #ctx{clientinfo = ClientInfo, substate = SubState} = Ctx,
     #{upgrade_qos := UpgradeQoS, subopts := SubOpts} = SubState,
     case emqx_session:enrich_message(ClientInfo, Msg0, SubOpts, UpgradeQoS) of

@@ -417,6 +417,7 @@ get_streams(DB, TopicFilter, StartTime, Opts) ->
             _ ->
                 emqx_ds_builtin_local_meta:shards(DB)
         end,
+    MinGeneration = maps:get(generation_min, Opts, 0),
     #{store_ttv := IsTTV} = emqx_ds_builtin_local_meta:db_config(DB),
     Results =
         case IsTTV of
@@ -424,7 +425,7 @@ get_streams(DB, TopicFilter, StartTime, Opts) ->
                 lists:flatmap(
                     fun(Shard) ->
                         Streams = emqx_ds_storage_layer:get_streams(
-                            {DB, Shard}, TopicFilter, timestamp_to_timeus(StartTime)
+                            {DB, Shard}, TopicFilter, timestamp_to_timeus(StartTime), MinGeneration
                         ),
                         lists:map(
                             fun({Generation, InnerStream}) ->
@@ -440,7 +441,7 @@ get_streams(DB, TopicFilter, StartTime, Opts) ->
                 lists:flatmap(
                     fun(Shard) ->
                         Streams = emqx_ds_storage_layer_ttv:get_streams(
-                            {DB, Shard}, TopicFilter, timestamp_to_timeus(StartTime)
+                            {DB, Shard}, TopicFilter, timestamp_to_timeus(StartTime), MinGeneration
                         ),
                         [
                             {{Shard, Stream#'Stream'.generation}, Stream}
@@ -631,19 +632,22 @@ delete_next(DB, Iter, Selector, N) ->
 current_timestamp(ShardId) ->
     emqx_ds_builtin_local_meta:current_timestamp(ShardId).
 
--spec do_next(emqx_ds:db(), iterator(), pos_integer()) -> emqx_ds:next_result(iterator()).
-do_next(DB, Iter0 = #'Iterator'{shard = Shard}, N) ->
+-spec do_next(emqx_ds:db(), iterator(), emqx_ds:next_limit()) -> emqx_ds:next_result(iterator()).
+do_next(DB, Iter0 = #'Iterator'{shard = Shard}, NextLimit) ->
     %% New style DB: "TTV"
-    DBShard = {DB, Shard},
     T0 = erlang:monotonic_time(microsecond),
-    Result = emqx_ds_storage_layer_ttv:next(DB, Iter0, N, current_timestamp(DBShard)),
+    {BatchSize, TimeLimit} = batch_size_and_time_limit(DB, Shard, NextLimit),
+    Result = emqx_ds_storage_layer_ttv:next(DB, Iter0, BatchSize, TimeLimit),
     T1 = erlang:monotonic_time(microsecond),
     emqx_ds_builtin_metrics:observe_next_time(DB, T1 - T0),
     Result;
-do_next(DB, Iter0 = #{?tag := ?IT, ?shard := Shard, ?enc := StorageIter0}, N) ->
+do_next(DB, Iter0 = #{?tag := ?IT, ?shard := Shard, ?enc := StorageIter0}, NextLimit) ->
     DBShard = {DB, Shard},
     T0 = erlang:monotonic_time(microsecond),
-    Result = emqx_ds_storage_layer:next(DBShard, StorageIter0, N, current_timestamp(DBShard)),
+    {BatchSize, TimeLimit} = batch_size_and_time_limit(DB, Shard, NextLimit),
+    Result = emqx_ds_storage_layer:next(
+        DBShard, StorageIter0, BatchSize, TimeLimit, false
+    ),
     T1 = erlang:monotonic_time(microsecond),
     emqx_ds_builtin_metrics:observe_next_time(DB, T1 - T0),
     case Result of
@@ -773,6 +777,13 @@ binary_to_iterator(DB, Bin) ->
                     end
             end
     end.
+
+-spec batch_size_and_time_limit(emqx_ds:db(), shard(), emqx_ds:next_limit()) ->
+    {pos_integer(), emqx_ds:time()}.
+batch_size_and_time_limit(DB, Shard, BatchSize) when is_integer(BatchSize) ->
+    {BatchSize, current_timestamp({DB, Shard})};
+batch_size_and_time_limit(DB, Shard, {time, BatchSize, MinTS}) ->
+    {BatchSize, min(current_timestamp({DB, Shard}), MinTS)}.
 
 %%================================================================================
 %% Internal functions

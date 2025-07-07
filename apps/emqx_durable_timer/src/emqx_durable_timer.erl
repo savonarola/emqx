@@ -81,10 +81,16 @@ If it fails it may be because the local node itself is isolated.
     generation/1,
     cfg_heartbeat_interval/0,
     cfg_missed_heartbeats/0,
-    cfg_replay_retry_interval/0
+    cfg_replay_retry_interval/0,
+    cfg_transaction_timeout/0
 ]).
 
--export_type([]).
+-export_type([
+    type/0,
+    key/0,
+    value/0,
+    epoch/0
+]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
 -include_lib("emqx_durable_storage/include/emqx_ds.hrl").
@@ -97,17 +103,12 @@ If it fails it may be because the local node itself is isolated.
 -define(APP, emqx_durable_timer).
 -define(epoch_optvar, {?MODULE, epoch}).
 
--define(tx_side_effects, {?MODULE, side_effects}).
--define(on_success(BODY), tx_on_success(fun() -> BODY end)).
-
 -record(s, {
     regs = #{} :: #{type() => module()},
     this_epoch :: epoch() | undefined,
     my_last_heartbeat :: non_neg_integer() | undefined,
     epochs :: #{node() => #{epoch() => epoch_lifetime()}}
 }).
-
--type d() :: #s{}.
 
 -doc "Unique ID of the timer event".
 -type type() :: 0..?max_type.
@@ -147,8 +148,6 @@ It's not equal to the last epoch heartbeat.
 -define(s_isolated, isolated).
 %%  Normal operation:
 -define(s_normal, normal).
-
--type state() :: ?s_dormant | ?s_isolated | ?s_normal.
 
 %% Timeouts:
 -define(heartbeat, heartbeat).
@@ -269,7 +268,7 @@ handle_event(ET, Event, State, Data) ->
     keep_state_and_data.
 
 terminate(_Reason, ?s_normal, #s{this_epoch = Epoch}) ->
-    update_epoch(node(), Epoch, ?epoch_end),
+    _ = update_epoch(node(), Epoch, ?epoch_end),
     ok;
 terminate(_Reason, _State, _D) ->
     ok.
@@ -385,7 +384,7 @@ handle_register(State, Module, Data0 = #s{regs = Regs}, From) ->
             #{} ->
                 ok =
                     case State of
-                        ?s_normal -> emqx_durable_timer_sup:start_type(Type, Module);
+                        ?s_normal -> start_workers(Type, Data0);
                         ?s_isolated -> ok
                     end,
                 Reply = ok,
@@ -399,12 +398,13 @@ handle_register(State, Module, Data0 = #s{regs = Regs}, From) ->
 
 handle_heartbeat(State, S0 = #s{this_epoch = LastEpoch, my_last_heartbeat = MLH}) ->
     %% Should we try to close the previous epoch?
-    case State of
-        ?s_isolated when is_binary(LastEpoch) ->
-            update_epoch(node(), LastEpoch, ?epoch_end);
-        _ ->
-            ok
-    end,
+    _ =
+        case State of
+            ?s_isolated when is_binary(LastEpoch) ->
+                update_epoch(node(), LastEpoch, ?epoch_end);
+            _ ->
+                ok
+        end,
     %% Which epoch to update? If isolated, create a new one:
     Epoch =
         case State of
@@ -524,7 +524,7 @@ tx_update_epoch(Node, Epoch, Val) ->
         ?ds_tx_ts_monotonic,
         Val
     }),
-    ?on_success(
+    ?ds_tx_on_success(
         case Val of
             ?epoch_start ->
                 ?tp(debug, ?tp_open_epoch, #{epoch => Epoch});
@@ -562,53 +562,40 @@ cfg_missed_heartbeats() ->
 cfg_replay_retry_interval() ->
     application:get_env(?APP, replay_retry_interval, 500).
 
+cfg_transaction_timeout() ->
+    application:get_env(?APP, transaction_timeout, 1000).
+
 -doc """
 A wrapper for transactions that operate on a particular epoch.
-
-This wrapper allows to schedule side effects using `?on_success`.
 """.
 epoch_trans(Epoch, Fun) ->
-    _ = erase(?tx_side_effects),
-    put(?tx_side_effects, []),
-    try
-        %% FIXME: config
-        Result = emqx_ds:trans(
-            #{
-                db => ?DB_GLOB,
-                shard => {auto, Epoch},
-                generation => generation(?DB_GLOB),
-                retries => 10,
-                retry_interval => 100
-            },
-            Fun
-        ),
-        case Result of
-            {atomic, _, _} ->
-                L = lists:reverse(erase(?tx_side_effects)),
-                lists:foreach(fun(I) -> I() end, L);
-            _ ->
-                ok
-        end,
-        Result
-    after
-        erase(?tx_side_effects)
-    end.
+    %% FIXME: config
+    emqx_ds:trans(
+        #{
+            db => ?DB_GLOB,
+            shard => {auto, Epoch},
+            generation => generation(?DB_GLOB),
+            retries => 10,
+            retry_interval => 100
+        },
+        Fun
+    ).
 
-tx_on_success(Fun) ->
-    put(?tx_side_effects, [Fun | get(?tx_side_effects)]).
-
-start_workers(#s{regs = Regs, this_epoch = Epoch}) ->
-    Shards = shards(),
+start_workers(S = #s{regs = Regs}) ->
     maps:foreach(
-        fun(Type, CBM) ->
-            lists:foreach(
-                fun(Shard) ->
-                    emqx_durable_timer_sup:start_worker(Type, Epoch, Shard, CBM, true)
-                end,
-                Shards
-            )
+        fun(Type, _CBM) ->
+            start_workers(Type, S)
         end,
         Regs
+    ).
+
+start_workers(Type, #s{regs = Regs, this_epoch = Epoch}) ->
+    #{Type := CBM} = Regs,
+    lists:foreach(
+        fun(Shard) ->
+            emqx_durable_timer_sup:start_worker(Type, Epoch, Shard, CBM, active)
+        end,
+        shards()
     ).
 
 shards() ->

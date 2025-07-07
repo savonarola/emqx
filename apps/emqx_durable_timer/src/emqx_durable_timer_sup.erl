@@ -47,7 +47,11 @@ stop_worker_sup() ->
     ok = supervisor:terminate_child(?TOP, types_sup).
 
 -spec start_worker(
-    emqx_ds:type(), emqx_durable_timer:epoch(), emqx_ds:shard(), module(), boolean()
+    emqx_durable_timer:type(),
+    emqx_durable_timer:epoch(),
+    emqx_ds:shard(),
+    module(),
+    emqx_durable_timer_worker:type()
 ) -> ok.
 start_worker(Type, Epoch, Shard, CBM, Active) ->
     start_simple_child(?WORKERS_SUP, [Type, Epoch, Shard, CBM, Active]).

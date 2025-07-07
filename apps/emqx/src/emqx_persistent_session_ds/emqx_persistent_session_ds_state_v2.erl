@@ -37,6 +37,7 @@
     set_offline_info/3,
 
     lts_threshold_cb/2,
+    pmap_dirty_read/3,
     pmap_topic/4,
 
     make_session_iterator/1,

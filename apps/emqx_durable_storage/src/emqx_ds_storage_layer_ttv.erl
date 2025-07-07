@@ -12,7 +12,7 @@
     commit_batch/3,
     dispatch_events/3,
 
-    get_streams/3,
+    get_streams/4,
     high_watermark/3,
 
     make_iterator/4,
@@ -288,25 +288,30 @@ dispatch_events(DBShard = {_DB, Shard}, [{Generation, GenBatches} | Rest], Callb
 dispatch_events(_, [], _) ->
     ok.
 
--spec get_streams(emqx_ds_storage_layer:dbshard(), emqx_ds:topic_filter(), emqx_ds:time()) ->
+-spec get_streams(
+    emqx_ds_storage_layer:dbshard(), emqx_ds:topic_filter(), emqx_ds:time(), emqx_ds:generation()
+) ->
     [stream()].
-get_streams(DBShard = {_DB, Shard}, TopicFilter, StartTime) ->
+get_streams(DBShard = {_DB, Shard}, TopicFilter, StartTime, MinGeneration) ->
     Gens = emqx_ds_storage_layer:generations_since(DBShard, StartTime),
     ?tp(get_streams_all_gens, #{gens => Gens}),
     lists:flatmap(
-        fun(GenId) ->
-            ?tp(get_streams_get_gen, #{gen_id => GenId}),
-            case emqx_ds_storage_layer:generation_get(DBShard, GenId) of
-                #{module := Mod, data := GenData} ->
-                    Streams = Mod:get_streams(DBShard, GenData, TopicFilter, StartTime),
-                    [
-                        #'Stream'{shard = Shard, generation = GenId, inner = InnerStream}
-                     || InnerStream <- Streams
-                    ];
-                not_found ->
-                    %% race condition: generation was dropped before getting its streams?
-                    []
-            end
+        fun
+            (GenId) when GenId >= MinGeneration ->
+                ?tp(get_streams_get_gen, #{gen_id => GenId}),
+                case emqx_ds_storage_layer:generation_get(DBShard, GenId) of
+                    #{module := Mod, data := GenData} ->
+                        Streams = Mod:get_streams(DBShard, GenData, TopicFilter, StartTime),
+                        [
+                            #'Stream'{shard = Shard, generation = GenId, inner = InnerStream}
+                         || InnerStream <- Streams
+                        ];
+                    not_found ->
+                        %% race condition: generation was dropped before getting its streams?
+                        []
+                end;
+            (_) ->
+                []
         end,
         Gens
     ).
@@ -391,7 +396,6 @@ high_watermark({DB, _}, Stream, Now) ->
     end.
 
 -spec next(emqx_ds:db(), iterator(), pos_integer(), emqx_ds:time()) ->
-    %% FIXME: type
     emqx_ds:next_result(iterator()).
 next(
     DB,

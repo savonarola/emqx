@@ -64,7 +64,8 @@ It takes care of forwarding calls to the underlying DBMS.
     tx_write/1,
     tx_del_topic/1,
     tx_ttv_assert_present/3,
-    tx_ttv_assert_absent/2
+    tx_ttv_assert_absent/2,
+    tx_on_success/1
 ]).
 
 %% Metadata serialization API:
@@ -77,7 +78,6 @@ It takes care of forwarding calls to the underlying DBMS.
 
 %% Utility functions:
 -export([
-    next_/3,
     dirty_read/2,
     fold_topic/4,
 
@@ -110,6 +110,7 @@ It takes care of forwarding calls to the underlying DBMS.
     iterator_id/0,
     message_key/0,
     message_store_opts/0,
+    next_limit/0,
     next_result/1, next_result/0,
     delete_next_result/1, delete_next_result/0,
     store_batch_result/0,
@@ -210,8 +211,16 @@ enabled are expected to support preconditions in batches.
 
 -opaque delete_iterator() :: ds_specific_delete_iterator().
 
+-doc """
+Options for limiting the number of streams.
+
+- `shard`: Only query streams in the given shard.
+
+- `generation_min`: Only return streams with generation >= generation_min.
+""".
 -type get_streams_opts() :: #{
-    shard => shard()
+    shard => shard(),
+    generation_min => generation()
 }.
 
 -type get_streams_result() ::
@@ -238,8 +247,11 @@ enabled are expected to support preconditions in batches.
 
 -type make_iterator_result() :: make_iterator_result(iterator()).
 
+-type next_limit() ::
+    pos_integer() | {time, time(), pos_integer()}.
+
 -type next_result(Iterator) ::
-    {ok, Iterator, [{message_key(), payload()}]} | {ok, end_of_stream} | error(_).
+    {ok, Iterator, [payload()]} | {ok, end_of_stream} | error(_).
 
 -type next_result() :: next_result(iterator()).
 
@@ -564,9 +576,6 @@ must not assume the default values.
     commit_result().
 
 -optional_callbacks([
-    list_generations_with_lifetimes/1,
-    drop_generation/2,
-
     get_delete_streams/3,
     make_delete_iterator/4,
     delete_next/4,
@@ -683,18 +692,11 @@ update_db_config(DB, Opts) ->
 
 -spec list_generations_with_lifetimes(db()) -> #{slab() => slab_info()}.
 list_generations_with_lifetimes(DB) ->
-    Mod = ?module(DB),
-    call_if_implemented(Mod, list_generations_with_lifetimes, [DB], #{}).
+    ?module(DB):list_generations_with_lifetimes(DB).
 
 -spec drop_generation(db(), generation()) -> ok | {error, _}.
 drop_generation(DB, GenId) ->
-    Mod = ?module(DB),
-    case erlang:function_exported(Mod, drop_generation, 2) of
-        true ->
-            Mod:drop_generation(DB, GenId);
-        false ->
-            {error, not_implemented}
-    end.
+    ?module(DB):drop_generation(DB, GenId).
 
 -doc """
 Drop DB and destroy all data stored there.
@@ -788,26 +790,31 @@ filter may be cumbersome, it opens up some possibilities:
 get_streams(DB, TopicFilter, StartTime, Opts) ->
     ?module(DB):get_streams(DB, TopicFilter, StartTime, Opts).
 
+-doc """
+Make an iterator that can be used to traverse the given stream and topic filter.
+
+Iterators can be used to read data using `subscribe/3` or `next/3` APIs.
+
+StartTime: timestamp of the first payload *included* in the batch.
+""".
 -spec make_iterator(db(), stream(), topic_filter(), time()) -> make_iterator_result().
 make_iterator(DB, Stream, TopicFilter, StartTime) ->
     ?module(DB):make_iterator(DB, Stream, TopicFilter, StartTime).
 
--spec next(db(), iterator(), pos_integer()) -> next_result().
-next(DB, Iter, BatchSize) ->
-    ?module(DB):next(DB, Iter, BatchSize).
+-doc """
+Fetch a batch of payloads from the DB, starting from position delimited by the iterator.
 
--doc "Simplified version of next/3 that returns payloads without the keys.".
--spec next_(db(), iterator(), pos_integer()) ->
-    {ok, iterator(), [payload()]}
-    | {ok, end_of_stream}
-    | error(_).
-next_(DB, It0, N) ->
-    case next(DB, It0, N) of
-        {ok, It, Batch} ->
-            {ok, It, [Payload || {_, Payload} <- Batch]};
-        Other ->
-            Other
-    end.
+Size of the batch is controlled by the NextLimit parameter.
+
+- When set to a positive integer Nmax, this function will return up to Nmax entries.
+
+- When set to `{time, Time, NMax}`, iteration will stop either
+  upon reaching a payload with timestamp >= `Time` (which *non't* be included in the batch) or
+  when the batch size reaches NMax.
+""".
+-spec next(db(), iterator(), next_limit()) -> next_result(iterator()).
+next(DB, It, NextLimit) ->
+    ?module(DB):next(DB, It, NextLimit).
 
 -doc """
 
@@ -940,7 +947,14 @@ the outcome of commit.
 -spec tx_commit_outcome(db(), reference(), term()) ->
     commit_result().
 tx_commit_outcome(DB, Ref, ?ds_tx_commit_reply(Ref, Reply)) ->
-    ?module(DB):tx_commit_outcome(Reply).
+    SideEffects = tx_pop_side_effects(Ref),
+    case ?module(DB):tx_commit_outcome(Reply) of
+        {ok, _} = Ok ->
+            tx_eval_side_effects(SideEffects),
+            Ok;
+        Other ->
+            Other
+    end.
 
 %%================================================================================
 %% Utility functions
@@ -954,6 +968,7 @@ tx_commit_outcome(DB, Ref, ?ds_tx_commit_reply(Ref, Reply)) ->
 -define(tx_ops_del_topic, emqx_ds_tx_ctx_del_topic).
 -define(tx_ops_assert_present, emqx_ds_tx_ctx_assert_present).
 -define(tx_ops_assert_absent, emqx_ds_tx_ctx_assert_absent).
+-define(tx_ops_side_effect, emqx_ds_tx_ctx_side_effect).
 
 %% Transaction throws:
 -define(tx_reset, emqx_ds_tx_reset).
@@ -1179,6 +1194,23 @@ tx_ttv_assert_absent(Topic, Time) ->
         false ->
             error(badarg)
     end.
+
+-doc """
+This API attaches a side effect to the transaction.
+
+Side effect is a callback that is executed locally (in the context of
+the current process) iff the transaction was successfully committed.
+
+WARNING: When transaction is started with `sync => false`, this
+function leaves data in the process dictionary of the transaction
+initiator.
+
+Therefore, `tx_commit_outcome/3` MUST be called in the same process.
+""".
+-doc #{title => <<"Transactions">>, since => <<"6.0.0">>}.
+-spec tx_on_success(fun(() -> _)) -> ok.
+tx_on_success(Fun) ->
+    tx_push_op(?tx_ops_side_effect, Fun).
 
 -doc "Serialize stream to a compact binary representation.".
 -doc #{title => <<"Metadata">>, since => <<"6.0.0">>}.
@@ -1426,7 +1458,7 @@ do_multi_iterator_next(_Opts, _TF, '$end_of_table', _N, Acc) ->
 do_multi_iterator_next(_Opts, _TF, MIt, N, Acc) when N =< 0 ->
     {Acc, MIt};
 do_multi_iterator_next(Opts = #{db := DB}, TF, MIt0 = #m_iter{it = It0, stream = Stream}, N, Acc0) ->
-    Result = next_(DB, It0, N),
+    Result = next(DB, It0, N),
     Len =
         case Result of
             {ok, _, Batch0} ->
@@ -1578,6 +1610,7 @@ trans_inner(DB, Fun, Opts) ->
                 _ = put(?tx_ops_del_topic, []),
                 _ = put(?tx_ops_assert_present, []),
                 _ = put(?tx_ops_assert_absent, []),
+                _ = put(?tx_ops_side_effect, []),
                 Ret = Fun(),
                 Tx = #{
                     ?ds_tx_write => lists:reverse(erase(?tx_ops_write)),
@@ -1594,10 +1627,12 @@ trans_inner(DB, Fun, Opts) ->
                         ?ds_tx_expected := [],
                         ?ds_tx_unexpected := []
                     } ->
-                        %% Nothing to commit
+                        %% Nothing to commit:
+                        tx_eval_side_effects(erase(?tx_ops_side_effect)),
                         {nop, Ret};
                     _ ->
                         Ref = commit_tx(DB, Ctx, Tx),
+                        tx_maybe_save_side_effects(Ref),
                         trans_maybe_wait_outcome(DB, Ref, Ret, Opts)
                 end;
             Err ->
@@ -1613,7 +1648,8 @@ trans_inner(DB, Fun, Opts) ->
         _ = erase(?tx_ops_read),
         _ = erase(?tx_ops_del_topic),
         _ = erase(?tx_ops_assert_present),
-        _ = erase(?tx_ops_assert_absent)
+        _ = erase(?tx_ops_assert_absent),
+        _ = erase(?tx_ops_side_effect)
     end.
 
 trans_maybe_wait_outcome(DB, Ref, Ret, #{sync := true}) ->
@@ -1639,6 +1675,23 @@ tx_push_op(K, A) ->
     put(K, [A | get(K)]),
     ok.
 
+tx_pop_side_effects(Ref) ->
+    case erase({?tx_ops_side_effect, Ref}) of
+        undefined -> [];
+        L -> lists:reverse(L)
+    end.
+
+tx_maybe_save_side_effects(Ref) ->
+    case erase(?tx_ops_side_effect) of
+        [] ->
+            ok;
+        L ->
+            put({?tx_ops_side_effect, Ref}, L)
+    end.
+
+tx_eval_side_effects(L) ->
+    lists:foreach(fun(F) -> F() end, L).
+
 -spec fold_streams(
     fold_fun(Acc), Acc, [error(_)], [{slab(), stream(), iterator()}], fold_ctx()
 ) -> {Acc, [fold_error()]}.
@@ -1660,7 +1713,7 @@ fold_iterator(Fun, Acc0, AccErrors, Slab, Stream, It0, Ctx) ->
             {Acc0, AccErrors};
         {ok, It, Batch} ->
             Acc = lists:foldl(
-                fun({_MsgKey, Msg}, A) ->
+                fun(Msg, A) ->
                     Fun(Slab, Stream, Msg, A)
                 end,
                 Acc0,

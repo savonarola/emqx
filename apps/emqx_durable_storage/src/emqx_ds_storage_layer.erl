@@ -19,12 +19,12 @@
     commit_batch/3,
     dispatch_events/3,
 
-    get_streams/3,
+    get_streams/4,
     get_delete_streams/3,
     make_iterator/4,
     make_delete_iterator/4,
     update_iterator/3,
-    next/4,
+    next/5,
 
     generation/1,
 
@@ -58,7 +58,9 @@
     accept_snapshot/1,
 
     %% Custom events
-    handle_event/3
+    handle_event/3,
+    %% Misc:
+    rid_of_dskeys/1
 ]).
 
 %% gen_server
@@ -537,25 +539,28 @@ dispatch_events(
     Events = Mod:batch_events(Shard, GenData, CookedBatch),
     DispatchF([?stream_v2(GenId, InnerStream) || InnerStream <- Events]).
 
--spec get_streams(dbshard(), emqx_ds:topic_filter(), emqx_ds:time()) ->
+-spec get_streams(dbshard(), emqx_ds:topic_filter(), emqx_ds:time(), generation()) ->
     [{integer(), stream()}].
-get_streams(Shard, TopicFilter, StartTime) ->
+get_streams(Shard, TopicFilter, StartTime, MinGeneration) ->
     Gens = generations_since(Shard, StartTime),
     ?tp(get_streams_all_gens, #{gens => Gens}),
     lists:flatmap(
-        fun(GenId) ->
-            ?tp(get_streams_get_gen, #{gen_id => GenId}),
-            case generation_get(Shard, GenId) of
-                #{module := Mod, data := GenData} ->
-                    Streams = Mod:get_streams(Shard, GenData, TopicFilter, StartTime),
-                    [
-                        {GenId, ?stream_v2(GenId, InnerStream)}
-                     || InnerStream <- Streams
-                    ];
-                not_found ->
-                    %% race condition: generation was dropped before getting its streams?
-                    []
-            end
+        fun
+            (GenId) when GenId >= MinGeneration ->
+                ?tp(get_streams_get_gen, #{gen_id => GenId}),
+                case generation_get(Shard, GenId) of
+                    #{module := Mod, data := GenData} ->
+                        Streams = Mod:get_streams(Shard, GenData, TopicFilter, StartTime),
+                        [
+                            {GenId, ?stream_v2(GenId, InnerStream)}
+                         || InnerStream <- Streams
+                        ];
+                    not_found ->
+                        %% race condition: generation was dropped before getting its streams?
+                        []
+                end;
+            (_) ->
+                []
         end,
         Gens
     ).
@@ -652,14 +657,27 @@ update_iterator(
 generation(#{?tag := ?IT, ?generation := GenId}) ->
     GenId.
 
--spec next(dbshard(), iterator(), pos_integer(), emqx_ds:time()) ->
+-spec next(dbshard(), iterator(), pos_integer(), emqx_ds:time(), boolean()) ->
     emqx_ds:next_result(iterator()).
-next(Shard, Iter = #{?tag := ?IT, ?generation := GenId, ?enc := GenIter0}, BatchSize, Now) ->
+next(
+    Shard,
+    Iter = #{?tag := ?IT, ?generation := GenId, ?enc := GenIter0},
+    BatchSize,
+    TimeLimit,
+    WithKeys
+) ->
     case generation_get(Shard, GenId) of
         #{module := Mod, data := GenData} ->
             IsCurrent = GenId =:= generation_current(Shard),
-            case Mod:next(Shard, GenData, GenIter0, BatchSize, Now, IsCurrent) of
-                {ok, GenIter, Batch} ->
+            case Mod:next(Shard, GenData, GenIter0, BatchSize, TimeLimit, IsCurrent) of
+                {ok, GenIter, Batch0} ->
+                    %% TODO: remove this when support for old
+                    %% replication layer API is dropped.
+                    Batch =
+                        case WithKeys of
+                            true -> Batch0;
+                            false -> rid_of_dskeys(Batch0)
+                        end,
                     {ok, Iter#{?enc := GenIter}, Batch};
                 {ok, end_of_stream} ->
                     {ok, end_of_stream};
@@ -1446,6 +1464,12 @@ handle_event(Shard, Time, ?storage_event(GenId, Event)) ->
 handle_event(Shard, Time, Event) ->
     GenId = generation_current(Shard),
     handle_event(Shard, Time, ?mk_storage_event(GenId, Event)).
+
+-spec rid_of_dskeys([{K, V}]) -> [V] when
+    K :: emqx_ds:message_key(),
+    V :: emqx_ds:payload().
+rid_of_dskeys(L) ->
+    [P || {_, P} <- L].
 
 filter_layout_db_opts(Options) ->
     maps:with(?STORAGE_LAYOUT_DB_OPTS, Options).

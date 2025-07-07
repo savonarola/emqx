@@ -28,7 +28,7 @@ A process that is responsible for execution of the timers.
 %% internal exports:
 -export([dead_hand_topic/3, started_topic/3]).
 
--export_type([]).
+-export_type([type/0]).
 
 -include_lib("emqx_durable_storage/include/emqx_ds.hrl").
 -include("internals.hrl").
@@ -48,6 +48,7 @@ A process that is responsible for execution of the timers.
     v :: emqx_durable_timer:value(),
     t :: integer()
 }).
+-record(cast_wake_up, {t :: integer()}).
 
 %% States:
 -define(s_active, active).
@@ -120,34 +121,15 @@ cancel(Type, _Epoch, Key) ->
 %% behavior callbacks
 %%================================================================================
 
-%%
-%% --offset-->[--tail--]
-%% [rrrrrrrrrr|uuuuuuuu]
-%% ^                 ^
-%% it_begin       it_end
-%%
-%% Legend:
-%% r: replayed timers
-%% u: not replayed yet
--record(replay_pos, {
-    it_begin :: emqx_ds:iterator(),
-    it_end :: emqx_ds:iterator() | undefined,
-    offset :: non_neg_integer(),
-    tail :: list()
-}).
-
--record(replay_pos_checkpoint, {
-    it :: emqx_ds:iterator(),
-    offset :: non_neg_integer()
-}).
-
 -record(s, {
     type :: emqx_durable_timer:type(),
     cbm :: module(),
     epoch :: emqx_durable_timer:epoch(),
     shard :: emqx_ds:shard(),
     pending_tab :: ets:tid(),
-    replay_pos :: #replay_pos{} | #replay_pos_checkpoint{} | undefined
+    %% Iterator pointing at the beginning of un-replayed timers:
+    replay_pos :: emqx_ds:iterator() | undefined,
+    next_wakeup = -1 :: integer()
 }).
 
 callback_mode() -> [handle_event_function, state_enter].
@@ -171,9 +153,9 @@ handle_event({call, From}, #call_apply_after{k = Key, v = Value, t = NotEarlierT
     handle_apply_after(From, Key, Value, NotEarlierThan, S);
 handle_event(_ET, ?ds_tx_commit_reply(Ref, Reply), ?s_active, Data) ->
     handle_ds_reply(Ref, Reply, Data);
+handle_event(info, #cast_wake_up{t = Treached}, ?s_active, Data) ->
+    replay_active(Data, Treached);
 %% Common:
-handle_event(info, wake_up, State, Data) ->
-    handle_replay(State, Data);
 handle_event(ET, Event, State, Data) ->
     ?tp(error, ?tp_unknown_event, #{m => ?MODULE, ET => Event, state => State, data => Data}),
     keep_state_and_data.
@@ -189,23 +171,51 @@ terminate(_Reason, _State, _D) ->
 %% Internal functions
 %%================================================================================
 
-handle_replay(State, S = #s{replay_pos = ReplayPos0}) ->
-    Bound = replay_bound(State, S),
-    ?tp_ignore_side_effects_in_prod(?tp_replay_start, #{start => ReplayPos0, bound => Bound}),
+replay_active(S, Treached) ->
+    Bound = active_replay_bound(S, Treached),
+    ?tp_ignore_side_effects_in_prod(?tp_replay_start, #{start => S#s.replay_pos, bound => Bound}),
     maybe
-        {ok, ReplayPos1} ?= get_iterator(State, S),
-        {ok, ReplayPos} ?= replay_interval(State, S, ReplayPos1, Bound),
-        {keep_state, S#s{replay_pos = ReplayPos}}
+        {ok, It0} ?= get_iterator(?s_active, S),
+        {ok, It} ?= do_replay_active(S, It0, Bound),
+        {keep_state, S#s{replay_pos = It}}
     else
-        end_of_stream ->
-            %% FIXME:
-            error(fixme);
-        {retry, ReplayPos, Reason} ->
-            ?tp(warning, ?tp_replay_failed, #{from => ReplayPos0, to => ReplayPos, reason => Reason}),
-            timer:send_after(emqx_durable_timer:cfg_replay_retry_interval(), self(), wake_up),
-            {keep_state, S#s{replay_pos = ReplayPos}}
+        {retry, It1, Reason} ->
+            ?tp(warning, ?tp_replay_failed, #{
+                from => S#s.replay_pos, to => It1, reason => Reason
+            }),
+            timer:send_after(
+                emqx_durable_timer:cfg_replay_retry_interval(),
+                self(),
+                #cast_wake_up{t = S#s.next_wakeup}
+            ),
+            {keep_state, S#s{replay_pos = It1}}
     end.
 
+do_replay_active(S = #s{type = Type, cbm = CBM}, It0, Bound) ->
+    BS = 100,
+    case emqx_ds:next(?DB_GLOB, It0, {time, Bound, BS}) of
+        {ok, It, Batch} ->
+            lists:foreach(
+                fun({[_Root, _Type, _Epoch, Key], _T, Val}) ->
+                    handle_timeout(Type, CBM, Key, Val)
+                end,
+                Batch
+            ),
+            case length(Batch) =:= BS of
+                true ->
+                    do_replay_active(S, It, Bound);
+                false ->
+                    {ok, It}
+            end;
+        ?err_rec(Reason) ->
+            {retry, It0, Reason}
+    end.
+
+-doc """
+Get starting position for the replay.
+Either create a new iterator at the very beginning of the timer stream,
+or return the existing iterator that points at the beginning of un-replayed timers.
+""".
 get_iterator(State, #s{replay_pos = undefined, shard = Shard, type = Type, epoch = Epoch}) ->
     %% This is the first start of the worker. Start from the beginning:
     maybe
@@ -215,113 +225,67 @@ get_iterator(State, #s{replay_pos = undefined, shard = Shard, type = Type, epoch
                     started_topic(Type, Epoch, '+')
             end,
         {[{_, Stream}], []} ?= emqx_ds:get_streams(?DB_GLOB, TopicFilter, 0, #{shard => Shard}),
-        {ok, It} ?= emqx_ds:make_iterator(?DB_GLOB, Stream, TopicFilter, 0),
-        {ok, #replay_pos{
-            it_begin = It,
-            it_end = It,
-            offset = 0,
-            tail = []
-        }}
+        {ok, It} ?= emqx_ds:make_iterator(?DB_GLOB, Stream, TopicFilter, 0)
     else
         Reason ->
             {retry, undefined, Reason}
     end;
-get_iterator(_State, #s{replay_pos = P0 = #replay_pos_checkpoint{it = It0, offset = Offset}}) ->
-    %% Restarting from the checkpointed position:
-    maybe
-        %% Skip the replayed parts of the topic by fetching and
-        %% discarding a batch of size equal to the offset:
-        {ok, It, Batch} ?=
-            case Offset of
-                0 ->
-                    {ok, It0, []};
-                _ ->
-                    emqx_ds:next(?DB_GLOB, It0, Offset)
-            end,
-        {length_mismatch, Offset} ?= {length_mismatch, length(Batch)},
-        Pos = #replay_pos{it_begin = It, offset = 0, it_end = It, tail = []},
-        {ok, Pos}
-    else
-        Reason ->
-            {retry, P0, Reason}
-    end;
-get_iterator(_State, #s{replay_pos = ReplayPos = #replay_pos{}}) ->
-    %% Replay is ongoing:
+get_iterator(_State, #s{replay_pos = ReplayPos}) ->
+    %% Iterator already exists:
     {ok, ReplayPos}.
 
-replay_interval(?s_active, S, RP, Bound) ->
-    %% Active workers should not reuse the tail, since new data can be inserted there:
-    replay_loop(S, RP#replay_pos{tail = []}, Bound).
-
-replay_loop(S, P0 = #replay_pos{it = It0, offset = O0, tail = Tl0}, Bound) ->
-    case replay_batch(S, Tl0, Bound) of
-        more ->
-            Result = emqx_ds:next(?DB_GLOB, It0, max(100, O0)),
-            ?tp(warning, emqx_durable_timer_replay_iteration, #{
-                                                                start => Start, bound => Bound, result => Result
-                                                               }),
-            case Result of
-                {ok, end_of_stream} ->
-                    {ok, Start, []};
-                {ok, _It, []} ->
-                    %% TODO: handle case where data from DS is unavailable due
-                    %% to replication lag.
-                    %%
-                    %% This may manifest as an empty batch with end time is
-                    %% less than time of the last known timer fire.
-                    {ok, Start, []};
-                {ok, It, Batch} ->
-                    case replay_batch(S, Start, Bound, Batch) of
-                        {more, ReplayEndedAt} ->
-                            replay_loop(S, It, ReplayEndedAt, Bound);
-                        {ok, _, _} = Ok ->
-                            Ok
-                    end
-            end
-    end.
-
-replay_loop(S, It0, Start, Bound) ->
-    Result = emqx_ds:next(?DB_GLOB, It0, 100),
-    ?tp(warning, emqx_durable_timer_replay_iteration, #{
-        start => Start, bound => Bound, result => Result
-    }),
-    case Result of
-        {ok, end_of_stream} ->
-            {ok, Start, []};
-        {ok, _It, []} ->
-            %% TODO: handle case where data from DS is unavailable due
-            %% to replication lag.
-            %%
-            %% This may manifest as an empty batch with end time is
-            %% less than time of the last known timer fire.
-            {ok, Start, []};
-        {ok, It, Batch} ->
-            case replay_batch(S, Start, Bound, Batch) of
-                {more, ReplayEndedAt} ->
-                    replay_loop(S, It, ReplayEndedAt, Bound);
-                {ok, _, _} = Ok ->
-                    Ok
-            end
-    end.
-
-replay_batch(_S, _Bound, []) ->
-    more;
-replay_batch(S, Bound, L = [{_DSKey, Payload} | Rest]) ->
-    {[_Root, _Type, _Epoch, Key], Time, Val} = Payload,
-    case Time =< Bound of
-        false ->
-            {ok, L};
-        true ->
-            handle_timeout(S#s.type, S#s.cbm, Key, Val),
-            replay_batch(S, Bound, Rest)
-    end.
-
-replay_bound(?s_active, #s{pending_tab = Tab}) ->
+%% Active replayer should be careful to not jump over timers that are
+%% still being added via pending transactions. Consider the following
+%% race condition:
+%%
+%% 1. Replay iterator is at t0. Next known timer fires at t2. At t1
+%% we start a transaction tx to add a new timer at t1':
+%%
+%%                   tx
+%%                ........
+%%                .      v
+%% ----------|----------------|-----------------------> t
+%%          t0   t1     t1'   t2
+%%           ^
+%%
+%% 2. While the transaction is pending, t2 timer fires and replay
+%% iterator moves to t2:
+%%
+%%                  tx
+%%               ........
+%%               .      v
+%% ----------|----------------|----------------------> t
+%%          t0  t1     t1'    t2
+%%           `- replay batch -^
+%%
+%%
+%% 3. Transaction tx finally commits, but the iterator is already at
+%% t2:
+%%
+%%                  tx
+%%               +------+
+%%               |      v
+%% ----------|----------|-----|----------------------> t
+%%          t0  t1     t1'    t2
+%%                            ^
+%%
+%% ...We missed the event at t1'.
+%%
+%% This function prevents iterator from advancing past the earliest
+%% timestamp that is being added via a pending transaction.
+active_replay_bound(#s{pending_tab = Tab}, Treached) ->
     case addq_first(Tab) of
-        undefined ->
-            emqx_durable_timer:now_ms();
-        Bound ->
-            Bound
+        Bound when is_integer(Bound), Bound < Treached ->
+            %% There are pending transactions preventing replay up to
+            %% the current time. Retry replay later:
+            erlang:send_after(
+                emqx_durable_timer:cfg_transaction_timeout(),
+                self(),
+                #cast_wake_up{t = Treached}
+            ),
+            Bound;
+        _ ->
+            Treached
     end.
 
 handle_apply_after(From, Key, Val, NotEarlierThan, #s{
@@ -350,26 +314,33 @@ handle_apply_after(From, Key, Val, NotEarlierThan, #s{
 
 %% This function is only used in the active worker. It's called on the
 %% transaction reply from DS.
-handle_ds_reply(Ref, DSReply, #s{pending_tab = Tab}) ->
+handle_ds_reply(Ref, DSReply, S = #s{pending_tab = Tab}) ->
     case addq_pop(Ref, Tab) of
         {Time, From} ->
             case emqx_ds:tx_commit_outcome(?DB_GLOB, Ref, DSReply) of
                 {ok, _Serial} ->
                     ?tp_ignore_side_effects_in_prod(?tp_apply_after_write_ok, #{ref => Ref}),
-                    WakeUpAfter = max(0, Time - emqx_durable_timer:now_ms()),
-                    timer:send_after(WakeUpAfter, self(), wake_up),
-                    Reply = ok;
+                    handle_add_timer(Time, From, S);
                 Reply ->
                     ?tp_ignore_side_effects_in_prod(?tp_apply_after_write_fail, #{
                         ref => Ref, reason => Reply
                     }),
-                    ok
-            end,
-            {keep_state_and_data, [{reply, From, Reply}]};
+                    {keep_state_and_data, [{reply, From, Reply}]}
+            end;
         undefined ->
             ?tp(error, ?tp_unknown_event, #{m => ?MODULE, event => DSReply}),
             keep_state_and_data
     end.
+
+handle_add_timer(Time, From, #s{next_wakeup = NextWakeUp}) when Time =< NextWakeUp ->
+    %% No need to set up a new wake up timer. Just report success to
+    %% the client:
+    {keep_state_and_data, {reply, From, ok}};
+handle_add_timer(Time, From, S) ->
+    %% This is the new maximum:
+    Delay = max(0, Time - emqx_durable_timer:now_ms()),
+    erlang:send_after(Delay, self(), #cast_wake_up{t = Time}),
+    {keep_state, S#s{next_wakeup = Time}, {reply, From, ok}}.
 
 -spec handle_timeout(
     emqx_durable_timer:type(), module(), emqx_durable_timer:key(), emqx_durable_timer:value()

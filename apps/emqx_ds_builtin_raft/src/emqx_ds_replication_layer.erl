@@ -56,9 +56,13 @@
     %% RPC Targets:
     do_drop_db_v1/1,
     do_get_streams_v2/4,
+    do_get_streams_v3/5,
     do_make_iterator_v2/5,
+    do_make_iterator_v3/5,
+    do_make_iterator_ttv_v1/5,
     do_update_iterator_v2/4,
     do_next_v1/4,
+    do_next_v2/4,
     do_next_ttv/3,
     do_list_generations_with_lifetimes_v3/2,
     do_get_delete_streams_v4/4,
@@ -156,6 +160,15 @@
     end
 ).
 
+-define(SAFE_GEN_RPC(EXPR),
+    case EXPR of
+        RPCError__ = {badrpc, _} ->
+            {error, recoverable, RPCError__};
+        RPCRet__ ->
+            RPCRet__
+    end
+).
+
 -define(SHARD_RPC(DB, SHARD, NODE, BODY),
     case
         emqx_ds_builtin_raft_shard:servers(
@@ -170,6 +183,8 @@
             {error, recoverable, replica_offline}
     end
 ).
+
+-define(ERR_UPGRADE(NODE, VSN), ?err_rec({node_needs_upgrade, #{node => NODE, api_vsn => VSN}})).
 
 %%================================================================================
 %% Type declarations
@@ -409,9 +424,10 @@ get_streams(DB, TopicFilter, StartTime, Opts) ->
             _ ->
                 list_shards(DB)
         end,
+    MinGeneration = maps:get(generation_min, Opts, 0),
     lists:foldl(
         fun(Shard, {Acc, AccErr}) ->
-            try ra_get_streams(DB, Shard, TopicFilter, StartTime) of
+            try ra_get_streams(DB, Shard, TopicFilter, StartTime, MinGeneration) of
                 Streams when is_list(Streams) ->
                     L = lists:map(
                         fun
@@ -458,7 +474,7 @@ get_delete_streams(DB, TopicFilter, StartTime) ->
 -spec make_iterator(emqx_ds:db(), stream(), emqx_ds:topic_filter(), emqx_ds:time()) ->
     emqx_ds:make_iterator_result(iterator()).
 make_iterator(DB, Stream = #'Stream'{shard = Shard}, TopicFilter, StartTime) ->
-    ra_make_iterator(DB, Shard, Stream, TopicFilter, StartTime);
+    ra_make_iterator_ttv(DB, Shard, Stream, TopicFilter, StartTime);
 make_iterator(DB, ?stream_v2(Shard, StorageStream), TopicFilter, StartTime) ->
     case ra_make_iterator(DB, Shard, StorageStream, TopicFilter, StartTime) of
         {ok, Iter} ->
@@ -478,10 +494,11 @@ make_delete_iterator(DB, Stream, TopicFilter, StartTime) ->
             Error
     end.
 
--spec next(emqx_ds:db(), iterator(), pos_integer()) -> emqx_ds:next_result(iterator()).
-next(DB, Iter = #'Iterator'{shard = Shard}, BatchSize) ->
+-spec next(emqx_ds:db(), iterator(), emqx_ds:next_limit()) ->
+    emqx_ds:next_result(iterator()).
+next(DB, Iter = #'Iterator'{shard = Shard}, Limit) ->
     T0 = erlang:monotonic_time(microsecond),
-    Result = ra_next_ttv(DB, Shard, Iter, BatchSize),
+    Result = ra_next_ttv(DB, Shard, Iter, Limit),
     T1 = erlang:monotonic_time(microsecond),
     emqx_ds_builtin_metrics:observe_next_time(DB, T1 - T0),
     Result;
@@ -518,49 +535,75 @@ subscribe(DB, It, SubOpts) ->
         DB,
         Shard,
         Node,
-        try emqx_ds_beamformer_proto_v1:where(Node, {DB, Shard}) of
-            Server when is_pid(Server) ->
-                MRef = monitor(process, Server),
-                Result = ?SAFE_ERPC(
-                    emqx_ds_beamformer_proto_v1:subscribe(
-                        Node, Server, self(), MRef, It, SubOpts
-                    )
-                ),
-                case Result of
-                    {ok, MRef} ->
-                        {ok, #sub_handle{shard = Shard, server = Server, ref = MRef}, MRef};
-                    Err ->
-                        Err
-                end;
-            undefined ->
-                {error, recoverable, beamformer_is_not_started};
-            Err ->
-                Err
-        catch
-            EC:Err:Stack ->
-                {error, recoverable, #{EC => Err, stacktrace => Stack}}
+        case beam_proto_vsn(Node) of
+            Vsn when Vsn >= 1 ->
+                ra_subscribe(Node, DB, Shard, It, SubOpts);
+            Vsn ->
+                ?ERR_UPGRADE(Node, Vsn)
         end
     ).
 
+ra_subscribe(Node, DB, Shard, It, SubOpts) ->
+    try emqx_ds_beamformer_proto_v1:where(Node, {DB, Shard}) of
+        Server when is_pid(Server) ->
+            MRef = monitor(process, Server),
+            Result = ?SAFE_ERPC(
+                emqx_ds_beamformer_proto_v1:subscribe(
+                    Node, Server, self(), MRef, It, SubOpts
+                )
+            ),
+            case Result of
+                {ok, MRef} ->
+                    {ok, #sub_handle{shard = Shard, server = Server, ref = MRef}, MRef};
+                Err ->
+                    Err
+            end;
+        undefined ->
+            ?err_rec(beamformer_is_not_started);
+        Err ->
+            Err
+    catch
+        EC:Err:Stack ->
+            ?err_rec(#{EC => Err, stacktrace => Stack})
+    end.
+
 -spec unsubscribe(emqx_ds:db(), emqx_ds:subscription_handle()) -> boolean().
 unsubscribe(DB, #sub_handle{shard = Shard, server = Server, ref = SubRef}) ->
-    ?SAFE_ERPC(
-        emqx_ds_beamformer_proto_v1:unsubscribe(node(Server), {DB, Shard}, SubRef)
-    ).
+    Node = node(Server),
+    case beam_proto_vsn(Node) of
+        Vsn when Vsn >= 1 ->
+            ?SAFE_ERPC(
+                emqx_ds_beamformer_proto_v1:unsubscribe(Node, {DB, Shard}, SubRef)
+            );
+        Vsn ->
+            ?ERR_UPGRADE(Node, Vsn)
+    end.
 
 -spec suback(emqx_ds:db(), emqx_ds:subscription_handle(), emqx_ds:sub_seqno()) ->
     ok.
 suback(DB, #sub_handle{shard = Shard, server = Server, ref = SubRef}, SeqNo) ->
-    ?SAFE_ERPC(
-        emqx_ds_beamformer_proto_v1:suback_a(node(Server), {DB, Shard}, SubRef, SeqNo)
-    ).
+    Node = node(Server),
+    case beam_proto_vsn(Node) of
+        Vsn when Vsn >= 1 ->
+            ?SAFE_ERPC(
+                emqx_ds_beamformer_proto_v1:suback_a(Node, {DB, Shard}, SubRef, SeqNo)
+            );
+        Vsn ->
+            ?ERR_UPGRADE(Node, Vsn)
+    end.
 
 -spec subscription_info(emqx_ds:db(), emqx_ds:subscription_handle()) ->
     emqx_ds:sub_info() | undefined.
 subscription_info(DB, #sub_handle{shard = Shard, server = Server, ref = SubRef}) ->
-    ?SAFE_ERPC(
-        emqx_ds_beamformer_proto_v1:subscription_info(node(Server), {DB, Shard}, SubRef)
-    ).
+    Node = node(Server),
+    case beam_proto_vsn(Node) of
+        Vsn when Vsn >= 1 ->
+            ?SAFE_ERPC(
+                emqx_ds_beamformer_proto_v1:subscription_info(Node, {DB, Shard}, SubRef)
+            );
+        Vsn ->
+            ?ERR_UPGRADE(Node, Vsn)
+    end.
 
 -spec delete_next(emqx_ds:db(), delete_iterator(), emqx_ds:delete_selector(), pos_integer()) ->
     emqx_ds:delete_next_result(delete_iterator()).
@@ -599,9 +642,14 @@ new_kv_tx(DB, Options = #{shard := ShardOpt, generation := Generation}) ->
                 DB,
                 Shard,
                 Node,
-                ?SAFE_ERPC(
-                    emqx_ds_otx_proto_v1:new_kv_tx_ctx(Node, DB, Shard, Generation, Options)
-                )
+                case otx_proto_vsn(Node) of
+                    Vsn when Vsn >= 1 ->
+                        ?SAFE_ERPC(
+                            emqx_ds_otx_proto_v1:new_kv_tx_ctx(Node, DB, Shard, Generation, Options)
+                        );
+                    Vsn ->
+                        ?ERR_UPGRADE(Node, Vsn)
+                end
             );
         _ ->
             ?err_unrec(database_does_not_support_transactions)
@@ -837,7 +885,36 @@ do_store_batch_v1(_DB, _Shard, _Batch, _Options) ->
     emqx_ds:time()
 ) ->
     [{integer(), emqx_ds_storage_layer:stream()}] | emqx_ds:error(storage_down).
-do_get_streams_v2(DB, Shard, TopicFilter, StartTime) ->
+do_get_streams_v2(DB, Shard, TopicFilter, StartTimeUs) ->
+    DBShard = {DB, Shard},
+    MinGeneration = 0,
+    ?IF_SHARD_READY(
+        DBShard,
+        begin
+            #{store_ttv := IsTTV} = emqx_ds_builtin_raft_meta:db_config(DB),
+            case IsTTV of
+                false ->
+                    emqx_ds_storage_layer:get_streams(
+                        DBShard, TopicFilter, StartTimeUs, MinGeneration
+                    );
+                true ->
+                    emqx_ds_storage_layer_ttv:get_streams(
+                        DBShard, TopicFilter, StartTimeUs, MinGeneration
+                    )
+            end
+        end
+    ).
+
+-spec do_get_streams_v3(
+    emqx_ds:db(),
+    shard_id(),
+    emqx_ds:topic_filter(),
+    emqx_ds:time(),
+    emqx_ds:generation()
+) ->
+    [{emqx_ds:generation(), emqx_ds_storage_layer:stream() | emqx_ds_storage_layer_ttv:stream()}]
+    | emqx_ds:error(storage_down).
+do_get_streams_v3(DB, Shard, TopicFilter, StartTime, MinGeneration) ->
     DBShard = {DB, Shard},
     ?IF_SHARD_READY(
         DBShard,
@@ -845,10 +922,12 @@ do_get_streams_v2(DB, Shard, TopicFilter, StartTime) ->
             #{store_ttv := IsTTV} = emqx_ds_builtin_raft_meta:db_config(DB),
             case IsTTV of
                 false ->
-                    emqx_ds_storage_layer:get_streams(DBShard, TopicFilter, StartTime);
+                    emqx_ds_storage_layer:get_streams(
+                        DBShard, TopicFilter, timestamp_to_timeus(StartTime), MinGeneration
+                    );
                 true ->
                     emqx_ds_storage_layer_ttv:get_streams(
-                        DBShard, TopicFilter, timeus_to_timestamp(StartTime)
+                        DBShard, TopicFilter, StartTime, MinGeneration
                     )
             end
         end
@@ -857,22 +936,52 @@ do_get_streams_v2(DB, Shard, TopicFilter, StartTime) ->
 -spec do_make_iterator_v2(
     emqx_ds:db(),
     shard_id(),
-    emqx_ds_storage_layer:stream(),
+    emqx_ds_storage_layer:stream() | emqx_ds_storage_layer_ttv:stream(),
     emqx_ds:topic_filter(),
     emqx_ds:time()
 ) ->
     emqx_ds:make_iterator_result(emqx_ds_storage_layer:iterator()).
 do_make_iterator_v2(DB, Shard, Stream = #'Stream'{}, TopicFilter, StartTime) ->
-    ShardId = {DB, Shard},
-    ?IF_SHARD_READY(
-        ShardId,
-        emqx_ds_storage_layer_ttv:make_iterator(DB, Stream, TopicFilter, StartTime)
-    );
+    do_make_iterator_ttv_v1(DB, Shard, Stream, TopicFilter, StartTime);
 do_make_iterator_v2(DB, Shard, Stream, TopicFilter, StartTime) ->
     ShardId = {DB, Shard},
     ?IF_SHARD_READY(
         ShardId,
         emqx_ds_storage_layer:make_iterator(ShardId, Stream, TopicFilter, StartTime)
+    ).
+
+-spec do_make_iterator_v3(
+    emqx_ds:db(),
+    shard_id(),
+    emqx_ds_storage_layer:stream(),
+    emqx_ds:topic_filter(),
+    emqx_ds:time()
+) ->
+    emqx_ds:make_iterator_result(emqx_ds_storage_layer:iterator()).
+do_make_iterator_v3(DB, Shard, Stream, TopicFilter, StartTime) ->
+    ShardId = {DB, Shard},
+    ?IF_SHARD_READY(
+        ShardId,
+        emqx_ds_storage_layer:make_iterator(
+            ShardId, Stream, TopicFilter, timestamp_to_timeus(StartTime)
+        )
+    ).
+
+-spec do_make_iterator_ttv_v1(
+    emqx_ds:db(),
+    shard_id(),
+    emqx_ds_storage_layer_ttv:stream(),
+    emqx_ds:topic_filter(),
+    emqx_ds:time()
+) ->
+    emqx_ds:make_iterator_result(emqx_ds_storage_layer_ttv:iterator()).
+do_make_iterator_ttv_v1(DB, Shard, Stream = #'Stream'{}, TopicFilter, StartTime) ->
+    ShardId = {DB, Shard},
+    ?IF_SHARD_READY(
+        ShardId,
+        emqx_ds_storage_layer_ttv:make_iterator(
+            DB, Stream, TopicFilter, StartTime
+        )
     ).
 
 -spec do_make_delete_iterator_v4(
@@ -886,6 +995,7 @@ do_make_iterator_v2(DB, Shard, Stream, TopicFilter, StartTime) ->
 do_make_delete_iterator_v4(DB, Shard, Stream, TopicFilter, StartTime) ->
     emqx_ds_storage_layer:make_delete_iterator({DB, Shard}, Stream, TopicFilter, StartTime).
 
+%% Backward-compatibility with v5.
 -spec do_update_iterator_v2(
     emqx_ds:db(),
     shard_id(),
@@ -896,18 +1006,39 @@ do_make_delete_iterator_v4(DB, Shard, Stream, TopicFilter, StartTime) ->
 do_update_iterator_v2(DB, Shard, OldIter, DSKey) ->
     emqx_ds_storage_layer:update_iterator({DB, Shard}, OldIter, DSKey).
 
+%% Backward-compatible version that returns DSKeys. TODO: Remove
 -spec do_next_v1(
     emqx_ds:db(),
     shard_id(),
     emqx_ds_storage_layer:iterator(),
     pos_integer()
 ) ->
-    emqx_ds:next_result(emqx_ds_storage_layer:iterator()).
-do_next_v1(DB, Shard, Iter, BatchSize) ->
-    ShardId = {DB, Shard},
+    _.
+do_next_v1(DB, Shard, Iter, NextLimit) ->
+    DBShard = {DB, Shard},
     ?IF_SHARD_READY(
-        ShardId,
-        emqx_ds_storage_layer:next(ShardId, Iter, BatchSize, current_timestamp(DB, Shard))
+        DBShard,
+        begin
+            {BatchSize, TimeLimit} = batch_size_and_time_limit(DB, Shard, NextLimit),
+            emqx_ds_storage_layer:next(DBShard, Iter, BatchSize, TimeLimit, true)
+        end
+    ).
+
+-spec do_next_v2(
+    emqx_ds:db(),
+    shard_id(),
+    emqx_ds_storage_layer:iterator(),
+    emqx_ds:next_limit()
+) ->
+    emqx_ds:next_result(emqx_ds_storage_layer:iterator()).
+do_next_v2(DB, Shard, Iter, NextLimit) ->
+    DBShard = {DB, Shard},
+    ?IF_SHARD_READY(
+        DBShard,
+        begin
+            {BatchSize, TimeLimit} = batch_size_and_time_limit(DB, Shard, NextLimit),
+            emqx_ds_storage_layer:next(DBShard, Iter, BatchSize, TimeLimit, false)
+        end
     ).
 
 -spec do_next_ttv(
@@ -916,10 +1047,13 @@ do_next_v1(DB, Shard, Iter, BatchSize) ->
     pos_integer()
 ) ->
     emqx_ds:next_result(emqx_ds_storage_layer_ttv:iterator()).
-do_next_ttv(DB, Iter = #'Iterator'{shard = Shard}, BatchSize) ->
+do_next_ttv(DB, Iter = #'Iterator'{shard = Shard}, NextLimit) ->
     ?IF_SHARD_READY(
         {DB, Shard},
-        emqx_ds_storage_layer_ttv:next(DB, Iter, BatchSize, current_timestamp(DB, Shard))
+        begin
+            {BatchSize, TimeLimit} = batch_size_and_time_limit(DB, Shard, NextLimit),
+            emqx_ds_storage_layer_ttv:next(DB, Iter, BatchSize, TimeLimit)
+        end
     ).
 
 -spec do_delete_next_v4(
@@ -965,6 +1099,7 @@ do_drop_generation_v3(_DB, _ShardId, _GenId) ->
 do_get_delete_streams_v4(DB, Shard, TopicFilter, StartTime) ->
     emqx_ds_storage_layer:get_delete_streams({DB, Shard}, TopicFilter, StartTime).
 
+%% TODO: remove
 -spec do_poll_v1(
     node(),
     emqx_ds:db(),
@@ -973,18 +1108,8 @@ do_get_delete_streams_v4(DB, Shard, TopicFilter, StartTime) ->
     emqx_ds:poll_opts()
 ) ->
     ok.
-do_poll_v1(SourceNode, DB, Shard, Iterators, PollOpts) ->
-    ShardId = {DB, Shard},
-    ?tp(ds_raft_do_poll, #{shard => ShardId, iterators => Iterators}),
-    ?IF_SHARD_READY(
-        ShardId,
-        lists:foreach(
-            fun({RAddr, It}) ->
-                emqx_ds_beamformer:poll(SourceNode, RAddr, ShardId, It, PollOpts)
-            end,
-            Iterators
-        )
-    ).
+do_poll_v1(_SourceNode, _DB, _Shard, _Iterators, _PollOpts) ->
+    ?err_rec(obsolete_client_api).
 
 -spec do_new_kv_tx_ctx_v1(
     emqx_ds:db(),
@@ -1077,30 +1202,89 @@ ra_command(DB, Shard, Command, Retries) ->
             error(Error, [DB, Shard])
     end.
 
-ra_get_streams(DB, Shard, TopicFilter, Time) ->
-    TimestampUs = timestamp_to_timeus(Time),
+ra_get_streams(DB, Shard, TopicFilter, Time, MinGeneration) ->
     ?SHARD_RPC(
         DB,
         Shard,
         Node,
-        ?SAFE_ERPC(emqx_ds_proto_v6:get_streams(Node, DB, Shard, TopicFilter, TimestampUs))
+        case proto_vsn(Node) of
+            Vsn when Vsn >= 6 ->
+                ?SAFE_ERPC(
+                    emqx_ds_proto_v6:get_streams(Node, DB, Shard, TopicFilter, Time, MinGeneration)
+                );
+            Vsn when Vsn >= 4 ->
+                %% Use timestamp conversion and polyfill `min_generation' filtering:
+                TimestampUs = timestamp_to_timeus(Time),
+                ?SAFE_ERPC(
+                    polyfill_filter_streams(
+                        MinGeneration,
+                        emqx_ds_proto_v4:get_streams(Node, DB, Shard, TopicFilter, TimestampUs)
+                    )
+                );
+            Vsn ->
+                ?ERR_UPGRADE(Node, Vsn)
+        end
     ).
+
+polyfill_filter_streams(MinGeneration, L) when is_list(L) ->
+    lists:filter(
+        fun({G, _}) ->
+            G >= MinGeneration
+        end,
+        L
+    );
+polyfill_filter_streams(_, Other) ->
+    Other.
 
 ra_get_delete_streams(DB, Shard, TopicFilter, Time) ->
     ?SHARD_RPC(
         DB,
         Shard,
         Node,
-        ?SAFE_ERPC(emqx_ds_proto_v6:get_delete_streams(Node, DB, Shard, TopicFilter, Time))
+        case proto_vsn(Node) of
+            Vsn when Vsn >= 4 ->
+                ?SAFE_ERPC(emqx_ds_proto_v6:get_delete_streams(Node, DB, Shard, TopicFilter, Time));
+            Vsn ->
+                ?ERR_UPGRADE(Node, Vsn)
+        end
     ).
 
-ra_make_iterator(DB, Shard, Stream, TopicFilter, StartTime) ->
-    TimeUs = timestamp_to_timeus(StartTime),
+ra_make_iterator_ttv(DB, Shard, Stream = #'Stream'{}, TopicFilter, StartTime) ->
     ?SHARD_RPC(
         DB,
         Shard,
         Node,
-        ?SAFE_ERPC(emqx_ds_proto_v6:make_iterator(Node, DB, Shard, Stream, TopicFilter, TimeUs))
+        case proto_vsn(Node) of
+            Vsn when Vsn >= 6 ->
+                ?SAFE_ERPC(
+                    emqx_ds_proto_v6:make_iterator_ttv(
+                        Node, DB, Shard, Stream, TopicFilter, StartTime
+                    )
+                );
+            Vsn ->
+                ?ERR_UPGRADE(Node, Vsn)
+        end
+    ).
+
+ra_make_iterator(DB, Shard, Stream, TopicFilter, StartTime) ->
+    ?SHARD_RPC(
+        DB,
+        Shard,
+        Node,
+        case proto_vsn(Node) of
+            Vsn when Vsn >= 6 ->
+                ?SAFE_ERPC(
+                    emqx_ds_proto_v6:make_iterator(Node, DB, Shard, Stream, TopicFilter, StartTime)
+                );
+            Vsn when Vsn >= 4 ->
+                ?SAFE_ERPC(
+                    emqx_ds_proto_v4:make_iterator(
+                        Node, DB, Shard, Stream, TopicFilter, timestamp_to_timeus(StartTime)
+                    )
+                );
+            Vsn ->
+                ?ERR_UPGRADE(Node, Vsn)
+        end
     ).
 
 ra_make_delete_iterator(DB, Shard, Stream, TopicFilter, StartTime) ->
@@ -1109,42 +1293,53 @@ ra_make_delete_iterator(DB, Shard, Stream, TopicFilter, StartTime) ->
         DB,
         Shard,
         Node,
-        ?SAFE_ERPC(
-            emqx_ds_proto_v6:make_delete_iterator(Node, DB, Shard, Stream, TopicFilter, TimeUs)
-        )
-    ).
-
-%% ra_update_iterator(DB, Shard, Iter, DSKey) ->
-%%     ?SHARD_RPC(
-%%         DB,
-%%         Shard,
-%%         Node,
-%%         ?SAFE_ERPC(emqx_ds_proto_v6:update_iterator(Node, DB, Shard, Iter, DSKey))
-%%     ).
-
-ra_next(DB, Shard, Iter, BatchSize) ->
-    ?SHARD_RPC(
-        DB,
-        Shard,
-        Node,
-        case emqx_ds_proto_v6:next(Node, DB, Shard, Iter, BatchSize) of
-            Err = {badrpc, _} ->
-                {error, recoverable, Err};
-            Ret ->
-                Ret
+        case proto_vsn(Node) of
+            Vsn when Vsn >= 4 ->
+                ?SAFE_ERPC(
+                    emqx_ds_proto_v4:make_delete_iterator(
+                        Node, DB, Shard, Stream, TopicFilter, TimeUs
+                    )
+                );
+            Vsn ->
+                ?ERR_UPGRADE(Node, Vsn)
         end
     ).
 
-ra_next_ttv(DB, Shard, Iter = #'Iterator'{shard = Shard}, BatchSize) ->
+ra_next(DB, Shard, Iter, NextLimit) ->
     ?SHARD_RPC(
         DB,
         Shard,
         Node,
-        case emqx_ds_proto_v6:next_ttv(Node, DB, Shard, Iter, BatchSize) of
-            Err = {badrpc, _} ->
-                {error, recoverable, Err};
-            Ret ->
-                Ret
+        case proto_vsn(Node) of
+            Vsn when Vsn >= 6 ->
+                ?SAFE_GEN_RPC(emqx_ds_proto_v6:next(Node, DB, Shard, Iter, NextLimit));
+            Vsn when Vsn >= 4, is_integer(NextLimit) ->
+                %% Limiting iteration by time is not supported.
+                %%
+                %% Polyfill: get rid of DSKeys.
+                ?SAFE_GEN_RPC(
+                    maybe
+                        {ok, It, Batch} ?= emqx_ds_proto_v4:next(Node, DB, Shard, Iter, NextLimit),
+                        {ok, It, emqx_ds_storage_layer:rid_of_dskeys(Batch)}
+                    end
+                );
+            Vsn ->
+                ?ERR_UPGRADE(Node, Vsn)
+        end
+    ).
+
+ra_next_ttv(DB, Shard, Iter = #'Iterator'{shard = Shard}, NextLimit) ->
+    ?SHARD_RPC(
+        DB,
+        Shard,
+        Node,
+        case proto_vsn(Node) of
+            Vsn when Vsn >= 6 ->
+                ?SAFE_GEN_RPC(
+                    emqx_ds_proto_v6:next_ttv(Node, DB, Shard, Iter, NextLimit)
+                );
+            Vsn ->
+                ?ERR_UPGRADE(Node, Vsn)
         end
     ).
 
@@ -1153,7 +1348,14 @@ ra_delete_next(DB, Shard, Iter, Selector, BatchSize) ->
         DB,
         Shard,
         Node,
-        ?SAFE_ERPC(emqx_ds_proto_v6:delete_next(Node, DB, Shard, Iter, Selector, BatchSize))
+        case proto_vsn(Node) of
+            Vsn when Vsn >= 4 ->
+                ?SAFE_ERPC(
+                    emqx_ds_proto_v4:delete_next(Node, DB, Shard, Iter, Selector, BatchSize)
+                );
+            Vsn ->
+                ?ERR_UPGRADE(Node, Vsn)
+        end
     ).
 
 ra_list_generations_with_lifetimes(DB, Shard) ->
@@ -1161,7 +1363,12 @@ ra_list_generations_with_lifetimes(DB, Shard) ->
         DB,
         Shard,
         Node,
-        ?SAFE_ERPC(emqx_ds_proto_v6:list_generations_with_lifetimes(Node, DB, Shard))
+        case proto_vsn(Node) of
+            Vsn when Vsn >= 6 ->
+                ?SAFE_ERPC(emqx_ds_proto_v6:list_generations_with_lifetimes(Node, DB, Shard));
+            Vsn ->
+                ?ERR_UPGRADE(Node, Vsn)
+        end
     ),
     case Reply of
         Gens = #{} ->
@@ -1567,6 +1774,7 @@ ensure_monotonic_timestamp(TimestampUs, Latest) when TimestampUs > Latest ->
 ensure_monotonic_timestamp(_TimestampUs, Latest) ->
     {Latest, Latest + 1}.
 
+%% FIXME: time unit conversion = always wrong. Remove it from DS.
 timestamp_to_timeus(TimestampMs) ->
     TimestampMs * 1000.
 
@@ -1745,6 +1953,28 @@ local_raft_leader(DB, Shard) ->
         leader,
         emqx_ds_builtin_raft_shard:local_server(DB, Shard)
     ).
+
+proto_vsn(Node) ->
+    proto_vsn(emqx_ds, Node).
+
+otx_proto_vsn(Node) ->
+    proto_vsn(emqx_ds_otx, Node).
+
+beam_proto_vsn(Node) ->
+    proto_vsn(emqx_ds_beamformer, Node).
+
+proto_vsn(API, Node) ->
+    case emqx_bpapi:supported_version(Node, API) of
+        undefined -> -1;
+        N when is_integer(N) -> N
+    end.
+
+-spec batch_size_and_time_limit(emqx_ds:db(), shard_id(), emqx_ds:next_limit()) ->
+    {pos_integer(), emqx_ds:time()}.
+batch_size_and_time_limit(DB, Shard, BatchSize) when is_integer(BatchSize) ->
+    {BatchSize, current_timestamp(DB, Shard)};
+batch_size_and_time_limit(DB, Shard, {time, BatchSize, MinTS}) ->
+    {BatchSize, min(current_timestamp(DB, Shard), MinTS)}.
 
 -ifdef(TEST).
 
