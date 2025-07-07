@@ -847,7 +847,9 @@ do_get_streams_v2(DB, Shard, TopicFilter, StartTime) ->
                 false ->
                     emqx_ds_storage_layer:get_streams(DBShard, TopicFilter, StartTime);
                 true ->
-                    emqx_ds_storage_layer_ttv:get_streams(DBShard, TopicFilter, StartTime)
+                    emqx_ds_storage_layer_ttv:get_streams(
+                        DBShard, TopicFilter, timeus_to_timestamp(StartTime)
+                    )
             end
         end
     ).

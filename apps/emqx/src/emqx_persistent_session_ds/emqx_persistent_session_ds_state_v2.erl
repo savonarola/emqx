@@ -280,29 +280,29 @@ tx_del_session_data(ClientId) ->
 lts_threshold_cb(0, _Parent) ->
     %% Don't create a common stream for topics adjacent to the root:
     infinity;
-lts_threshold_cb(1, ?top_guard) ->
+lts_threshold_cb(_, ?top_guard) ->
     %% Always create a unified stream for session guards, since
-    %% iteration over guards is used to enumerate sessions:
+    %% iteration over guards is used e.g. to enumerate sessions:
     0;
-lts_threshold_cb(1, ?top_data) ->
-    %% Create a unified stream for pmaps' roots. Even though we never
-    %% iterate over pmaps that belong to different sessions, all LTS
-    %% nodes are kept in RAM at all time. So if we don't unify the
-    %% sessions' data, we'll end up with a number of objects per
-    %% session, dead or alive, stuck in RAM.
-    0;
-lts_threshold_cb(3, Parent) when
-    Parent =:= ?top_meta;
-    Parent =:= ?top_sub;
-    Parent =:= ?top_sstate;
-    Parent =:= ?top_seqno;
-    Parent =:= ?top_stream;
-    Parent =:= ?top_rank;
-    Parent =:= ?top_awaiting_rel
-->
-    %% Always create a unified stream for data that belongs to a certain group:
-    %% E.g. `d/<sessionid>/stm/<stream_key>'
-    0;
+lts_threshold_cb(N, ?top_data) ->
+    %% [<<"d">>, SessionId, PmapName, PmapKey]
+    %%    0          1         2        3
+    case N of
+        1 ->
+            %% Create a unified stream for pmaps' roots. Even though
+            %% we never iterate over pmaps that belong to different
+            %% sessions, all LTS nodes are kept in RAM at all time. So
+            %% if we don't unify the sessions' data, we'll end up with
+            %% a number of objects per session, dead or alive, stuck
+            %% in RAM.
+            0;
+        2 ->
+            %% Don't unify the streams that belong to different pmaps:
+            infinity;
+        _ ->
+            %% Unify stream for the pmap keys:
+            0
+    end;
 lts_threshold_cb(_, _) ->
     infinity.
 
@@ -318,7 +318,7 @@ session_iterator_next(Generation, It0, N) ->
     ),
     Results = lists:map(
         fun({[?top_guard, SessId], _, _Guard}) ->
-                SessId
+            SessId
         end,
         Batch
     ),

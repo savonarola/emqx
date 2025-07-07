@@ -803,9 +803,9 @@ t_state_fuzz(init, Config) ->
     end,
     start_local(?FUNCTION_NAME, [{cleanup, Cleanup} | Config]).
 t_state_fuzz(_Config) ->
-    NTests = 100,
-    MaxSize = 300,
-    NCommandsFactor = 10,
+    NTests = ct:get_config({fuzzer, n_tests}, 10),
+    MaxSize = ct:get_config({fuzzer, max_size}, 100),
+    NCommandsFactor = ct:get_config({fuzzer, command_multiplier}, 1),
     Mod = emqx_persistent_session_ds_state_fuzzer,
     ?run_prop(
         #{
@@ -923,10 +923,10 @@ t_fuzz(_Config) ->
     %% By default the number of tests and max_size are set to low
     %% values to avoid blowing up CI. Hence it's recommended to
     %% increase the max_size and numtests when doing local
-    %% development:
-    NTests = 100,
-    MaxSize = 300,
-    NCommandsFactor = 2,
+    %% development using "apps/emqx/test/sessds.cfg"
+    NTests = ct:get_config({fuzzer, n_tests}, 10),
+    MaxSize = ct:get_config({fuzzer, max_size}, 100),
+    NCommandsFactor = ct:get_config({fuzzer, command_multiplier}, 1),
     ?run_prop(
         #{
             proper => #{

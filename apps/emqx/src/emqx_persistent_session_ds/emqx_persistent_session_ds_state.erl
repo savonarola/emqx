@@ -80,6 +80,7 @@
     seqno_type/0,
     rank_key/0,
     session_iterator/0,
+    subscription_iterator/0,
     protocol/0,
     commit_opts/0
 ]).
@@ -94,7 +95,8 @@
 %% Type declarations
 %%================================================================================
 
--opaque session_iterator() :: term().
+-opaque session_iterator() :: emqx_persistent_session_ds_state_v2:session_iterator().
+-opaque subscription_iterator() :: emqx_persistent_session_ds_state_v2:subscripton_iterator().
 
 -define(DB, ?DURABLE_SESSION_STATE).
 
@@ -175,6 +177,7 @@ open_db(Config) ->
     %% FIXME: don't hardcode
     Storage =
         {emqx_ds_storage_skipstream_lts_v2, #{
+            timestamp_bytes => 0,
             lts_threshold_spec => {mf, emqx_persistent_session_ds_state_v2, lts_threshold_cb}
         }},
     emqx_ds:open_db(?DB, Config#{

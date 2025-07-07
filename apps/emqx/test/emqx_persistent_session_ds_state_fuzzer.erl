@@ -88,13 +88,25 @@ put_metadata() ->
             Val,
             range(0, 100),
             {created_at, set_created_at, Val}
+        ),
+        ?LET(
+            Val,
+            range(0, 16#FFFFFFFF),
+            {expiry_interval, set_expiry_interval, Val}
+        ),
+        ?LET(
+            Val,
+            binary(),
+            {node_epoch_id, set_node_epoch_id, Val}
         )
     ]).
 
 get_metadata() ->
     oneof([
         {last_alive_at, get_last_alive_at},
-        {created_at, get_created_at}
+        {created_at, get_created_at},
+        {expiry_interval, get_expiry_interval},
+        {node_epoch_id, get_node_epoch_id}
     ]).
 
 seqno() ->
