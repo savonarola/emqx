@@ -495,8 +495,8 @@ Options for the `subscribe` API.
 -type multi_iter_opts() ::
     #{
         db := db(),
-        generation => generation(),
-        shard => shard(),
+        generation => generation() | '_',
+        shard => shard() | '_',
         start_time => time()
     }.
 
@@ -1117,7 +1117,7 @@ have to be proper unicode and levels can contain slashes.
 
 """.
 -doc #{title => <<"Transactions">>, since => <<"5.10.0">>}.
--spec tx_write({topic(), time(), binary() | ?ds_tx_serial}) -> ok.
+-spec tx_write({topic(), time() | ?ds_tx_ts_monotonic, binary() | ?ds_tx_serial}) -> ok.
 tx_write({Topic, Time, Value}) ->
     case
         is_topic(Topic) andalso

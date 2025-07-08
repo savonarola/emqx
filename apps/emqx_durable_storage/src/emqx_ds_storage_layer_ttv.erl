@@ -21,7 +21,7 @@
 
     next/4,
     scan_stream/6,
-    fast_forward/4,
+    fast_forward/3,
 
     message_match_context/4,
     iterator_match_context/2,
@@ -152,7 +152,7 @@
     it_static(),
     it_pos(),
     pos_integer(),
-    emqx_ds:time(),
+    emqx_ds:time() | infinity,
     boolean()
 ) ->
     {ok, it_pos(), [emqx_ds:ttv()]} | {ok, end_of_stream} | emqx_ds:error(_).
@@ -395,7 +395,7 @@ high_watermark({DB, _}, Stream, Now) ->
             Err
     end.
 
--spec next(emqx_ds:db(), iterator(), pos_integer(), emqx_ds:time()) ->
+-spec next(emqx_ds:db(), iterator(), pos_integer(), emqx_ds:time() | infinity) ->
     emqx_ds:next_result(iterator()).
 next(
     DB,
@@ -403,13 +403,15 @@ next(
         shard = Shard, generation = Generation, innerStatic = InnerStatic, innerPos = InnerPos0
     },
     BatchSize,
-    Now
+    MaxTS
 ) ->
     DBShard = {DB, Shard},
     case emqx_ds_storage_layer:generation_get(DBShard, Generation) of
         #{module := Mod, data := GenData} ->
             IsCurrent = Generation =:= emqx_ds_storage_layer:generation_current(DBShard),
-            case Mod:next(DB, Shard, GenData, InnerStatic, InnerPos0, BatchSize, Now, IsCurrent) of
+            case
+                Mod:next(DB, Shard, GenData, InnerStatic, InnerPos0, BatchSize, MaxTS, IsCurrent)
+            of
                 {ok, InnerPos, Batch} ->
                     {ok, It0#'Iterator'{innerPos = InnerPos}, Batch};
                 {ok, end_of_stream} ->
@@ -421,11 +423,11 @@ next(
             ?ERR_GEN_GONE
     end.
 
--spec fast_forward(emqx_ds_beamformer:dbshard(), iterator(), it_pos(), emqx_ds:time()) ->
+-spec fast_forward(emqx_ds_beamformer:dbshard(), iterator(), it_pos()) ->
     {ok, iterator()} | {ok, end_of_stream} | emqx_ds:error(_).
-fast_forward({DB, _}, It0, _Pos, Now) ->
+fast_forward({DB, _}, It0, _Pos) ->
     %% FIXME: add additional checks for Pos
-    case next(DB, It0, 1, Now) of
+    case next(DB, It0, 1, infinity) of
         {ok, It, []} ->
             {ok, It};
         {ok, _It, _} ->

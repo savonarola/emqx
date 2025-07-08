@@ -539,8 +539,7 @@ high_watermark(DBShard, Stream) ->
     end.
 
 fast_forward(DBShard, It = #'Iterator'{}, Key) ->
-    Now = current_timestamp(DBShard),
-    emqx_ds_storage_layer_ttv:fast_forward(DBShard, It, Key, Now);
+    emqx_ds_storage_layer_ttv:fast_forward(DBShard, It, Key);
 fast_forward(DBShard, It = #{?tag := ?IT, ?enc := Inner0}, Key) ->
     Now = current_timestamp(DBShard),
     case emqx_ds_storage_layer:fast_forward(DBShard, Inner0, Key, Now) of
@@ -570,7 +569,7 @@ scan_stream(DBShard, Stream, TopicFilter, StartMsg, BatchSize) ->
         case Stream of
             #'Stream'{} ->
                 emqx_ds_storage_layer_ttv:scan_stream(
-                    DBShard, Stream, TopicFilter, Now, StartMsg, BatchSize
+                    DBShard, Stream, TopicFilter, infinity, StartMsg, BatchSize
                 );
             _ ->
                 emqx_ds_storage_layer:scan_stream(
@@ -636,7 +635,7 @@ current_timestamp(ShardId) ->
 do_next(DB, Iter0 = #'Iterator'{shard = Shard}, NextLimit) ->
     %% New style DB: "TTV"
     T0 = erlang:monotonic_time(microsecond),
-    {BatchSize, TimeLimit} = batch_size_and_time_limit(DB, Shard, NextLimit),
+    {BatchSize, TimeLimit} = batch_size_and_time_limit(true, DB, Shard, NextLimit),
     Result = emqx_ds_storage_layer_ttv:next(DB, Iter0, BatchSize, TimeLimit),
     T1 = erlang:monotonic_time(microsecond),
     emqx_ds_builtin_metrics:observe_next_time(DB, T1 - T0),
@@ -644,7 +643,7 @@ do_next(DB, Iter0 = #'Iterator'{shard = Shard}, NextLimit) ->
 do_next(DB, Iter0 = #{?tag := ?IT, ?shard := Shard, ?enc := StorageIter0}, NextLimit) ->
     DBShard = {DB, Shard},
     T0 = erlang:monotonic_time(microsecond),
-    {BatchSize, TimeLimit} = batch_size_and_time_limit(DB, Shard, NextLimit),
+    {BatchSize, TimeLimit} = batch_size_and_time_limit(false, DB, Shard, NextLimit),
     Result = emqx_ds_storage_layer:next(
         DBShard, StorageIter0, BatchSize, TimeLimit, false
     ),
@@ -778,12 +777,18 @@ binary_to_iterator(DB, Bin) ->
             end
     end.
 
--spec batch_size_and_time_limit(emqx_ds:db(), shard(), emqx_ds:next_limit()) ->
+-spec batch_size_and_time_limit(
+    _StoreTTV :: boolean(), emqx_ds:db(), shard(), emqx_ds:next_limit()
+) ->
     {pos_integer(), emqx_ds:time()}.
-batch_size_and_time_limit(DB, Shard, BatchSize) when is_integer(BatchSize) ->
+batch_size_and_time_limit(false, DB, Shard, BatchSize) when is_integer(BatchSize) ->
     {BatchSize, current_timestamp({DB, Shard})};
-batch_size_and_time_limit(DB, Shard, {time, BatchSize, MinTS}) ->
-    {BatchSize, min(current_timestamp({DB, Shard}), MinTS)}.
+batch_size_and_time_limit(false, DB, Shard, {time, MaxTS, BatchSize}) ->
+    {BatchSize, min(current_timestamp({DB, Shard}), MaxTS)};
+batch_size_and_time_limit(true, _DB, _Shard, BatchSize) when is_integer(BatchSize) ->
+    {BatchSize, infinity};
+batch_size_and_time_limit(true, _DB, _Shard, {time, MaxTS, BatchSize}) ->
+    {BatchSize, MaxTS}.
 
 %%================================================================================
 %% Internal functions

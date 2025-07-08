@@ -31,12 +31,12 @@
 
 %% Tracepoints:
 -define(tp_init, emqx_durable_timer_init).
--define(tp_open_epoch, emqx_durable_timer_close_epoch).
+-define(tp_open_epoch, emqx_durable_timer_open_epoch).
 -define(tp_close_epoch, emqx_durable_timer_close_epoch).
 -define(tp_heartbeat, emqx_durable_timer_heartbeat).
 -define(tp_missed_heartbeat, emqx_durable_timer_missed_heartbeat).
 -define(tp_new_apply_after, emqx_durable_timer_apply_after).
--define(tp_new_dead_hand, emqx_durable_timer_apply_after).
+-define(tp_new_dead_hand, emqx_durable_timer_dead_hand).
 -define(tp_delete, emqx_durable_timer_delete).
 -define(tp_fire, emqx_durable_timer_fire).
 -define(tp_unknown_event, emqx_durable_timer_unknown_event).

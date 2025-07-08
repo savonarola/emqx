@@ -424,14 +424,16 @@ get_subscription_state(SStateId, Rec) ->
     emqx_persistent_session_ds:id(), emqx_persistent_session_ds_subs:subscription_state_id()
 ) ->
     [emqx_persistent_session_ds_subs:subscription_state()].
-cold_get_subscription_state(_SessionId, _SStateId) ->
-    %% AllData = read_iterate(
-    %%     SessionId,
-    %%     [?subscription_state_domain_bin, '+']
-    %% ),
-    %% Data = [D || #{ext_key := ExtK} = D <- AllData, ExtK =:= SStateId],
-    %% lists:map(fun(#{val := V}) -> V end, Data).
-    [].
+cold_get_subscription_state(SessionId, SStateId) ->
+    AllSubStates = emqx_persistent_session_ds_state_v2:pmap_dirty_read(
+        generation(), ?subscription_states, SessionId
+    ),
+    case AllSubStates of
+        #{SStateId := Val} ->
+            [Val];
+        #{} ->
+            []
+    end.
 
 -spec fold_subscription_states(fun(), Acc, t()) -> Acc.
 fold_subscription_states(Fun, Acc, Rec) ->

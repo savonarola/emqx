@@ -89,7 +89,8 @@ If it fails it may be because the local node itself is isolated.
     type/0,
     key/0,
     value/0,
-    epoch/0
+    epoch/0,
+    delay/0
 ]).
 
 -include_lib("snabbkaffe/include/trace.hrl").

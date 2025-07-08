@@ -139,6 +139,7 @@
 
 -type l() :: #l{}.
 
+-define(DEBUG2, true).
 -ifdef(DEBUG2).
 -include_lib("snabbkaffe/include/trace.hrl").
 -define(dbg(K, A), ?tp(K, A)).

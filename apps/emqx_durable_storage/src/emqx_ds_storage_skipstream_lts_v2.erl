@@ -86,6 +86,7 @@
     trie :: emqx_ds_lts:trie(),
     trie_cf :: rocksdb:cf_handle(),
     ts_bytes :: non_neg_integer(),
+    max_ts :: non_neg_integer(),
     gs :: emqx_ds_gen_skipstream_lts:s(),
     threshold_fun :: emqx_ds_lts:threshold_fun()
 }).
@@ -160,6 +161,7 @@ open(
         trie = Trie,
         gs = GS,
         ts_bytes = TSB,
+        max_ts = 1 bsl (8 * TSB),
         threshold_fun = emqx_ds_lts:threshold_fun(ThresholdSpec)
     }.
 
@@ -193,7 +195,7 @@ cook_blob_writes(S = #s{}, TXID, [{Topic, TS0, Value0} | Rest], Acc) ->
             ok
     end,
     %% Verify that TS fits in the TSB:
-    (TS >= 0 andalso TS < (1 bsl (8 * TSB))) orelse
+    (TS >= 0 andalso TS < S#s.max_ts) orelse
         throw({unrecoverable, {timestamp_is_too_large, TS}}),
     {Static, Varying} = emqx_ds_lts:topic_key(Trie, TFun, Topic),
     Value =
@@ -355,16 +357,20 @@ unpack_iterator(_DBShard, #s{trie = Trie}, ItStaticBin) ->
         {ok, Static, TF}
     end.
 
-next(_DB, _Shard, S, ItStaticBin, ItPos0, BatchSize, _Now, IsCurrent) ->
+next(_DB, _Shard, S, ItStaticBin, ItPos0, BatchSize, Now, IsCurrent) ->
     {Static, CompressedTF} = decode_ext_it_static(ItStaticBin),
-    next_internal(fun next_cb_without_key/6, S, Static, CompressedTF, ItPos0, BatchSize, IsCurrent).
+    next_internal(
+        fun next_cb_without_key/6, S, Static, CompressedTF, ItPos0, BatchSize, Now, IsCurrent
+    ).
 
 scan_stream(
-    _DB, _Shard, S = #s{trie = Trie}, Static, TF, Pos, BatchSize, _Now, IsCurrent
+    _DB, _Shard, S = #s{trie = Trie}, Static, TF, Pos, BatchSize, Now, IsCurrent
 ) ->
     maybe
         {ok, CompressedTF} ?= compress_tf(Trie, Static, TF),
-        next_internal(fun next_cb_with_key/6, S, Static, CompressedTF, Pos, BatchSize, IsCurrent)
+        next_internal(
+            fun next_cb_with_key/6, S, Static, CompressedTF, Pos, BatchSize, Now, IsCurrent
+        )
     end.
 
 lookup(_Shard, #s{trie = Trie, gs = GS, ts_bytes = TSB}, Topic, Time) ->
@@ -412,8 +418,10 @@ make_internal_iterator(
         {ok, StaticIdx, CompressedTF, LastSK}
     end.
 
-next_internal(Fun, #s{gs = GS}, Static, CompressedTF, ItPos0, BatchSize, IsCurrent) ->
-    Interval = {'(', ItPos0, infinity},
+next_internal(
+    Fun, S = #s{gs = GS}, Static, CompressedTF, ItPos0, BatchSize, TimeLimit, IsCurrent
+) ->
+    Interval = {'(', ItPos0, time_limit(S, TimeLimit)},
     case emqx_ds_gen_skipstream_lts:fold(GS, Static, CompressedTF, Interval, BatchSize, [], Fun) of
         {ok, _, []} when not IsCurrent ->
             {ok, end_of_stream};
@@ -472,6 +480,16 @@ decompose_stream_key(TSB, StreamKey) ->
     <<TS:(TSB * 8), VaryingBin/binary>> = StreamKey,
     {ok, Varying} = 'DSMetadataCommon':decode('TopicWords', VaryingBin),
     {Varying, TS}.
+
+time_limit(_, infinity) ->
+    infinity;
+time_limit(#s{ts_bytes = TSB, max_ts = Max}, Limit) when
+    is_integer(Limit), Limit >= 0, Limit < Max
+->
+    %% Create a stream key prefix corresponding to the key:
+    <<Limit:(TSB * 8)>>;
+time_limit(#s{max_ts = Max}, Limit) when is_integer(Limit), Limit > Max ->
+    infinity.
 
 %%%%%%%% Column families %%%%%%%%%%
 

@@ -102,7 +102,7 @@ open(Generation, ClientId, Verify) ->
     },
     Ret = emqx_ds:trans(
         Opts,
-        fun() -> open_tx(Generation, ClientId, Verify) end
+        fun() -> open_tx(ClientId, Verify) end
     ),
     case Ret of
         {atomic, _TXSerial, Result} ->
@@ -167,7 +167,7 @@ commit(
             fun() ->
                 %% Generate a new guard if needed:
                 NewGuard andalso
-                    write_guard(ClientId, ?ds_tx_serial),
+                    tx_write_guard(ClientId, ?ds_tx_serial),
                 case Lifetime of
                     new ->
                         %% Drop the old session state:
@@ -233,7 +233,7 @@ list_sessions(Gen) ->
 
 -spec set_offline_info(
     emqx_ds:generation(),
-    emqx_types:client_id(),
+    emqx_persistent_session_ds:id(),
     term()
 ) ->
     ok.
@@ -349,8 +349,8 @@ subscription_iterator_next(Generation, It0, N) ->
 %% Internal functions
 %%================================================================================
 
-open_tx(Generation, ClientId, Verify) ->
-    case guard(ClientId, Generation) of
+open_tx(ClientId, Verify) ->
+    case tx_guard(ClientId) of
         undefined ->
             undefined;
         Guard ->
@@ -381,15 +381,10 @@ open_tx(Generation, ClientId, Verify) ->
 %% == Operations with the guard ==
 
 %% @doc Read the guard
--spec guard(emqx_persistent_session_ds:id(), emqx_ds:generation()) ->
+-spec tx_guard(emqx_persistent_session_ds:id()) ->
     binary() | undefined.
-guard(ClientId, Generation) ->
-    case
-        emqx_ds:tx_read(
-            #{db => ?DB, generation => Generation},
-            [?top_guard, ClientId]
-        )
-    of
+tx_guard(ClientId) ->
+    case emqx_ds:tx_read([?top_guard, ClientId]) of
         [{_Topic, _TS, Guard}] ->
             Guard;
         [] ->
@@ -405,8 +400,8 @@ tx_assert_guard(ClientId, undefined) ->
 tx_assert_guard(ClientId, Guard) when is_binary(Guard) ->
     emqx_ds:tx_ttv_assert_present([?top_guard, ClientId], 0, Guard).
 
--spec write_guard(emqx_persistent_session_ds:id(), binary() | ?ds_tx_serial) -> ok.
-write_guard(ClientId, Guard) ->
+-spec tx_write_guard(emqx_persistent_session_ds:id(), binary() | ?ds_tx_serial) -> ok.
+tx_write_guard(ClientId, Guard) ->
     emqx_ds:tx_write({[?top_guard, ClientId], 0, Guard}).
 
 -spec tx_delete_guard(emqx_persistent_session_ds:id()) -> ok.

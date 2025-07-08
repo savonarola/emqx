@@ -136,13 +136,16 @@ callback_mode() -> [handle_event_function, state_enter].
 
 init([Type, CBM, Epoch, Shard, active]) ->
     process_flag(trap_exit, true),
+    logger:update_process_metadata(
+        #{worker_type => active, epoch => Epoch, shard => Shard}
+    ),
     S = #s{
         type = Type,
         cbm = CBM,
         epoch = Epoch,
         shard = Shard,
         pending_tab = addq_new(),
-        replay_pos = 0
+        replay_pos = undefined
     },
     {ok, ?s_active, S}.
 
@@ -183,7 +186,7 @@ replay_active(S, Treached) ->
             ?tp(warning, ?tp_replay_failed, #{
                 from => S#s.replay_pos, to => It1, reason => Reason
             }),
-            timer:send_after(
+            erlang:send_after(
                 emqx_durable_timer:cfg_replay_retry_interval(),
                 self(),
                 #cast_wake_up{t = S#s.next_wakeup}
@@ -196,8 +199,10 @@ do_replay_active(S = #s{type = Type, cbm = CBM}, It0, Bound) ->
     case emqx_ds:next(?DB_GLOB, It0, {time, Bound, BS}) of
         {ok, It, Batch} ->
             lists:foreach(
-                fun({[_Root, _Type, _Epoch, Key], _T, Val}) ->
-                    handle_timeout(Type, CBM, Key, Val)
+                fun({[_Root, _Type, _Epoch, Key], Time, Val}) ->
+                    %% %% Assert:
+                    %% _ = Time < Bound orelse error({Time, '<', Bound}),
+                    handle_timeout(Type, CBM, Time, Key, Val)
                 end,
                 Batch
             ),
@@ -343,10 +348,14 @@ handle_add_timer(Time, From, S) ->
     {keep_state, S#s{next_wakeup = Time}, {reply, From, ok}}.
 
 -spec handle_timeout(
-    emqx_durable_timer:type(), module(), emqx_durable_timer:key(), emqx_durable_timer:value()
+    emqx_durable_timer:type(),
+    module(),
+    integer(),
+    emqx_durable_timer:key(),
+    emqx_durable_timer:value()
 ) -> ok.
-handle_timeout(Type, CBM, Key, Value) ->
-    ?tp(debug, ?tp_fire, #{type => Type, key => Key, val => Value}),
+handle_timeout(Type, CBM, Time, Key, Value) ->
+    ?tp(debug, ?tp_fire, #{type => Type, key => Key, val => Value, t => Time}),
     try
         CBM:handle_durable_timeout(Key, Value),
         ok
@@ -384,6 +393,7 @@ addq_push(Ref, Time, From, Tab) ->
 addq_first(Tab) ->
     case ets:first(Tab) of
         {{Time, _Ref}} ->
+            ?tp(foo, #{fst => Time, ref => _Ref}),
             Time;
         '$end_of_table' ->
             undefined

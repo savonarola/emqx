@@ -1019,7 +1019,7 @@ do_next_v1(DB, Shard, Iter, NextLimit) ->
     ?IF_SHARD_READY(
         DBShard,
         begin
-            {BatchSize, TimeLimit} = batch_size_and_time_limit(DB, Shard, NextLimit),
+            {BatchSize, TimeLimit} = batch_size_and_time_limit(false, DB, Shard, NextLimit),
             emqx_ds_storage_layer:next(DBShard, Iter, BatchSize, TimeLimit, true)
         end
     ).
@@ -1036,7 +1036,7 @@ do_next_v2(DB, Shard, Iter, NextLimit) ->
     ?IF_SHARD_READY(
         DBShard,
         begin
-            {BatchSize, TimeLimit} = batch_size_and_time_limit(DB, Shard, NextLimit),
+            {BatchSize, TimeLimit} = batch_size_and_time_limit(false, DB, Shard, NextLimit),
             emqx_ds_storage_layer:next(DBShard, Iter, BatchSize, TimeLimit, false)
         end
     ).
@@ -1051,7 +1051,7 @@ do_next_ttv(DB, Iter = #'Iterator'{shard = Shard}, NextLimit) ->
     ?IF_SHARD_READY(
         {DB, Shard},
         begin
-            {BatchSize, TimeLimit} = batch_size_and_time_limit(DB, Shard, NextLimit),
+            {BatchSize, TimeLimit} = batch_size_and_time_limit(true, DB, Shard, NextLimit),
             emqx_ds_storage_layer_ttv:next(DB, Iter, BatchSize, TimeLimit)
         end
     ).
@@ -1107,7 +1107,7 @@ do_get_delete_streams_v4(DB, Shard, TopicFilter, StartTime) ->
     [{emqx_ds_beamformer:return_addr(_), emqx_ds_storage_layer:iterator()}],
     emqx_ds:poll_opts()
 ) ->
-    ok.
+    _.
 do_poll_v1(_SourceNode, _DB, _Shard, _Iterators, _PollOpts) ->
     ?err_rec(obsolete_client_api).
 
@@ -1226,15 +1226,13 @@ ra_get_streams(DB, Shard, TopicFilter, Time, MinGeneration) ->
         end
     ).
 
-polyfill_filter_streams(MinGeneration, L) when is_list(L) ->
+polyfill_filter_streams(MinGeneration, L) ->
     lists:filter(
         fun({G, _}) ->
             G >= MinGeneration
         end,
         L
-    );
-polyfill_filter_streams(_, Other) ->
-    Other.
+    ).
 
 ra_get_delete_streams(DB, Shard, TopicFilter, Time) ->
     ?SHARD_RPC(
@@ -1798,12 +1796,12 @@ high_watermark(DBShard = {DB, Shard}, Stream) ->
             emqx_ds_storage_layer:high_watermark(DBShard, Stream, Now)
     end.
 
-fast_forward(DBShard = {DB, Shard}, It = #'Iterator'{}, Key) ->
+fast_forward(DBShard, It = #'Iterator'{}, Key) ->
     ?IF_SHARD_READY(
         DBShard,
         begin
-            Now = current_timestamp(DB, Shard),
-            emqx_ds_storage_layer_ttv:fast_forward(DBShard, It, Key, Now)
+            %% Now = current_timestamp(DB, Shard),
+            emqx_ds_storage_layer_ttv:fast_forward(DBShard, It, Key)
         end
     );
 fast_forward(DBShard = {DB, Shard}, It = #{?tag := ?IT, ?shard := Shard, ?enc := Inner0}, Key) ->
@@ -1840,7 +1838,7 @@ scan_stream(DBShard = {DB, Shard}, Stream, TopicFilter, StartMsg, BatchSize) ->
             case Stream of
                 #'Stream'{} ->
                     emqx_ds_storage_layer_ttv:scan_stream(
-                        DBShard, Stream, TopicFilter, Now, StartMsg, BatchSize
+                        DBShard, Stream, TopicFilter, infinity, StartMsg, BatchSize
                     );
                 _ ->
                     emqx_ds_storage_layer:scan_stream(
@@ -1969,12 +1967,18 @@ proto_vsn(API, Node) ->
         N when is_integer(N) -> N
     end.
 
--spec batch_size_and_time_limit(emqx_ds:db(), shard_id(), emqx_ds:next_limit()) ->
+-spec batch_size_and_time_limit(
+    _StoreTTV :: boolean(), emqx_ds:db(), shard_id(), emqx_ds:next_limit()
+) ->
     {pos_integer(), emqx_ds:time()}.
-batch_size_and_time_limit(DB, Shard, BatchSize) when is_integer(BatchSize) ->
+batch_size_and_time_limit(false, DB, Shard, BatchSize) when is_integer(BatchSize) ->
     {BatchSize, current_timestamp(DB, Shard)};
-batch_size_and_time_limit(DB, Shard, {time, BatchSize, MinTS}) ->
-    {BatchSize, min(current_timestamp(DB, Shard), MinTS)}.
+batch_size_and_time_limit(false, DB, Shard, {time, MaxTS, BatchSize}) ->
+    {BatchSize, min(current_timestamp(DB, Shard), MaxTS)};
+batch_size_and_time_limit(true, _DB, _Shard, BatchSize) when is_integer(BatchSize) ->
+    {BatchSize, infinity};
+batch_size_and_time_limit(true, _DB, _Shard, {time, MaxTS, BatchSize}) ->
+    {BatchSize, MaxTS}.
 
 -ifdef(TEST).
 

@@ -1909,8 +1909,11 @@ t_24_tx_side_effects(Config) ->
             {async, Ref1, _} = emqx_ds:trans(
                 TxOpts#{sync => false},
                 fun() ->
+                    %% Add multiple side effects to verify that they are executed in order:
                     SideEffect(4, true),
-                    emqx_ds:tx_write({[], 0, <<>>})
+                    SideEffect(5, true),
+                    emqx_ds:tx_write({[], 0, <<>>}),
+                    SideEffect(6, true)
                 end
             ),
             receive
@@ -1922,7 +1925,7 @@ t_24_tx_side_effects(Config) ->
             {async, Ref2, _} = emqx_ds:trans(
                 TxOpts#{sync => false},
                 fun() ->
-                    SideEffect(5, false),
+                    SideEffect(7, false),
                     emqx_ds:tx_ttv_assert_absent([], 0)
                 end
             ),
@@ -1934,11 +1937,129 @@ t_24_tx_side_effects(Config) ->
         end,
         fun(_, Trace) ->
             ?assertMatch(
-                [1, 3, 4],
+                [1, 3, 4, 5, 6],
                 ?projection(id, ?of_kind(test_side_effect, Trace)),
                 "Sequence of IDs of the expected side effects"
             )
         end
+    ).
+
+t_25_get_streams_generation_min(Config) ->
+    %% Get generations from the list of streams:
+    Generations = fun(L) ->
+        lists:usort([G || {{_Shard, G}, _Stream} <- L])
+    end,
+    %%
+    DB = ?FUNCTION_NAME,
+    ?assertMatch(ok, emqx_ds_open_db(DB, opts(Config))),
+    %% Make streams in the 1st generation:
+    _ = publish_seq(DB, <<>>, 0, 100),
+    ct:sleep(100),
+    {Streams1, []} = emqx_ds:get_streams(DB, ['#'], 0, #{}),
+    ?assertMatch([1], Generations(Streams1)),
+    %% Add a generation and write more data:
+    ?assertMatch(ok, emqx_ds:add_generation(DB)),
+    _ = publish_seq(DB, <<>>, 0, 100),
+    ct:sleep(100),
+    %% Verify that now we have streams in both generations:
+    {Streams2, []} = emqx_ds:get_streams(DB, ['#'], 0, #{}),
+    ?assertMatch([1, 2], Generations(Streams2)),
+    %% But the first generation is ignored when we apply the filter:
+    {Streams3, []} = emqx_ds:get_streams(DB, ['#'], 0, #{generation_min => 2}),
+    ?assertMatch([2], Generations(Streams3)).
+
+t_26_ttv_next_with_upper_time_limit(Config) ->
+    DB = ?FUNCTION_NAME,
+    Opts = maps:merge(opts(Config), #{
+        store_ttv => true,
+        storage => {emqx_ds_storage_skipstream_lts_v2, #{timestamp_bytes => 8}}
+    }),
+    ?check_trace(
+        begin
+            Topic = [<<1>>, <<1>>],
+            ?assertMatch(ok, emqx_ds_open_db(DB, Opts)),
+            TMax = 1 bsl 64 - 1,
+            %% 1. Insert data:
+            ?assertMatch(
+                {atomic, _, _},
+                emqx_ds:trans(
+                    #{db => DB, shard => {auto, <<>>}, generation => 1},
+                    fun() ->
+                        emqx_ds:tx_write({Topic, 0, <<0>>}),
+                        emqx_ds:tx_write({Topic, 1, <<1>>}),
+                        emqx_ds:tx_write({Topic, 2, <<2>>}),
+                        emqx_ds:tx_write({Topic, 3, <<3>>}),
+                        emqx_ds:tx_write({Topic, 4, <<4>>}),
+                        emqx_ds:tx_write({Topic, TMax, <<5>>})
+                    end
+                )
+            ),
+            ct:sleep(100),
+            %% 2. Create iterators:
+            {[{_, Stream}], []} = emqx_ds:get_streams(DB, Topic, 0, #{}),
+            {ok, It1} = emqx_ds:make_iterator(DB, Stream, Topic, 0),
+            %% 3. Read data without time limit. Note: TTV DBs don't
+            %% limit the scans to the local timestamp by default.
+            ?defer_assert(
+                ?assertMatch(
+                    {ok, _, [
+                        {Topic, 0, <<0>>},
+                        {Topic, 1, <<1>>},
+                        {Topic, 2, <<2>>},
+                        {Topic, 3, <<3>>},
+                        {Topic, 4, <<4>>},
+                        {Topic, TMax, <<5>>}
+                    ]},
+                    emqx_ds:next(DB, It1, 100)
+                )
+            ),
+            %% 4. Read data with limit:
+            ?defer_assert(
+                ?assertMatch(
+                    {ok, _, []},
+                    emqx_ds:next(DB, It1, {time, 0, 100})
+                )
+            ),
+            ?defer_assert(
+                ?assertMatch(
+                    {ok, _, [{Topic, 0, <<0>>}]},
+                    emqx_ds:next(DB, It1, {time, 1, 100})
+                )
+            ),
+            ?defer_assert(
+                ?assertMatch(
+                    {ok, _, [{Topic, 0, <<0>>}, {Topic, 1, <<1>>}]},
+                    emqx_ds:next(DB, It1, {time, 2, 100})
+                )
+            ),
+            ?defer_assert(
+                ?assertMatch(
+                    {ok, _, [{Topic, 0, <<0>>}, {Topic, 1, <<1>>}, {Topic, 2, <<2>>}]},
+                    emqx_ds:next(DB, It1, {time, 3, 100})
+                )
+            ),
+            ?defer_assert(
+                ?assertMatch(
+                    {ok, _, [
+                        {Topic, 0, <<0>>}, {Topic, 1, <<1>>}, {Topic, 2, <<2>>}, {Topic, 3, <<3>>}
+                    ]},
+                    emqx_ds:next(DB, It1, {time, 4, 100})
+                )
+            ),
+            ?defer_assert(
+                ?assertMatch(
+                    {ok, _, [
+                        {Topic, 0, <<0>>},
+                        {Topic, 1, <<1>>},
+                        {Topic, 2, <<2>>},
+                        {Topic, 3, <<3>>},
+                        {Topic, 4, <<4>>}
+                    ]},
+                    emqx_ds:next(DB, It1, {time, 5, 100})
+                )
+            )
+        end,
+        []
     ).
 
 message(ClientId, Topic, Payload, PublishedAt) ->
