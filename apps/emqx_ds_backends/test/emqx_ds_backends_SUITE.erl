@@ -2062,6 +2062,128 @@ t_26_ttv_next_with_upper_time_limit(Config) ->
         []
     ).
 
+t_27_tx_read_conflicts(Config) ->
+    DB = ?FUNCTION_NAME,
+    Opts = maps:merge(opts(Config), #{
+        store_ttv => true,
+        storage => {emqx_ds_storage_skipstream_lts_v2, #{}}
+    }),
+    TXOpts = #{shard => {auto, <<"me">>}, generation => 1, timeout => infinity},
+    %% Record that should not be present in the DB:
+    Canary = [{[<<"canary">>], 0, <<>>}],
+    CheckCanary = fun() ->
+        ?assertMatch([], emqx_ds:dirty_read(DB, [<<"canary">>]))
+    end,
+    %% Helper function that create a pair of transactions
+    %% (simultaneously), commits the first one, and then tries to
+    %% commit the second one.
+    Par = fun(Ops1, Ops2) ->
+        %% 1. Create context for two transactions:
+        {ok, Tx1} = emqx_ds:new_kv_tx(DB, TXOpts),
+        {ok, Tx2} = emqx_ds:new_kv_tx(DB, TXOpts),
+        %% 2. Commit the first one:
+        ?assertMatch(
+            {ok, _},
+            do_commit_tx(DB, Tx1, Ops1)
+        ),
+        %% 3. Try to commit the second one and return the result:
+        do_commit_tx(DB, Tx2, Ops2)
+    end,
+    %% Wrappers:
+    Ok = fun(Ops1, Ops2) ->
+        ?assertMatch({ok, _}, Par(Ops1, Ops2))
+    end,
+    Conflict = fun(Ops1, Ops2) ->
+        ?assertMatch(
+            ?err_rec({read_conflict, _}),
+            Par(
+                Ops1,
+                Ops2#{?ds_tx_write => Canary}
+            )
+        ),
+        CheckCanary()
+    end,
+    ?check_trace(
+        begin
+            ?assertMatch(ok, emqx_ds_open_db(DB, Opts)),
+            %% Create data:
+            Ok(
+                #{
+                    ?ds_tx_write => [
+                        {Topic, Time, <<Time:32>>}
+                     || Topic <- [[<<1>>], [<<1>>, <<2>>]],
+                        Time <- lists:seq(0, 100)
+                    ]
+                },
+                #{?ds_tx_read => [[<<>>]]}
+            ),
+            %% Writes:
+            %%   Read the same topic as was updated:
+            Conflict(
+                #{?ds_tx_write => [{[<<>>], 0, <<>>}]},
+                #{?ds_tx_read => [[<<>>]]}
+            ),
+            %%   Read the topic with '+' wildcard:
+            Conflict(
+                #{?ds_tx_write => [{[<<1>>, <<2>>], 0, <<>>}]},
+                #{?ds_tx_read => [[<<1>>, '+']]}
+            ),
+            Ok(
+                #{?ds_tx_write => [{[<<1>>, <<2>>], 0, <<>>}]},
+                #{?ds_tx_read => [[<<2>>, '+']]}
+            ),
+            Conflict(
+                #{?ds_tx_write => [{[<<2>>, <<2>>], 0, <<>>}]},
+                #{?ds_tx_read => [['+', <<2>>]]}
+            ),
+            %%   Read the topic with '#' wildcard:
+            Conflict(
+                #{?ds_tx_write => [{[<<1>>, <<2>>], 0, <<>>}]},
+                #{?ds_tx_read => [['#']]}
+            ),
+            Ok(
+                #{?ds_tx_write => [{[<<2>>, <<2>>], 0, <<>>}]},
+                #{?ds_tx_read => [[<<1>>, '#']]}
+            ),
+            %% Topic deletions:
+            Conflict(
+                #{?ds_tx_delete_topic => [[<<"foo">>]]},
+                #{?ds_tx_read => [[<<"foo">>]]}
+            ),
+            Ok(
+                #{?ds_tx_delete_topic => [[<<"foo">>, <<1>>]]},
+                #{?ds_tx_read => [[<<"foo">>]]}
+            ),
+            Conflict(
+                #{?ds_tx_delete_topic => [[<<"foo">>, <<1>>]]},
+                #{?ds_tx_read => [[<<"foo">>, '+']]}
+            ),
+            Conflict(
+                #{?ds_tx_delete_topic => [[<<"foo">>, <<1>>]]},
+                #{?ds_tx_read => [['#']]}
+            ),
+            %% Range deletions:
+            [{_, Stream1}] = emqx_ds:get_streams(DB, [<<1>>, <<2>>], 0),
+            [{_, Stream2}] = emqx_ds:get_streams(DB, [<<>>], 0),
+            %%   Different streams:
+            Ok(
+                #{?ds_tx_delete_stream_range => [{Stream2, 0, 10}]},
+                #{?ds_tx_read => [{Stream1, 1, 20}]}
+            ),
+            %%   Different time range:
+            Ok(
+                #{?ds_tx_delete_stream_range => [{Stream1, 0, 10}]},
+                #{?ds_tx_read => [{Stream1, 11, 20}]}
+            ),
+            %% Overlap:
+            Conflict(
+                #{?ds_tx_delete_stream_range => [{Stream1, 0, 10}]},
+                #{?ds_tx_read => [{Stream1, 1, 20}]}
+            )
+        end,
+        []
+    ).
+
 message(ClientId, Topic, Payload, PublishedAt) ->
     Msg = message(Topic, Payload, PublishedAt),
     Msg#message{from = ClientId}.

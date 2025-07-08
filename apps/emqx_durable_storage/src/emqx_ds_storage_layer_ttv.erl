@@ -100,8 +100,12 @@
     emqx_ds_storage_layer:dbshard(),
     emqx_ds_storage_layer:generation_data(),
     emqx_ds:tx_serial(),
-    emqx_ds:tx_ops(),
-    emqx_ds_storage_layer:batch_prepare_opts()
+    emqx_ds_storage_layer:batch_prepare_opts(),
+    _TxWrites :: [
+        {emqx_ds:topic(), emqx_ds:time() | ?ds_tx_ts_monotonic, binary() | ?ds_tx_serial}
+    ],
+    _TxDeletTopics :: [emqx_ds:topic_filter()],
+    _TxDeleteStreamRanges :: [emqx_ds:stream_range()]
 ) ->
     {ok, cooked_tx()} | emqx_ds:error(_).
 
@@ -218,7 +222,17 @@ prepare_tx(DBShard, GenId, TXSerial, Tx, Options) ->
     case emqx_ds_storage_layer:generation_get(DBShard, GenId) of
         #{module := Mod, data := GenData} ->
             T0 = erlang:monotonic_time(microsecond),
-            Result = Mod:prepare_tx(DBShard, GenData, TXSerial, Tx, Options),
+            Writes = maps:get(?ds_tx_write, Tx, []),
+            DeleteTopics = maps:get(?ds_tx_delete_topic, Tx, []),
+            DeleteStreamRanges = lists:map(
+                fun({#'Stream'{inner = Inner}, From, To}) ->
+                    {Inner, From, To}
+                end,
+                maps:get(?ds_tx_delete_stream_range, Tx, [])
+            ),
+            Result = Mod:prepare_tx(
+                DBShard, GenData, TXSerial, Options, Writes, DeleteTopics, DeleteStreamRanges
+            ),
             T1 = erlang:monotonic_time(microsecond),
             %% TODO store->prepare
             emqx_ds_builtin_metrics:observe_store_batch_time(DBShard, T1 - T0),
@@ -369,7 +383,7 @@ update_iterator(_, It = #'Iterator'{}, Pos) ->
     emqx_ds_beamformer:dbshard(),
     stream(),
     emqx_ds_beamformer:event_topic_filter(),
-    emqx_ds:time(),
+    emqx_ds:time() | infinity,
     it_pos(),
     non_neg_integer()
 ) ->

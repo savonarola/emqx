@@ -63,6 +63,7 @@ It takes care of forwarding calls to the underlying DBMS.
     %% Key-value functions:
     tx_write/1,
     tx_del_topic/1,
+    tx_del_stream_range/3,
     tx_ttv_assert_present/3,
     tx_ttv_assert_absent/2,
     tx_on_success/1
@@ -113,6 +114,7 @@ It takes care of forwarding calls to the underlying DBMS.
     next_limit/0,
     next_result/1, next_result/0,
     delete_next_result/1, delete_next_result/0,
+    stream_range/0,
     store_batch_result/0,
     make_iterator_result/1, make_iterator_result/0,
     make_delete_iterator_result/1, make_delete_iterator_result/0,
@@ -271,6 +273,8 @@ Options for limiting the number of streams.
 
 -type delete_next_result() :: delete_next_result(delete_iterator()).
 
+-type stream_range() :: {stream(), time(), time()}.
+
 -type error(Reason) :: {error, recoverable | unrecoverable, Reason}.
 
 -doc """
@@ -410,8 +414,9 @@ Options for the `subscribe` API.
     ?ds_tx_write => [{topic(), time() | ?ds_tx_ts_monotonic, binary() | ?ds_tx_serial}],
     %% Deletions:
     ?ds_tx_delete_topic => [topic_filter()],
+    ?ds_tx_delete_stream_range => [stream_range()],
     %% Checked reads:
-    ?ds_tx_read => [topic_filter()],
+    ?ds_tx_read => [topic_filter() | stream_range()],
     %% Preconditions:
     %%   List of objects that should be present in the database.
     ?ds_tx_expected => [{topic(), time(), binary() | '_'}],
@@ -866,9 +871,10 @@ unsubscribe(DB, SubRef) ->
 
 -doc """
 
-Acknowledge processing of a message with a given sequence number. This
-way client can signal to DS that it is ready to process more data.
-Subscriptions that do not keep up with the acks are paused.
+Acknowledge processing of payloads received via subscription `SubRef`
+up to sequence number `SeqNo`. This way client can signal to DS that
+it is ready to process more data. Subscriptions that do not keep up
+with the acks are paused.
 
 """.
 -doc #{title => <<"Subscriptions">>, since => <<"5.9.0">>}.
@@ -966,6 +972,7 @@ tx_commit_outcome(DB, Ref, ?ds_tx_commit_reply(Ref, Reply)) ->
 -define(tx_ops_write, emqx_ds_tx_ctx_write).
 -define(tx_ops_read, emqx_ds_tx_ctx_read).
 -define(tx_ops_del_topic, emqx_ds_tx_ctx_del_topic).
+-define(tx_ops_del_stream_range, emqx_ds_tx_ctx_del_stream_range).
 -define(tx_ops_assert_present, emqx_ds_tx_ctx_assert_present).
 -define(tx_ops_assert_absent, emqx_ds_tx_ctx_assert_absent).
 -define(tx_ops_side_effect, emqx_ds_tx_ctx_side_effect).
@@ -984,6 +991,8 @@ When transaction commits, its side effects may be applied in an
 order different from their execution in the transaction fun.
 
 The following is guaranteed, though:
+
+0. Formally, reads and folds happen first.
 
 1. Preconditions are checked first
 
@@ -1148,6 +1157,17 @@ tx_del_topic(TopicFilter) ->
         false ->
             error(badarg)
     end.
+
+-doc """
+
+Schedule a transactional deletion of all values stored in a stream
+`Stream` that have time in the range `From` .. `To` (inclusive).
+
+""".
+-doc #{title => <<"Transactions">>, since => <<"6.0.0">>}.
+-spec tx_del_stream_range(stream(), time(), time()) -> ok.
+tx_del_stream_range(Stream, From, To) when is_integer(From), is_integer(To), From > 0, To >= From ->
+    tx_push_op(?tx_ops_del_stream_range, {Stream, From, To}).
 
 -doc """
 
@@ -1504,11 +1524,51 @@ tx_fold_topic(Fun, Acc, TopicFilter, UserOpts) ->
     case tx_ctx() of
         #kv_tx_ctx{shard = Shard, generation = Generation} ->
             Opts = UserOpts#{db => tx_ctx_db(), shard => Shard, generation => Generation},
-            tx_push_op(?tx_ops_read, TopicFilter),
-            fold_topic(Fun, Acc, TopicFilter, Opts);
+            tx_reads_push_topic_filter(TopicFilter),
+            fold_topic(tx_fold_wrapper(Fun), Acc, TopicFilter, Opts);
         undefined ->
             error(not_a_transaction)
     end.
+
+tx_fold_wrapper(Fun) ->
+    fun(Slab, Stream, Payload = {_Topic, Timestamp, _}, Acc) ->
+        tx_reads_push_stream_ts(Stream, Timestamp),
+        Fun(Slab, Stream, Payload, Acc)
+    end.
+
+tx_reads_pop() ->
+    Map = erase(?tx_ops_read),
+    maps:fold(
+        fun
+            ({s, Stream}, {From, To}, Acc) ->
+                Acc;
+            ({t, TopicFilter}, _, Acc) ->
+                [TopicFilter | Acc]
+        end,
+        [],
+        Map
+    ).
+
+tx_reads_push_topic_filter(TopicFilter) ->
+    Map = get(?tx_ops_read),
+    put(?tx_ops_read, Map#{{t, TopicFilter} => true}).
+
+tx_reads_push_stream_ts(Stream, Timestamp) ->
+    Map = get(?tx_ops_read),
+    put(
+        ?tx_ops_read,
+        maps:update_with(
+            {s, Stream},
+            fun({From, To}) ->
+                {
+                    min(From, Timestamp),
+                    max(To, Timestamp)
+                }
+            end,
+            {Timestamp, Timestamp},
+            Map
+        )
+    ).
 
 -doc #{
     title => <<"Transactions">>,
@@ -1606,16 +1666,18 @@ trans_inner(DB, Fun, Opts) ->
                 _ = put(?tx_ctx_db, DB),
                 _ = put(?tx_ctx, Ctx),
                 _ = put(?tx_ops_write, []),
-                _ = put(?tx_ops_read, []),
+                _ = put(?tx_ops_read, #{}),
                 _ = put(?tx_ops_del_topic, []),
+                _ = put(?tx_ops_del_stream_range, []),
                 _ = put(?tx_ops_assert_present, []),
                 _ = put(?tx_ops_assert_absent, []),
                 _ = put(?tx_ops_side_effect, []),
                 Ret = Fun(),
                 Tx = #{
                     ?ds_tx_write => lists:reverse(erase(?tx_ops_write)),
-                    ?ds_tx_read => erase(?tx_ops_read),
+                    ?ds_tx_read => tx_reads_pop(),
                     ?ds_tx_delete_topic => erase(?tx_ops_del_topic),
+                    ?ds_tx_delete_stream_range => erase(?tx_ops_del_stream_range),
                     ?ds_tx_expected => erase(?tx_ops_assert_present),
                     ?ds_tx_unexpected => erase(?tx_ops_assert_absent)
                 },
@@ -1624,6 +1686,7 @@ trans_inner(DB, Fun, Opts) ->
                         ?ds_tx_write := [],
                         ?ds_tx_read := [],
                         ?ds_tx_delete_topic := [],
+                        ?ds_tx_delete_stream_range := [],
                         ?ds_tx_expected := [],
                         ?ds_tx_unexpected := []
                     } ->
@@ -1647,6 +1710,7 @@ trans_inner(DB, Fun, Opts) ->
         _ = erase(?tx_ops_write),
         _ = erase(?tx_ops_read),
         _ = erase(?tx_ops_del_topic),
+        _ = erase(?tx_ops_del_stream_range),
         _ = erase(?tx_ops_assert_present),
         _ = erase(?tx_ops_assert_absent),
         _ = erase(?tx_ops_side_effect)

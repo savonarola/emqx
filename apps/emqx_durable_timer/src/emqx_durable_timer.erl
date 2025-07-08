@@ -62,7 +62,7 @@ If it fails it may be because the local node itself is isolated.
 -behavior(gen_statem).
 
 %% API:
--export([start_link/0, register_type/1, dead_hand/4, apply_after/4, delete/2]).
+-export([start_link/0, register_type/1, dead_hand/4, apply_after/4, cancel/2]).
 
 -ifdef(TEST).
 -export([drop_tables/0]).
@@ -207,8 +207,8 @@ apply_after(Type, Key, Value, Delay) when
     %% This function may crash. Add a retry mechanism?
     emqx_durable_timer_worker:apply_after(Type, Epoch, Key, Value, NotEarlierThan).
 
--spec delete(type(), key()) -> ok | emqx_ds:error(_).
-delete(Type, Key) when Type >= 0, Type =< ?max_type, is_binary(Key) ->
+-spec cancel(type(), key()) -> ok | emqx_ds:error(_).
+cancel(Type, Key) when Type >= 0, Type =< ?max_type, is_binary(Key) ->
     ?tp(debug, ?tp_delete, #{type => Type, key => Key}),
     Epoch = epoch(),
     emqx_durable_timer_worker:cancel(Type, Epoch, Key).

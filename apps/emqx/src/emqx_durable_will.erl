@@ -54,7 +54,7 @@ Side effects:
 ) ->
     ok | emqx_ds:error(_).
 on_connect(ClientId, _ClientInfo, undefined, _WillDelay) ->
-    emqx_durable_timer:delete(durable_timer_type(), ClientId);
+    emqx_durable_timer:cancel(durable_timer_type(), ClientId);
 on_connect(ClientId, _ClientInfo, Msg = #message{}, WillDelay) when is_integer(WillDelay) ->
     %% FIXME: check authorization
     MsgBin = emqx_ds_msg_serializer:serialize(asn1, Msg),
@@ -79,7 +79,7 @@ delete(_ClientId) ->
 %% behavior callbacks
 %%================================================================================
 
-durable_timer_type() -> 16#1111_0000.
+durable_timer_type() -> 16#3ABE_0000.
 
 timer_introduced_in() -> "6.0.0.".
 

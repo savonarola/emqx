@@ -30,6 +30,7 @@ A process that is responsible for execution of the timers.
 
 -export_type([type/0]).
 
+-include_lib("stdlib/include/assert.hrl").
 -include_lib("emqx_durable_storage/include/emqx_ds.hrl").
 -include("internals.hrl").
 
@@ -129,6 +130,7 @@ cancel(Type, _Epoch, Key) ->
     pending_tab :: ets:tid(),
     %% Iterator pointing at the beginning of un-replayed timers:
     replay_pos :: emqx_ds:iterator() | undefined,
+    fully_replayed_ts = 0 :: integer(),
     next_wakeup = -1 :: integer()
 }).
 
@@ -174,46 +176,58 @@ terminate(_Reason, _State, _D) ->
 %% Internal functions
 %%================================================================================
 
-replay_active(S, Treached) ->
-    Bound = active_replay_bound(S, Treached),
-    ?tp_ignore_side_effects_in_prod(?tp_replay_start, #{start => S#s.replay_pos, bound => Bound}),
-    maybe
-        {ok, It0} ?= get_iterator(?s_active, S),
-        {ok, It} ?= do_replay_active(S, It0, Bound),
-        {keep_state, S#s{replay_pos = It}}
-    else
-        {retry, It1, Reason} ->
-            ?tp(warning, ?tp_replay_failed, #{
-                from => S#s.replay_pos, to => It1, reason => Reason
-            }),
-            erlang:send_after(
-                emqx_durable_timer:cfg_replay_retry_interval(),
-                self(),
-                #cast_wake_up{t = S#s.next_wakeup}
-            ),
-            {keep_state, S#s{replay_pos = It1}}
-    end.
+replay_active(S = #s{fully_replayed_ts = FullyReplayedTS0}, Treached) ->
+    Bound = active_replay_bound(S, Treached + 1),
+    ?tp_span(
+        ?tp_active_replay,
+        #{s => S, bound => Bound, fully_replayed_ts => FullyReplayedTS0},
+        maybe
+            {ok, It0} ?= get_iterator(?s_active, S),
+            {ok, FullyReplayedTS, It} ?= do_replay_active(S, It0, Bound, FullyReplayedTS0),
+            {keep_state, S#s{replay_pos = It, fully_replayed_ts = FullyReplayedTS}}
+        else
+            {retry, FullyReplayedTS1, It1, Reason} ->
+                ?tp(warning, ?tp_replay_failed, #{
+                    from => S#s.replay_pos, to => It1, reason => Reason
+                }),
+                erlang:send_after(
+                    emqx_durable_timer:cfg_replay_retry_interval(),
+                    self(),
+                    #cast_wake_up{t = S#s.next_wakeup}
+                ),
+                {keep_state, S#s{replay_pos = It1, fully_replayed_ts = FullyReplayedTS1}}
+        end
+    ).
 
-do_replay_active(S = #s{type = Type, cbm = CBM}, It0, Bound) ->
+do_replay_active(S, It0, Bound, FullyReplayedTS0) ->
     BS = 100,
     case emqx_ds:next(?DB_GLOB, It0, {time, Bound, BS}) of
         {ok, It, Batch} ->
-            lists:foreach(
-                fun({[_Root, _Type, _Epoch, Key], Time, Val}) ->
-                    %% %% Assert:
-                    %% _ = Time < Bound orelse error({Time, '<', Bound}),
-                    handle_timeout(Type, CBM, Time, Key, Val)
-                end,
-                Batch
-            ),
-            case length(Batch) =:= BS of
+            {FullyReplayedTS, Nreplayed, []} =
+                apply_timers_from_batch(S, Bound, FullyReplayedTS0, Batch),
+            %% Have we reached the end?
+            case Nreplayed < BS of
                 true ->
-                    do_replay_active(S, It, Bound);
+                    {ok, FullyReplayedTS, It};
                 false ->
-                    {ok, It}
+                    do_replay_active(S, It, Bound, FullyReplayedTS)
             end;
         ?err_rec(Reason) ->
-            {retry, It0, Reason}
+            {retry, FullyReplayedTS0, It0, Reason}
+    end.
+
+apply_timers_from_batch(S, Bound, FullyReplayedTS, L) ->
+    apply_timers_from_batch(S, Bound, FullyReplayedTS, L, 0).
+
+apply_timers_from_batch(S = #s{type = Type, cbm = CBM}, Bound, FullyReplayedTS, L, N) ->
+    case L of
+        [] ->
+            {FullyReplayedTS, N, []};
+        [{_Topic, Time, _Key} | _] when Time >= Bound ->
+            {FullyReplayedTS, N, L};
+        [{[_Root, _Type, _Epoch, Key], Time, Val} | Rest] ->
+            handle_timeout(Type, CBM, Time, Key, Val),
+            apply_timers_from_batch(S, Bound, Time, Rest, N + 1)
     end.
 
 -doc """
@@ -233,7 +247,7 @@ get_iterator(State, #s{replay_pos = undefined, shard = Shard, type = Type, epoch
         {ok, It} ?= emqx_ds:make_iterator(?DB_GLOB, Stream, TopicFilter, 0)
     else
         Reason ->
-            {retry, undefined, Reason}
+            {retry, #s.fully_replayed_ts, undefined, Reason}
     end;
 get_iterator(_State, #s{replay_pos = ReplayPos}) ->
     %% Iterator already exists:

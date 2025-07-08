@@ -18,7 +18,7 @@
     create/6,
     open/5,
     drop/5,
-    prepare_tx/5,
+    prepare_tx/7,
     commit_batch/4,
     get_streams/4,
     make_iterator/6,
@@ -168,12 +168,14 @@ open(
 drop(_ShardId, _DBHandle, _GenId, _CFRefs, #s{gs = GS}) ->
     emqx_ds_gen_skipstream_lts:drop(GS).
 
-prepare_tx(_DBShard, S, TXID, Ops, _Options) ->
+prepare_tx(_DBShard, S, TXID, _Options, TxWrites, TxDeleteTopics, TxDeleteStreamRanges) ->
     _ = emqx_ds_gen_skipstream_lts:pop_lts_persist_ops(),
-    W = maps:get(?ds_tx_write, Ops, []),
-    DT = maps:get(?ds_tx_delete_topic, Ops, []),
     try
-        OperationsCooked = cook_blob_deletes(S, DT, cook_blob_writes(S, TXID, W, [])),
+        OperationsCooked = cook_range_deletes(
+            S,
+            TxDeleteStreamRanges,
+            cook_blob_deletes(S, TxDeleteTopics, cook_blob_writes(S, TXID, TxWrites, []))
+        ),
         {ok, #{
             ?cooked_msg_ops => OperationsCooked,
             ?cooked_lts_ops => emqx_ds_gen_skipstream_lts:pop_lts_persist_ops()
@@ -183,10 +185,34 @@ prepare_tx(_DBShard, S, TXID, Ops, _Options) ->
             {error, Type, Err}
     end.
 
+cook_range_deletes(#s{trie = Trie, max_ts = MaxTS}, RangeDeletions, Acc0) ->
+    lists:foldl(
+        fun
+            ({Static, From, To}, Acc) when
+                is_binary(Static),
+                From >= 0,
+                To >= 0,
+                From =< To,
+                To =< MaxTS
+            ->
+                case compress_tf(Trie, Static, ['#']) of
+                    {ok, _TopicStructure} ->
+                        %% FIXME
+                        Acc;
+                    _ ->
+                        throw({unrecoverable, {bad_stream, Static}})
+                end;
+            (R, _) ->
+                throw({unrecoverable, {bad_range, R}})
+        end,
+        Acc0,
+        RangeDeletions
+    ).
+
 cook_blob_writes(_, _TXID, [], Acc) ->
     lists:reverse(Acc);
 cook_blob_writes(S = #s{}, TXID, [{Topic, TS0, Value0} | Rest], Acc) ->
-    #s{trie = Trie, threshold_fun = TFun, ts_bytes = TSB} = S,
+    #s{trie = Trie, threshold_fun = TFun, max_ts = MaxTS} = S,
     %% Get the timestamp:
     case TS0 of
         ?ds_tx_ts_monotonic ->
@@ -195,8 +221,8 @@ cook_blob_writes(S = #s{}, TXID, [{Topic, TS0, Value0} | Rest], Acc) ->
             ok
     end,
     %% Verify that TS fits in the TSB:
-    (TS >= 0 andalso TS < S#s.max_ts) orelse
-        throw({unrecoverable, {timestamp_is_too_large, TS}}),
+    (TS >= 0 andalso TS < MaxTS) orelse
+        throw({unrecoverable, {timestamp_is_out_of_range, TS}}),
     {Static, Varying} = emqx_ds_lts:topic_key(Trie, TFun, Topic),
     Value =
         case Value0 of
@@ -244,7 +270,7 @@ cook_blob_deletes2(GS, Static, Varying, LSK, Acc0) ->
 
 commit_batch(
     ShardId,
-    #s{db = DB, trie_cf = TrieCF, trie = Trie, gs = GS, ts_bytes = TSB},
+    S = #s{db = DB, trie_cf = TrieCF, trie = Trie, gs = GS, ts_bytes = TSB},
     Input,
     Options
 ) ->
@@ -310,6 +336,17 @@ commit_batch(
     after
         rocksdb:release_batch(Batch)
     end.
+
+batch_del_range(#s{gs = GS, ts_bytes = TSB, trie = Trie}, Batch, Static, NLevels, From, To) ->
+    %% TODO: use RockDB range deletions?
+    %% Varying = ['+' || _ <- lists:seq(1, NLevels)],
+    %% Inerval = {'[', <<From : (TSB * 8)>>, <<(To + 1):(TSB * 8)>>},
+    %% {ok, _, _} = emqx_ds_gen_skipstream_lts:fold(
+    %%                GS,
+    %%                Static,
+    %%                Varying,
+    %%                Interval,
+    ok.
 
 batch_events(
     _Shard,

@@ -10,7 +10,16 @@
 -module(emqx_ds_tx_conflict_trie).
 
 %% API:
--export([topic_filter_to_conflict_domain/1, new/2, push/3, rotate/1, is_dirty/3, print/1]).
+-export([
+    topic_filter_to_conflict_domain/1,
+    new/2,
+    push_topic/3,
+    push_stream_range/3,
+    rotate/1,
+    is_dirty_topic/3,
+    is_dirty_stream_range/3,
+    print/1
+]).
 
 -export_type([t/0, conflict_domain/0]).
 
@@ -24,13 +33,33 @@
 %% Type declarations
 %%================================================================================
 
+%% Note: currently conflict checking for stream time ranges is very
+%% simplistic. We don't use a fancy interval tree or anything...
+%% Currently the only operation that dirties a time range in the
+%% stream is `tx_delete_time_range'. It's intended for cleaning up old
+%% data. As such, we assume that it is:
+%%
+%% 1. This operation is used on large ranges of keys spanning {0, T}
+%% 2. It deletes old data that nobody _has_ to read.
+%%
+%% Because of that we simply store the biggest interval containing all
+%% dirty intervals and it has the largest serial of all
+%% `delete_time_range' operations.
+-type dirty_streams() :: #{
+    emqx_ds:stream() => {emqx_ds:time(), emqx_ds:time(), emqx_ds_optimistic_tx:serial()}
+}.
+
 -record(conflict_tree, {
     rotate_every :: pos_integer() | infinity,
     min_serial,
     old_max_serial,
     max_serial,
+    %% Dirty topics:
     old_trie = gb_trees:empty(),
-    trie = gb_trees:empty()
+    trie = gb_trees:empty(),
+    %% Dirty streams:
+    old_dirty_streams = #{} :: dirty_streams(),
+    dirty_streams = #{} :: dirty_streams()
 }).
 
 -opaque t() :: #conflict_tree{}.
@@ -75,16 +104,15 @@ new(MinSerial, RotateEvery) when
     }.
 
 %% @doc Add a new conflict domain to the trie.
--spec push(conflict_domain(), emqx_ds_optimistic_tx:serial(), t()) -> t().
-push(
+-spec push_topic(conflict_domain(), emqx_ds_optimistic_tx:serial(), t()) -> t().
+push_topic(
     CD,
     Serial,
-    S = #conflict_tree{min_serial = MinS, max_serial = MaxS}
+    S = #conflict_tree{min_serial = MinS, max_serial = MaxS, trie = Trie}
 ) when Serial > MinS, Serial >= MaxS ->
-    #conflict_tree{rotate_every = RotateEvery, old_max_serial = OldMax, trie = Trie} = S,
-    case Serial - OldMax >= RotateEvery of
+    case need_rotation(Serial, S) of
         true ->
-            push(CD, Serial, rotate(S));
+            push_topic(CD, Serial, rotate(S));
         false ->
             WildcardPrefix = static_prefix(CD),
             S#conflict_tree{
@@ -93,24 +121,66 @@ push(
             }
     end.
 
+%% @doc Add a new conflict over stream time range.
+-spec push_stream_range(emqx_ds:stream_range(), emqx_ds_optimistic_tx:serial(), t()) -> t().
+push_stream_range(
+    SR = {Stream, From, To},
+    Serial,
+    S = #conflict_tree{min_serial = MinS, max_serial = MaxS, dirty_streams = DS0}
+) when Serial > MinS, Serial >= MaxS ->
+    case need_rotation(Serial, S) of
+        true ->
+            push_stream_range(SR, Serial, rotate(S));
+        false ->
+            DS = maps:update_with(
+                Stream,
+                fun({OldFrom, OldTo, _}) ->
+                    {min(From, OldFrom), max(To, OldTo), Serial}
+                end,
+                {From, To, Serial},
+                DS0
+            ),
+            S#conflict_tree{
+                max_serial = Serial,
+                dirty_streams = DS
+            }
+    end.
+
 %% @doc Return `false' if there are no entries with serial **greater**
 %% than `Serial' in the tracked conflict range. Otherwise, return
 %% `true'.
--spec is_dirty(conflict_domain(), emqx_ds_optimistic_tx:serial(), t()) -> boolean().
-is_dirty(
+-spec is_dirty_topic(conflict_domain(), emqx_ds_optimistic_tx:serial(), t()) -> boolean().
+is_dirty_topic(
     _CD,
     Serial,
     #conflict_tree{min_serial = MinS}
 ) when Serial < MinS ->
     %% Serial is out of the tracked conflict range:
     true;
-is_dirty(
+is_dirty_topic(
     CD,
     Serial,
     #conflict_tree{trie = Trie, old_trie = OldTrie}
 ) ->
     check_dirty(CD, Serial, Trie) orelse
         check_dirty(CD, Serial, OldTrie).
+
+-spec is_dirty_stream_range(emqx_ds:stream_range(), emqx_ds_optimistic_tx:serial(), t()) ->
+    boolean().
+is_dirty_stream_range(
+    _CR,
+    Serial,
+    #conflict_tree{min_serial = MinS}
+) when Serial < MinS ->
+    %% Serial is out of the tracked conflict range:
+    true;
+is_dirty_stream_range(
+    CR = {_Stream, From, To},
+    Serial,
+    #conflict_tree{dirty_streams = DS, old_dirty_streams = ODS}
+) when is_integer(From), is_integer(To), From =< To ->
+    check_dirty_stream_range(CR, Serial, DS) orelse
+        check_dirty_stream_range(CR, Serial, ODS).
 
 %% @doc This function is used to reduce size of the trie by removing old
 %% conflicts.
@@ -122,18 +192,36 @@ is_dirty(
 %% started earlier than the beginning of the conflict window is
 %% unconditionally considered conflicting and is rejected.
 -spec rotate(t()) -> t().
-rotate(S = #conflict_tree{old_max_serial = OldMax, max_serial = Max, trie = Trie}) ->
+rotate(
+    S = #conflict_tree{
+        old_max_serial = OldMax, max_serial = Max, trie = Trie, dirty_streams = Streams
+    }
+) ->
     S#conflict_tree{
         min_serial = OldMax,
         old_max_serial = Max,
         max_serial = Max,
         old_trie = Trie,
-        trie = gb_trees:empty()
+        trie = gb_trees:empty(),
+        old_dirty_streams = Streams,
+        dirty_streams = #{}
     }.
 
 %%================================================================================
 %% Internal functions
 %%================================================================================
+
+check_dirty_stream_range({Stream, From, To}, Serial, Dirty) ->
+    case Dirty of
+        #{Stream := {DirtyFrom, DirtyTo, DirtySerial}} ->
+            ranges_intersect(From, To, DirtyFrom, DirtyTo) andalso
+                DirtySerial >= Serial;
+        #{} ->
+            false
+    end.
+
+ranges_intersect(Ab, Ae, Bb, Be) ->
+    not (Ab > Be orelse Ae < Bb).
 
 tf2cd([], Acc) ->
     lists:reverse(Acc);
@@ -239,6 +327,9 @@ wc_prefixes(Suffix, PrefixAcc, Acc) ->
             wc_prefixes(Rest, [Token | PrefixAcc], [Prefix | Acc])
     end.
 
+need_rotation(Serial, #conflict_tree{rotate_every = RotateEvery, old_max_serial = OldMax}) ->
+    (Serial - OldMax) >= RotateEvery.
+
 %%================================================================================
 %% Tests
 %%================================================================================
@@ -248,14 +339,14 @@ wc_prefixes(Suffix, PrefixAcc, Acc) ->
 -define(dirty(CD, SERIAL, TRIE),
     ?assertMatch(
         true,
-        is_dirty(CD, SERIAL, TRIE)
+        is_dirty_topic(CD, SERIAL, TRIE)
     )
 ).
 
 -define(clean(CD, SERIAL, TRIE),
     ?assertMatch(
         false,
-        is_dirty(CD, SERIAL, TRIE)
+        is_dirty_topic(CD, SERIAL, TRIE)
     )
 ).
 
@@ -400,14 +491,14 @@ wc_prefixes_test() ->
 
 push_test() ->
     T0 = new(0, infinity),
-    T1 = push([<<1>>], 1, T0),
-    T2 = push([<<1>>, <<1>>], 1, T1),
-    T3 = push([<<1>>, <<2>>], 1, T2),
-    T4 = push([<<1>>, <<3>>, '#'], 1, T3),
-    T5 = push([<<2>>], 2, T4),
-    T6 = push([<<2>>, <<1>>], 2, T5),
-    T7 = push([<<2>>, <<2>>], 2, T6),
-    T8 = push([<<2>>, <<3>>], 2, T7),
+    T1 = push_topic([<<1>>], 1, T0),
+    T2 = push_topic([<<1>>, <<1>>], 1, T1),
+    T3 = push_topic([<<1>>, <<2>>], 1, T2),
+    T4 = push_topic([<<1>>, <<3>>, '#'], 1, T3),
+    T5 = push_topic([<<2>>], 2, T4),
+    T6 = push_topic([<<2>>, <<1>>], 2, T5),
+    T7 = push_topic([<<2>>, <<2>>], 2, T6),
+    T8 = push_topic([<<2>>, <<3>>], 2, T7),
     ?assertEqual(
         [
             {[<<1>>], 1},
@@ -422,8 +513,8 @@ push_test() ->
         gb_trees:to_list(T8#conflict_tree.trie)
     ),
     %% Overwrite some key:
-    T9 = push([<<1>>, <<3>>, '#'], 3, T8),
-    T10 = push([<<1>>, <<2>>], 3, T9),
+    T9 = push_topic([<<1>>, <<3>>, '#'], 3, T8),
+    T10 = push_topic([<<1>>, <<2>>], 3, T9),
     ?assertEqual(
         [
             {[<<1>>], 1},
@@ -438,7 +529,7 @@ push_test() ->
         gb_trees:to_list(T10#conflict_tree.trie)
     ),
     %% Insert wildcard:
-    T11 = push([<<1>>, '#'], 4, T10),
+    T11 = push_topic([<<1>>, '#'], 4, T10),
     ?assertEqual(
         [
             {[<<1>>, '#'], 4},
@@ -453,14 +544,14 @@ push_test() ->
 
 rotate_test() ->
     T0 = new(0, 3),
-    T1 = push([<<1>>], 1, T0),
-    T2 = push([<<2>>], 2, T1),
+    T1 = push_topic([<<1>>], 1, T0),
+    T2 = push_topic([<<2>>], 2, T1),
     ?assertEqual(
         [],
         gb_trees:to_list(T2#conflict_tree.old_trie)
     ),
     %% Push an item with serial that should rotate the tree:
-    T3 = push([<<3>>], 3, T2),
+    T3 = push_topic([<<3>>], 3, T2),
     %% Old items were moved to the old trie:
     ?assertEqual(
         [
@@ -480,9 +571,9 @@ rotate_test() ->
     ?assertEqual(2, T3#conflict_tree.old_max_serial),
     ?assertEqual(3, T3#conflict_tree.max_serial),
     %% Push an item to the same "generation":
-    T4 = push([<<4>>], 4, T3),
+    T4 = push_topic([<<4>>], 4, T3),
     %% Push an item that will rotate the tree again:
-    T5 = push([<<5>>], 6, T4),
+    T5 = push_topic([<<5>>], 6, T4),
     ?assertEqual(
         [
             {[<<3>>], 3},
@@ -504,10 +595,35 @@ rotate_test() ->
 mk_test_trie(Min, L) ->
     lists:foldl(
         fun({Dom, Serial}, Acc) ->
-            push(Dom, Serial, Acc)
+            push_topic(Dom, Serial, Acc)
         end,
         new(Min, infinity),
         L
     ).
+
+is_dirty_stream_range_test() ->
+    Dirty = push_stream_range({foo, 10, 15}, 42, new(0, infinity)),
+    ?assert(is_dirty_stream_range({foo, 1, 10}, 0, Dirty)),
+    ?assert(is_dirty_stream_range({foo, 1, 10}, 0, rotate(Dirty))),
+    ?assert(is_dirty_stream_range({foo, 15, 20}, 42, Dirty)),
+    ?assert(is_dirty_stream_range({foo, 15, 20}, 42, rotate(Dirty))),
+    %% Newer serial:
+    ?assertNot(is_dirty_stream_range({foo, 15, 20}, 43, Dirty)),
+    ?assertNot(is_dirty_stream_range({foo, 15, 20}, 43, rotate(Dirty))),
+    ?assertNot(is_dirty_stream_range({foo, 0, 100}, 43, Dirty)),
+    ?assertNot(is_dirty_stream_range({foo, 0, 100}, 43, rotate(Dirty))),
+    %% Not overlapping:
+    ?assertNot(is_dirty_stream_range({foo, 0, 9}, 0, Dirty)),
+    ?assertNot(is_dirty_stream_range({foo, 16, 18}, 0, Dirty)).
+
+ranges_intersect_test() ->
+    ?assert(ranges_intersect(0, 0, 0, 0)),
+    ?assert(ranges_intersect(0, 10, 0, 10)),
+    ?assert(ranges_intersect(5, 5, 0, 10)),
+    ?assert(ranges_intersect(5, 15, 0, 10)),
+    ?assert(ranges_intersect(0, 5, 5, 10)),
+    ?assert(ranges_intersect(0, 6, 5, 10)),
+    ?assertNot(ranges_intersect(0, 0, 1, 1)),
+    ?assertNot(ranges_intersect(1, 1, 0, 0)).
 
 -endif.

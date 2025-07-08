@@ -67,6 +67,7 @@
 
 -define(ds_tx_write, w).
 -define(ds_tx_delete_topic, dt).
+-define(ds_tx_delete_stream_range, ds).
 -define(ds_tx_read, r).
 -define(ds_tx_expected, e).
 -define(ds_tx_unexpected, u).

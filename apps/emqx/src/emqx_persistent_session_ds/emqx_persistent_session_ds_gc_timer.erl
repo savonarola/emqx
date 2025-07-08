@@ -1,15 +1,24 @@
 %%--------------------------------------------------------------------
 %% Copyright (c) 2025 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
--module(emqx_durable_test_timer).
+-module(emqx_persistent_session_ds_gc_timer).
+
+-behaviour(emqx_durable_timer).
 
 %% API:
--export([init/0, apply_after/3, dead_hand/3, cancel/1]).
+-export([init/0]).
+-export([on_connect/3, on_disconnect/3, delete/1]).
 
 %% behavior callbacks:
--export([durable_timer_type/0, timer_introduced_in/0, handle_durable_timeout/2]).
+-export([durable_timer_type/0, handle_durable_timeout/2, timer_introduced_in/0]).
 
--include("../src/internals.hrl").
+%% internal exports:
+-export([]).
+
+-export_type([]).
+
+-include_lib("snabbkaffe/include/trace.hrl").
+-include("emqx.hrl").
 
 %%================================================================================
 %% Type declarations
@@ -19,29 +28,46 @@
 %% API functions
 %%================================================================================
 
+-spec init() -> ok.
 init() ->
-    ?tp(info, ?tp_test_register, #{}),
     emqx_durable_timer:register_type(?MODULE).
 
-apply_after(Key, Val, Delay) ->
-    emqx_durable_timer:apply_after(durable_timer_type(), Key, Val, Delay).
+-spec on_connect(
+    emqx_types:clientid(),
+    binary(),
+    non_neg_integer()
+) ->
+    ok | emqx_ds:error(_).
+on_connect(ClientId, ChannelCookie, ExpiryIntervalMS) ->
+    emqx_durable_timer:dead_hand(
+        durable_timer_type(), ClientId, ChannelCookie, ExpiryIntervalMS
+    ).
 
-dead_hand(Key, Val, Delay) ->
-    emqx_durable_timer:dead_hand(durable_timer_type(), Key, Val, Delay).
+-spec on_disconnect(
+    emqx_types:clientid(),
+    binary(),
+    non_neg_integer()
+) -> ok.
+on_disconnect(ClientId, ChannelCookie, ExpiryIntervalMS) ->
+    emqx_durable_timer:apply_after(
+        durable_timer_type(), ClientId, ChannelCookie, ExpiryIntervalMS
+    ).
 
-cancel(Key) ->
-    emqx_durable_timer:cancel(durable_timer_type(), Key).
+-spec delete(emqx_types:clientid()) -> ok.
+delete(ClientId) ->
+    emqx_durable_timer:cancel(durable_timer_type(), ClientId).
 
 %%================================================================================
 %% behavior callbacks
 %%================================================================================
 
-durable_timer_type() -> 16#ffffffff.
+durable_timer_type() -> 16#DEAD5E55.
 
 timer_introduced_in() -> "6.0.0".
 
-handle_durable_timeout(Key, Value) ->
-    ?tp(info, ?tp_test_fire, #{key => Key, val => Value}).
+handle_durable_timeout(SessionId, _ChannelCookie) ->
+    %% TODO: verify that we're kicking the correct channel?
+    emqx_persistent_session_ds:kick_offline_session(SessionId).
 
 %%================================================================================
 %% Internal exports
