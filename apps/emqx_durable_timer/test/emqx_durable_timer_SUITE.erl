@@ -108,6 +108,7 @@ t_lazy_initialization(Config) ->
         end,
         [
             fun no_unexpected/1,
+            fun no_read_conflicts/1,
             fun no_replay_failures/1,
             fun verify_timers/1,
             fun verify_activation/1
@@ -192,7 +193,12 @@ t_normal_execution(Config) ->
         after
             emqx_cth_cluster:stop(Cluster)
         end,
-        [fun no_unexpected/1, fun no_replay_failures/1, fun verify_timers/1]
+        [
+            fun no_unexpected/1,
+            fun no_read_conflicts/1,
+            fun no_replay_failures/1,
+            fun verify_timers/1
+        ]
     ).
 
 %% This testcase verifies the functionality related to timer
@@ -247,6 +253,7 @@ t_cancellation(Config) ->
         end,
         [
             fun no_unexpected/1,
+            fun no_read_conflicts/1,
             fun no_replay_failures/1,
             fun verify_timers/1,
             fun(Trace) ->
@@ -331,9 +338,24 @@ do_verify_timers(
                                 ValGot when MinTS < TS ->
                                     [];
                                 ValGot ->
-                                    [{fired_too_early, TP}];
+                                    [
+                                        #{
+                                            '_' => fired_too_early,
+                                            k => K,
+                                            expected => MinTS,
+                                            t => TS,
+                                            v => ValGot
+                                        }
+                                    ];
                                 _ ->
-                                    [{value_mismath, #{expected => ValExpected, got => ValGot}}]
+                                    [
+                                        #{
+                                            '_' => value_mismath,
+                                            k => K,
+                                            expected => ValExpected,
+                                            got => ValGot
+                                        }
+                                    ]
                             end,
                         S0#vs{
                             active = A,
@@ -350,6 +372,12 @@ do_verify_timers(
     do_verify_timers(
         Trace,
         S
+    ).
+
+no_read_conflicts(Trace) ->
+    ?assertMatch(
+        [],
+        ?of_kind(emqx_ds_tx_retry, Trace)
     ).
 
 %%------------------------------------------------------------------------------

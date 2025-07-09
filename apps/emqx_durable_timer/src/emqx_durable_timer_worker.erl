@@ -82,7 +82,7 @@ apply_after(Type, Epoch, Key, Val, NotEarlierThan) ->
 
 dead_hand(Type, Epoch, Key, Value, Delay) ->
     Result = emqx_ds:trans(
-        trans_opts(Key, #{}),
+        trans_opts({auto, Key}, #{}),
         fun() ->
             tx_del_dead_hand(Type, Key),
             tx_del_started(Type, Key),
@@ -103,7 +103,7 @@ dead_hand(Type, Epoch, Key, Value, Delay) ->
 -spec cancel(emqx_durable_timer:type(), emqx_durable_timer:epoch(), emqx_durable_timer:key()) -> ok.
 cancel(Type, _Epoch, Key) ->
     Result = emqx_ds:trans(
-        trans_opts(Key, #{}),
+        trans_opts({auto, Key}, #{}),
         fun() ->
             tx_del_dead_hand(Type, Key),
             tx_del_started(Type, Key)
@@ -129,7 +129,11 @@ cancel(Type, _Epoch, Key) ->
     %% Iterator pointing at the beginning of un-replayed timers:
     replay_pos :: emqx_ds:iterator() | undefined,
     fully_replayed_ts = 0 :: integer(),
-    next_wakeup = -1 :: integer()
+    next_wakeup = -1 :: integer(),
+    %% Reference to the pending transaction that async-ly cleans up
+    %% the replayed data:
+    pending_del_tx :: reference() | undefined,
+    del_up_to = 0 :: integer()
 }).
 
 callback_mode() -> [handle_event_function, state_enter].
@@ -154,10 +158,18 @@ handle_event(enter, _, ?s_active, _) ->
     keep_state_and_data;
 handle_event({call, From}, #call_apply_after{k = Key, v = Value, t = NotEarlierThan}, ?s_active, S) ->
     handle_apply_after(From, Key, Value, NotEarlierThan, S);
+handle_event(_TT, ?ds_tx_commit_reply(Ref, Reply), _S, S = #s{pending_del_tx = Ref}) ->
+    case emqx_ds:tx_commit_outcome(?DB_GLOB, Ref, Reply) of
+        {ok, _} ->
+            ok;
+        Other ->
+            ?tp(warning, "Failed to clean up data", #{reason => Other})
+    end,
+    clean_replayed(S#s{pending_del_tx = undefined});
 handle_event(_ET, ?ds_tx_commit_reply(Ref, Reply), ?s_active, Data) ->
     handle_ds_reply(Ref, Reply, Data);
 handle_event(info, #cast_wake_up{t = Treached}, ?s_active, Data) ->
-    replay_active(Data, Treached);
+    clean_replayed(replay_active(Data, Treached));
 %% Common:
 handle_event(ET, Event, State, Data) ->
     ?tp(error, ?tp_unknown_event, #{m => ?MODULE, ET => Event, state => State, data => Data}),
@@ -182,7 +194,7 @@ replay_active(S = #s{fully_replayed_ts = FullyReplayedTS0}, Treached) ->
         maybe
             {ok, It0} ?= get_iterator(?s_active, S),
             {ok, FullyReplayedTS, It} ?= do_replay_active(S, It0, Bound, FullyReplayedTS0),
-            {keep_state, S#s{replay_pos = It, fully_replayed_ts = FullyReplayedTS}}
+            S#s{replay_pos = It, fully_replayed_ts = FullyReplayedTS}
         else
             {retry, FullyReplayedTS1, It1, Reason} ->
                 ?tp(warning, ?tp_replay_failed, #{
@@ -193,9 +205,31 @@ replay_active(S = #s{fully_replayed_ts = FullyReplayedTS0}, Treached) ->
                     self(),
                     #cast_wake_up{t = S#s.next_wakeup}
                 ),
-                {keep_state, S#s{replay_pos = It1, fully_replayed_ts = FullyReplayedTS1}}
+                S#s{replay_pos = It1, fully_replayed_ts = FullyReplayedTS1}
         end
     ).
+
+clean_replayed(
+    S = #s{pending_del_tx = Pending, fully_replayed_ts = FullyReplayed, del_up_to = DelUpTo}
+) when is_reference(Pending); FullyReplayed =:= DelUpTo ->
+    {keep_state, S};
+clean_replayed(
+    S = #s{
+        shard = Shard,
+        type = Type,
+        epoch = Epoch,
+        pending_del_tx = undefined,
+        fully_replayed_ts = DelUpTo
+    }
+) ->
+    {async, Ref, _} =
+        emqx_ds:trans(
+            trans_opts(Shard, #{sync => false}),
+            fun() ->
+                emqx_ds:tx_del_topic(dead_hand_topic(Type, Epoch, '+'), 0, DelUpTo)
+            end
+        ),
+    {keep_state, S#s{pending_del_tx = Ref, del_up_to = DelUpTo}}.
 
 do_replay_active(S, It0, Bound, FullyReplayedTS0) ->
     BS = 100,
@@ -314,7 +348,7 @@ handle_apply_after(From, Key, Val, NotEarlierThan, #s{
     Time = max(emqx_durable_timer:now_ms() + 1, NotEarlierThan),
     {async, Ref, _Ret} =
         emqx_ds:trans(
-            trans_opts(Key, #{sync => false}),
+            trans_opts({auto, Key}, #{sync => false}),
             fun() ->
                 %% Clear previous data:
                 tx_del_dead_hand(Type, Key),
@@ -388,11 +422,11 @@ dead_hand_topic(Type, NodeEpochId, Key) ->
 started_topic(Type, NodeEpochId, Key) ->
     [?top_started, <<Type:?type_bits>>, NodeEpochId, Key].
 
-trans_opts(Key, Other) ->
+trans_opts(Shard, Other) ->
     Other#{
         db => ?DB_GLOB,
         generation => emqx_durable_timer:generation(?DB_GLOB),
-        shard => {auto, Key}
+        shard => Shard
     }.
 
 addq_new() ->
