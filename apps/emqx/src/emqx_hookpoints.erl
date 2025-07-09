@@ -41,7 +41,7 @@
     'client.subscribe',
     'client.unsubscribe',
     'client.timeout',
-    'client.monitored_process_down',
+    'client.handle_info',
     'session.created',
     'session.subscribed',
     'session.unsubscribed',
@@ -56,6 +56,7 @@
     'schema.validation_failed',
     'message.delivered',
     'message.acked',
+    'message.nack',
     'delivery.dropped',
     'delivery.completed',
     'cm.channel.unregistered',
@@ -69,7 +70,10 @@
     %% This is a deprecated hookpoint renamed to 'client.authorize'
     'client.check_acl',
     %% Misspelled hookpoint
-    'session.takeovered'
+    'session.takeovered',
+    %% Unused specific hookpoint, previously used by emqx_ft
+    %% Superseded by 'client.handle_info'
+    'client.monitored_process_down'
 ]).
 
 -type alarm_activated_context() :: #{
@@ -156,12 +160,10 @@ when
 when
     Replies :: emqx_channel:replies().
 
--callback 'client.monitored_process_down'(
-    _MonitorRef :: reference(), _Pid :: pid(), _Reason :: term(), Replies
-) ->
+-callback 'client.handle_info'(emqx_types:clientinfo(), _Msg :: term(), Replies) ->
     fold_callback_result(Replies)
 when
-    Replies :: emqx_channel:replies().
+    Replies :: #{deliver := list(emqx_types:deliver()), replies := emqx_channel:replies()}.
 
 -callback 'session.created'(emqx_types:clientinfo(), _SessionInfo :: emqx_types:infos()) ->
     callback_result().
@@ -211,6 +213,9 @@ when
     Msg :: emqx_types:message().
 
 -callback 'message.acked'(emqx_types:clientinfo(), emqx_types:message()) -> callback_result().
+
+-callback 'message.nack'(emqx_types:clientinfo(), Delivers) -> Delivers when
+    Delivers :: list(emqx_types:deliver()).
 
 -callback 'delivery.dropped'(emqx_types:clientinfo(), emqx_types:message(), _Reason :: atom()) ->
     callback_result().
