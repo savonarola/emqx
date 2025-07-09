@@ -135,7 +135,8 @@
 -define(timeout_flush, timout_flush).
 
 -record(gen_data, {
-    dirty :: emqx_ds_tx_conflict_trie:t(),
+    dirty_w :: emqx_ds_tx_conflict_trie:t(),
+    dirty_d :: emqx_ds_tx_conflict_trie:t(),
     buffer = [],
     pending_replies = []
 }).
@@ -362,7 +363,10 @@ handle_tx(
         #{Gen := GS0} ->
             ok;
         #{} ->
-            GS0 = #gen_data{dirty = emqx_ds_tx_conflict_trie:new(Serial, infinity)}
+            GS0 = #gen_data{
+                dirty_w = emqx_ds_tx_conflict_trie:new(Serial, infinity),
+                dirty_d = emqx_ds_tx_conflict_trie:new(Serial, infinity)
+            }
     end,
     PresumedCommitSerial = Serial + 1,
     put(?ds_tx_monotonic_ts, Timestamp),
@@ -385,7 +389,7 @@ try_commit(
     SafeToReadSerial,
     PresumedCommitSerial,
     Tx,
-    GS = #gen_data{dirty = Dirty0, buffer = Buff, pending_replies = Pending}
+    GS = #gen_data{dirty_w = DirtyW0, dirty_d = DirtyD0, buffer = Buff, pending_replies = Pending}
 ) ->
     #ds_tx{
         ctx = Ctx,
@@ -396,15 +400,15 @@ try_commit(
     } = Tx,
     #kv_tx_ctx{serial = TxStartSerial} = Ctx,
     maybe
-        ok ?= check_conflicts(Dirty0, TxStartSerial, SafeToReadSerial, Ops),
+        ok ?= check_conflicts(DirtyW0, DirtyD0, TxStartSerial, SafeToReadSerial, Ops),
         ok ?= verify_preconditions(DBShard, CBM, Gen, Ops),
         {ok, CookedTx} ?=
             CBM:otx_prepare_tx(
                 DBShard, Gen, serial_bin(PresumedCommitSerial), Ops, #{}
             ),
-        Dirty = update_dirty(PresumedCommitSerial, Ops, Dirty0),
         {ok, GS#gen_data{
-            dirty = Dirty,
+            dirty_w = update_dirty_w(PresumedCommitSerial, Ops, DirtyW0),
+            dirty_d = update_dirty_d(PresumedCommitSerial, Ops, DirtyD0),
             buffer = [CookedTx | Buff],
             pending_replies = [{From, Ref, Meta, PresumedCommitSerial} | Pending]
         }}
@@ -421,9 +425,9 @@ try_commit(
             aborted
     end.
 
-update_dirty(Serial, Ops, Dirty0) ->
+update_dirty_d(Serial, Ops, Dirty) ->
     %% Mark all deleted topics as dirty:
-    Dirty1 = lists:foldl(
+    lists:foldl(
         fun({TF, FromTime, ToTime}, Acc) ->
             emqx_ds_tx_conflict_trie:push_topic(
                 emqx_ds_tx_conflict_trie:topic_filter_to_conflict_domain(TF),
@@ -433,15 +437,17 @@ update_dirty(Serial, Ops, Dirty0) ->
                 Acc
             )
         end,
-        Dirty0,
+        Dirty,
         maps:get(?ds_tx_delete_topic, Ops, [])
-    ),
+    ).
+
+update_dirty_w(Serial, Ops, Dirty) ->
     %% Mark written topics as dirty:
     lists:foldl(
         fun({TF, TS, _Val}, Acc) ->
             emqx_ds_tx_conflict_trie:push_topic(TF, TS, TS, Serial, Acc)
         end,
-        Dirty1,
+        Dirty,
         maps:get(?ds_tx_write, Ops, [])
     ).
 
@@ -525,9 +531,9 @@ maybe_rotate(D = #d{rotate_interval = RI, last_rotate_ts = LastRotTS}) ->
 
 rotate(D = #d{gens = Gens0}) ->
     Gens = maps:map(
-        fun(_, GS = #gen_data{dirty = Dirty}) ->
+        fun(_, GS = #gen_data{dirty_w = Dirty}) ->
             GS#gen_data{
-                dirty = emqx_ds_tx_conflict_trie:rotate(Dirty)
+                dirty_w = emqx_ds_tx_conflict_trie:rotate(Dirty)
             }
         end,
         Gens0
@@ -537,21 +543,22 @@ rotate(D = #d{gens = Gens0}) ->
         last_rotate_ts = erlang:monotonic_time(millisecond)
     }.
 
-check_conflicts(DirtyTopics, TxStartSerial, SafeToReadSerial, Ops) ->
+check_conflicts(DirtyW, DirtyD, TxStartSerial, SafeToReadSerial, Ops) ->
     maybe
-        ok ?= do_check_conflicts(DirtyTopics, TxStartSerial, maps:get(?ds_tx_read, Ops, [])),
+        %% Check reads against writes and deletions:
+        Reads = maps:get(?ds_tx_read, Ops, []),
+        ok ?= do_check_conflicts(DirtyW, TxStartSerial, Reads),
+        ok ?= do_check_conflicts(DirtyD, TxStartSerial, Reads),
         %% Deletion of topics involves scanning of the storage. We
         %% can't do it when there is potentially buffered data:
-        ok ?=
-            do_check_conflicts(
-                DirtyTopics, SafeToReadSerial, maps:get(?ds_tx_delete_topic, Ops, [])
-            ),
+        ok ?= do_check_conflicts(DirtyW, SafeToReadSerial, maps:get(?ds_tx_delete_topic, Ops, [])),
         %% Verifying precondition requires reading from the storage
         %% too. Make sure we don't ignore the cache:
         ExpectedTopics = [{Topic, TS, TS} || {Topic, TS, _} <- maps:get(?ds_tx_expected, Ops, [])],
-        ok ?= do_check_conflicts(DirtyTopics, SafeToReadSerial, ExpectedTopics),
+        ok ?= do_check_conflicts(DirtyW, SafeToReadSerial, ExpectedTopics),
+        ok ?= do_check_conflicts(DirtyD, SafeToReadSerial, ExpectedTopics),
         UnexpectedTopics = [{Topic, TS, TS} || {Topic, TS} <- maps:get(?ds_tx_unexpected, Ops, [])],
-        ok ?= do_check_conflicts(DirtyTopics, SafeToReadSerial, UnexpectedTopics)
+        ok ?= do_check_conflicts(DirtyW, SafeToReadSerial, UnexpectedTopics)
     end.
 
 do_check_conflicts(Dirty, Serial, Topics) ->

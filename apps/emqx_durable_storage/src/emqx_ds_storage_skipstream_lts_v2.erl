@@ -317,17 +317,6 @@ commit_batch(
         rocksdb:release_batch(Batch)
     end.
 
-%% batch_del_range(#s{gs = GS, ts_bytes = TSB, trie = Trie}, Batch, Static, NLevels, From, To) ->
-%%     %% TODO: use RockDB range deletions?
-%%     %% Varying = ['+' || _ <- lists:seq(1, NLevels)],
-%%     %% Inerval = {'[', <<From : (TSB * 8)>>, <<(To + 1):(TSB * 8)>>},
-%%     %% {ok, _, _} = emqx_ds_gen_skipstream_lts:fold(
-%%     %%                GS,
-%%     %%                Static,
-%%     %%                Varying,
-%%     %%                Interval,
-%%     ok.
-
 batch_events(
     _Shard,
     #s{},
