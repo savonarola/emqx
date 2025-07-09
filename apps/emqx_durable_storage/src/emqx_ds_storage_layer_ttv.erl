@@ -104,8 +104,7 @@
     _TxWrites :: [
         {emqx_ds:topic(), emqx_ds:time() | ?ds_tx_ts_monotonic, binary() | ?ds_tx_serial}
     ],
-    _TxDeletTopics :: [emqx_ds:topic_filter()],
-    _TxDeleteStreamRanges :: [emqx_ds:stream_range()]
+    _TxDeleteTopics :: [emqx_ds:topic_range()]
 ) ->
     {ok, cooked_tx()} | emqx_ds:error(_).
 
@@ -224,14 +223,8 @@ prepare_tx(DBShard, GenId, TXSerial, Tx, Options) ->
             T0 = erlang:monotonic_time(microsecond),
             Writes = maps:get(?ds_tx_write, Tx, []),
             DeleteTopics = maps:get(?ds_tx_delete_topic, Tx, []),
-            DeleteStreamRanges = lists:map(
-                fun({#'Stream'{inner = Inner}, From, To}) ->
-                    {Inner, From, To}
-                end,
-                maps:get(?ds_tx_delete_stream_range, Tx, [])
-            ),
             Result = Mod:prepare_tx(
-                DBShard, GenData, TXSerial, Options, Writes, DeleteTopics, DeleteStreamRanges
+                DBShard, GenData, TXSerial, Options, Writes, DeleteTopics
             ),
             T1 = erlang:monotonic_time(microsecond),
             %% TODO store->prepare

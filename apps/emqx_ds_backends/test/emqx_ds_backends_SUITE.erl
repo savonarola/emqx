@@ -1038,7 +1038,7 @@ t_13_smoke_ttv_tx(Config) ->
                 timeout => infinity
             }),
             Ops2 = #{
-                ?ds_tx_delete_topic => [[<<"t">>, <<"2">>]]
+                ?ds_tx_delete_topic => [{[<<"t">>, <<"2">>], 0, infinity}]
             },
             ?assertMatch({ok, _Serial}, do_commit_tx(DB, Tx2, Ops2)),
             %% Verify that data in t/2 is gone:
@@ -1096,7 +1096,7 @@ t_14_ttv_wildcard_deletes(Config) ->
             %% 2. Issue a new transaction that deletes t/10/+:
             {ok, Tx2} = emqx_ds:new_kv_tx(DB, TXOpts),
             Ops2 = #{
-                ?ds_tx_delete_topic => [[<<"t">>, <<10:16>>, '+']]
+                ?ds_tx_delete_topic => [{[<<"t">>, <<10:16>>, '+'], 0, infinity}]
             },
             ?assertMatch({ok, _}, do_commit_tx(DB, Tx2, Ops2)),
             Msgs1 = lists:filter(
@@ -2115,70 +2115,152 @@ t_27_tx_read_conflicts(Config) ->
                         Time <- lists:seq(0, 100)
                     ]
                 },
-                #{?ds_tx_read => [[<<>>]]}
+                #{?ds_tx_read => [{[<<>>], 0, infinity}]}
             ),
             %% Writes:
             %%   Read the same topic as was updated:
             Conflict(
                 #{?ds_tx_write => [{[<<>>], 0, <<>>}]},
-                #{?ds_tx_read => [[<<>>]]}
+                #{?ds_tx_read => [{[<<>>], 0, infinity}]}
             ),
             %%   Read the topic with '+' wildcard:
             Conflict(
                 #{?ds_tx_write => [{[<<1>>, <<2>>], 0, <<>>}]},
-                #{?ds_tx_read => [[<<1>>, '+']]}
+                #{?ds_tx_read => [{[<<1>>, '+'], 0, infinity}]}
             ),
             Ok(
                 #{?ds_tx_write => [{[<<1>>, <<2>>], 0, <<>>}]},
-                #{?ds_tx_read => [[<<2>>, '+']]}
+                #{?ds_tx_read => [{[<<2>>, '+'], 0, infinity}]}
             ),
             Conflict(
                 #{?ds_tx_write => [{[<<2>>, <<2>>], 0, <<>>}]},
-                #{?ds_tx_read => [['+', <<2>>]]}
+                #{?ds_tx_read => [{['+', <<2>>], 0, infinity}]}
             ),
             %%   Read the topic with '#' wildcard:
             Conflict(
                 #{?ds_tx_write => [{[<<1>>, <<2>>], 0, <<>>}]},
-                #{?ds_tx_read => [['#']]}
+                #{?ds_tx_read => [{['#'], 0, 0}]}
             ),
             Ok(
                 #{?ds_tx_write => [{[<<2>>, <<2>>], 0, <<>>}]},
-                #{?ds_tx_read => [[<<1>>, '#']]}
+                #{?ds_tx_read => [{[<<1>>, '#'], 0, infinity}]}
             ),
             %% Topic deletions:
             Conflict(
-                #{?ds_tx_delete_topic => [[<<"foo">>]]},
-                #{?ds_tx_read => [[<<"foo">>]]}
+                #{?ds_tx_delete_topic => [{[<<"foo">>], 0, infinity}]},
+                #{?ds_tx_read => [{[<<"foo">>], 0, 1}]}
             ),
             Ok(
-                #{?ds_tx_delete_topic => [[<<"foo">>, <<1>>]]},
-                #{?ds_tx_read => [[<<"foo">>]]}
+                #{?ds_tx_delete_topic => [{[<<"foo">>, <<1>>], 0, infinity}]},
+                #{?ds_tx_read => [{[<<"foo">>], 0, 1}]}
             ),
             Conflict(
-                #{?ds_tx_delete_topic => [[<<"foo">>, <<1>>]]},
-                #{?ds_tx_read => [[<<"foo">>, '+']]}
+                #{?ds_tx_delete_topic => [{[<<"foo">>, <<1>>], 0, infinity}]},
+                #{?ds_tx_read => [{[<<"foo">>, '+'], 0, infinity}]}
             ),
             Conflict(
-                #{?ds_tx_delete_topic => [[<<"foo">>, <<1>>]]},
-                #{?ds_tx_read => [['#']]}
+                #{?ds_tx_delete_topic => [{[<<"foo">>, <<1>>], 0, infinity}]},
+                #{?ds_tx_read => [{['#'], 0, infinity}]}
             ),
-            %% Range deletions:
-            [{_, Stream1}] = emqx_ds:get_streams(DB, [<<1>>, <<2>>], 0),
-            [{_, Stream2}] = emqx_ds:get_streams(DB, [<<>>], 0),
-            %%   Different streams:
+            %% No conflict because transactions operate on different
+            %% time ranges:
             Ok(
-                #{?ds_tx_delete_stream_range => [{Stream2, 0, 10}]},
-                #{?ds_tx_read => [{Stream1, 1, 20}]}
+                #{?ds_tx_write => [{[<<>>], 0, <<>>}]},
+                #{?ds_tx_read => [{['#'], 100, infinity}]}
             ),
-            %%   Different time range:
             Ok(
-                #{?ds_tx_delete_stream_range => [{Stream1, 0, 10}]},
-                #{?ds_tx_read => [{Stream1, 11, 20}]}
+                #{?ds_tx_delete_topic => [{[<<>>, '#'], 0, 10}]},
+                #{?ds_tx_read => [{['#'], 100, infinity}]}
+            )
+        end,
+        []
+    ).
+
+%% This testcase verifies time limiting functionality of reads and topic deletions.
+t_28_ttv_time_limited(Config) ->
+    DB = ?FUNCTION_NAME,
+    Opts = maps:merge(opts(Config), #{
+        store_ttv => true,
+        storage => {emqx_ds_storage_skipstream_lts_v2, #{}}
+    }),
+    Trans = fun(Fun) ->
+        ?assertMatch(
+            {atomic, _, _},
+            emqx_ds:trans(
+                #{db => DB, shard => {auto, <<"me">>}, generation => 1, timeout => infinity}, Fun
+            )
+        )
+    end,
+    Filter = fun(From, To, L) ->
+        [{Topic, T, Val} || {Topic, T, Val} <- L, T >= From, T < To]
+    end,
+    FilterOut = fun(From, To, L) ->
+        [{Topic, T, Val} || {Topic, T, Val} <- L, not (T >= From andalso T < To)]
+    end,
+    Compare = fun(From, To, Expect, Got) ->
+        snabbkaffe_diff:assert_lists_eq(
+            lists:sort(Filter(From, To, Expect)),
+            lists:sort(Got)
+        )
+    end,
+    ?check_trace(
+        begin
+            ?assertMatch(ok, emqx_ds_open_db(DB, Opts)),
+            %% Create data:
+            Msgs0 = [
+                {[<<>>, <<Topic:32>>], Time, <<>>}
+             || Topic <- lists:seq(1, 20),
+                Time <- lists:seq(1, 100)
+            ],
+            Trans(
+                fun() ->
+                    [emqx_ds:tx_write(I) || I <- Msgs0],
+                    ok
+                end
             ),
-            %% Overlap:
-            Conflict(
-                #{?ds_tx_delete_stream_range => [{Stream1, 0, 10}]},
-                #{?ds_tx_read => [{Stream1, 1, 20}]}
+            %% Test reading various time ranges:
+            Trans(
+                fun() ->
+                    Got = emqx_ds:tx_read(['#']),
+                    Compare(0, infinity, Msgs0, Got)
+                end
+            ),
+            Trans(
+                fun() ->
+                    Got = emqx_ds:tx_read(#{start_time => 10, end_time => 20}, ['#']),
+                    Compare(10, 20, Msgs0, Got)
+                end
+            ),
+            Trans(
+                fun() ->
+                    Got = emqx_ds:tx_read(#{start_time => 50}, ['#']),
+                    Compare(50, infinity, Msgs0, Got)
+                end
+            ),
+            %% Test deletions:
+            Msgs1 = FilterOut(20, 50, Msgs0),
+            Trans(
+                fun() ->
+                    emqx_ds:tx_del_topic(['#'], 20, 50)
+                end
+            ),
+            Trans(
+                fun() ->
+                    Got = emqx_ds:tx_read(['#']),
+                    Compare(0, infinity, Msgs1, Got)
+                end
+            ),
+            Msgs2 = FilterOut(0, 10, Msgs1),
+            Trans(
+                fun() ->
+                    emqx_ds:tx_del_topic(['#'], 0, 10)
+                end
+            ),
+            Trans(
+                fun() ->
+                    Got = emqx_ds:tx_read(#{end_time => 70}, ['#']),
+                    Compare(0, 70, Msgs2, Got)
+                end
             )
         end,
         []

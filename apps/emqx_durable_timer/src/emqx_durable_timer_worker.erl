@@ -42,8 +42,6 @@ A process that is responsible for execution of the timers.
 
 -define(via(TYPE, EPOCH, SHARD), {via, gproc, {n, l, {?MODULE, TYPE, EPOCH, SHARD}}}).
 
--record(pending_trans, {key, from}).
-
 -record(call_apply_after, {
     k :: emqx_durable_timer:key(),
     v :: emqx_durable_timer:value(),
@@ -244,7 +242,7 @@ get_iterator(State, #s{replay_pos = undefined, shard = Shard, type = Type, epoch
                     started_topic(Type, Epoch, '+')
             end,
         {[{_, Stream}], []} ?= emqx_ds:get_streams(?DB_GLOB, TopicFilter, 0, #{shard => Shard}),
-        {ok, It} ?= emqx_ds:make_iterator(?DB_GLOB, Stream, TopicFilter, 0)
+        {ok, _It} ?= emqx_ds:make_iterator(?DB_GLOB, Stream, TopicFilter, 0)
     else
         Reason ->
             {retry, #s.fully_replayed_ts, undefined, Reason}

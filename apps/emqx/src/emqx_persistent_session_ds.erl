@@ -919,6 +919,9 @@ disconnect(Session = #{id := Id, s := S0, shared_sub_s := SharedSubS0}, ConnInfo
 
 -spec terminate(Reason :: term(), session()) -> ok.
 terminate(Reason, Session = #{s := S0, id := Id}) ->
+    emqx_persistent_session_ds_gc_timer:on_disconnect(
+        Id, <<>>, emqx_persistent_session_ds_state:get_expiry_interval(S0)
+    ),
     S = finalize_last_alive_at(S0),
     _ = commit(Session#{s := S}, #{lifetime => terminate, sync => true}),
     ?tp(debug, ?sessds_terminate, #{id => Id, reason => Reason}),
@@ -1026,22 +1029,15 @@ open_session_state(
     case emqx_persistent_session_ds_state:open(SessionId) of
         {ok, S0} ->
             EI = emqx_persistent_session_ds_state:get_expiry_interval(S0),
-            LastAliveAt = get_last_alive_at(S0),
-            case NowMs >= LastAliveAt + EI of
-                true ->
-                    session_drop(SessionId, expired),
-                    false;
-                false ->
-                    ?tp(?sessds_open_session, #{ei => EI, now => NowMs, laa => LastAliveAt}),
-                    %% New connection being established; update the
-                    %% existing data:
-                    S1 = emqx_persistent_session_ds_state:set_expiry_interval(EI, S0),
-                    S2 = init_last_alive_at(NowMs, S1),
-                    S = emqx_persistent_session_ds_state:set_peername(
-                        maps:get(peername, NewConnInfo), S2
-                    ),
-                    emqx_persistent_session_ds_state:set_protocol({ProtoName, ProtoVer}, S)
-            end;
+            ?tp(?sessds_open_session, #{ei => EI, now => NowMs}),
+            %% New connection being established; update the
+            %% existing data:
+            S1 = emqx_persistent_session_ds_state:set_expiry_interval(EI, S0),
+            S2 = init_last_alive_at(NowMs, S1),
+            S = emqx_persistent_session_ds_state:set_peername(
+                maps:get(peername, NewConnInfo), S2
+            ),
+            emqx_persistent_session_ds_state:set_protocol({ProtoName, ProtoVer}, S);
         undefined ->
             false
     end.
@@ -1422,6 +1418,9 @@ create_session(Lifetime, ClientID, S0, ConnInfo, Conf) ->
                 S0, shared_sub_opts(ClientID)
             )
     end,
+    ok = emqx_persistent_session_ds_gc_timer:on_connect(
+        ClientID, <<>>, emqx_persistent_session_ds_state:get_expiry_interval(S1)
+    ),
     S = emqx_persistent_session_ds_state:commit(S1, #{lifetime => Lifetime, sync => true}),
     #{
         id => ClientID,
@@ -1867,18 +1866,6 @@ init_last_alive_at(NowMs, S0) ->
 finalize_last_alive_at(S0) ->
     S = emqx_persistent_session_ds_state:set_last_alive_at(now_ms(), S0),
     emqx_persistent_session_ds_state:set_node_epoch_id(undefined, S).
-
-%% NOTE
-%% Here we ignore the case when:
-%% * the session is terminated abnormally, without running terminate callback,
-%% e.g. when the conection was brutally killed;
-%% * but its node and persistent session subsystem remained alive.
-%%
-%% In this case, the session's lifitime is prolonged till the node termination.
-get_last_alive_at(S) ->
-    LastAliveAt = emqx_persistent_session_ds_state:get_last_alive_at(S),
-    NodeEpochId = emqx_persistent_session_ds_state:get_node_epoch_id(S),
-    emqx_persistent_session_ds_gc_worker:session_last_alive_at(LastAliveAt, NodeEpochId).
 
 %%--------------------------------------------------------------------
 %% Tests

@@ -18,7 +18,7 @@
     create/6,
     open/5,
     drop/5,
-    prepare_tx/7,
+    prepare_tx/6,
     commit_batch/4,
     get_streams/4,
     make_iterator/6,
@@ -66,6 +66,10 @@
 -define(cooked_delete, 100).
 -define(cooked_msg_op(STATIC, VARYING, TS, VALUE),
     {STATIC, VARYING, TS, VALUE}
+).
+%%   Range deletion:
+-define(cooked_range_del(STATIC, LEVEL, HASH, FROM, TO),
+    {STATIC, LEVEL, HASH, FROM, TO}
 ).
 
 %% Permanent state:
@@ -168,13 +172,11 @@ open(
 drop(_ShardId, _DBHandle, _GenId, _CFRefs, #s{gs = GS}) ->
     emqx_ds_gen_skipstream_lts:drop(GS).
 
-prepare_tx(_DBShard, S, TXID, _Options, TxWrites, TxDeleteTopics, TxDeleteStreamRanges) ->
+prepare_tx(_DBShard, S, TXID, _Options, TxWrites, TxDeleteTopics) ->
     _ = emqx_ds_gen_skipstream_lts:pop_lts_persist_ops(),
     try
-        OperationsCooked = cook_range_deletes(
-            S,
-            TxDeleteStreamRanges,
-            cook_blob_deletes(S, TxDeleteTopics, cook_blob_writes(S, TXID, TxWrites, []))
+        OperationsCooked = cook_blob_deletes(
+            S, TxDeleteTopics, cook_blob_writes(S, TXID, TxWrites, [])
         ),
         {ok, #{
             ?cooked_msg_ops => OperationsCooked,
@@ -184,30 +186,6 @@ prepare_tx(_DBShard, S, TXID, _Options, TxWrites, TxDeleteTopics, TxDeleteStream
         {Type, Err} ->
             {error, Type, Err}
     end.
-
-cook_range_deletes(#s{trie = Trie, max_ts = MaxTS}, RangeDeletions, Acc0) ->
-    lists:foldl(
-        fun
-            ({Static, From, To}, Acc) when
-                is_binary(Static),
-                From >= 0,
-                To >= 0,
-                From =< To,
-                To =< MaxTS
-            ->
-                case compress_tf(Trie, Static, ['#']) of
-                    {ok, _TopicStructure} ->
-                        %% FIXME
-                        Acc;
-                    _ ->
-                        throw({unrecoverable, {bad_stream, Static}})
-                end;
-            (R, _) ->
-                throw({unrecoverable, {bad_range, R}})
-        end,
-        Acc0,
-        RangeDeletions
-    ).
 
 cook_blob_writes(_, _TXID, [], Acc) ->
     lists:reverse(Acc);
@@ -235,42 +213,44 @@ cook_blob_writes(S = #s{}, TXID, [{Topic, TS0, Value0} | Rest], Acc) ->
 
 cook_blob_deletes(S, Topics, Acc0) ->
     lists:foldl(
-        fun(TopicFilter, Acc) ->
-            cook_blob_deletes1(S, TopicFilter, Acc)
+        fun({TopicFilter, FromTime, ToTime}, Acc) ->
+            cook_blob_deletes1(S, TopicFilter, FromTime, ToTime, Acc)
         end,
         Acc0,
         Topics
     ).
 
-cook_blob_deletes1(S, TopicFilter, Acc0) ->
+cook_blob_deletes1(S, TopicFilter, FromTime, ToTime, Acc0) ->
     lists:foldl(
         fun(Stream, Acc) ->
-            {ok, Static, Varying, ItPos} = make_internal_iterator(S, Stream, TopicFilter, 0),
-            cook_blob_deletes2(S#s.gs, Static, Varying, ItPos, Acc)
+            {ok, Static, Varying, ItPos} = make_internal_iterator(S, Stream, TopicFilter, FromTime),
+            ItLimit = time_limit(S, ToTime),
+            cook_blob_deletes2(S#s.gs, Static, Varying, ItPos, ItLimit, Acc)
         end,
         Acc0,
         get_streams(S#s.trie, TopicFilter)
     ).
 
-cook_blob_deletes2(GS, Static, Varying, LSK, Acc0) ->
+cook_blob_deletes2(GS, Static, Varying, ItStart, ItLimit, Acc0) ->
     Fun = fun(_TopicStructure, _DSKey, Var, TS, _Val, Acc) ->
         [?cooked_msg_op(Static, Var, TS, ?cooked_delete) | Acc]
     end,
-    Interval = {'[', LSK, infinity},
+    Interval = {'[', ItStart, ItLimit},
     %% Note: we don't reverse the batch here.
     case emqx_ds_gen_skipstream_lts:fold(GS, Static, Varying, Interval, 100, Acc0, Fun) of
-        {ok, SK, Acc} when SK =:= LSK ->
+        {ok, NextStreamKey, Acc} when NextStreamKey =:= ItStart ->
+            %% End the loop if the key didn't change.
             %% TODO: is this a reliable stopping condition?
             Acc;
-        {ok, SK, Acc} ->
-            cook_blob_deletes2(GS, Static, Varying, SK, Acc);
+        {ok, NextStreamKey, Acc} ->
+            cook_blob_deletes2(GS, Static, Varying, NextStreamKey, ItLimit, Acc);
         {error, _, _} = Err ->
             error(Err)
     end.
 
 commit_batch(
     ShardId,
-    S = #s{db = DB, trie_cf = TrieCF, trie = Trie, gs = GS, ts_bytes = TSB},
+    #s{db = DB, trie_cf = TrieCF, trie = Trie, gs = GS, ts_bytes = TSB},
     Input,
     Options
 ) ->
@@ -337,16 +317,16 @@ commit_batch(
         rocksdb:release_batch(Batch)
     end.
 
-batch_del_range(#s{gs = GS, ts_bytes = TSB, trie = Trie}, Batch, Static, NLevels, From, To) ->
-    %% TODO: use RockDB range deletions?
-    %% Varying = ['+' || _ <- lists:seq(1, NLevels)],
-    %% Inerval = {'[', <<From : (TSB * 8)>>, <<(To + 1):(TSB * 8)>>},
-    %% {ok, _, _} = emqx_ds_gen_skipstream_lts:fold(
-    %%                GS,
-    %%                Static,
-    %%                Varying,
-    %%                Interval,
-    ok.
+%% batch_del_range(#s{gs = GS, ts_bytes = TSB, trie = Trie}, Batch, Static, NLevels, From, To) ->
+%%     %% TODO: use RockDB range deletions?
+%%     %% Varying = ['+' || _ <- lists:seq(1, NLevels)],
+%%     %% Inerval = {'[', <<From : (TSB * 8)>>, <<(To + 1):(TSB * 8)>>},
+%%     %% {ok, _, _} = emqx_ds_gen_skipstream_lts:fold(
+%%     %%                GS,
+%%     %%                Static,
+%%     %%                Varying,
+%%     %%                Interval,
+%%     ok.
 
 batch_events(
     _Shard,

@@ -424,9 +424,11 @@ try_commit(
 update_dirty(Serial, Ops, Dirty0) ->
     %% Mark all deleted topics as dirty:
     Dirty1 = lists:foldl(
-        fun(TF, Acc) ->
+        fun({TF, FromTime, ToTime}, Acc) ->
             emqx_ds_tx_conflict_trie:push_topic(
                 emqx_ds_tx_conflict_trie:topic_filter_to_conflict_domain(TF),
+                FromTime,
+                ToTime,
                 Serial,
                 Acc
             )
@@ -435,20 +437,12 @@ update_dirty(Serial, Ops, Dirty0) ->
         maps:get(?ds_tx_delete_topic, Ops, [])
     ),
     %% Mark written topics as dirty:
-    Dirty2 = lists:foldl(
-        fun({TF, _TS, _Val}, Acc) ->
-            emqx_ds_tx_conflict_trie:push_topic(TF, Serial, Acc)
+    lists:foldl(
+        fun({TF, TS, _Val}, Acc) ->
+            emqx_ds_tx_conflict_trie:push_topic(TF, TS, TS, Serial, Acc)
         end,
         Dirty1,
         maps:get(?ds_tx_write, Ops, [])
-    ),
-    %% Mark dirty stream ranges:
-    lists:foldl(
-        fun(StreamRange, Acc) ->
-            emqx_ds_tx_conflict_trie:push_stream_range(StreamRange, Serial, Acc)
-        end,
-        Dirty2,
-        maps:get(?ds_tx_delete_stream_range, Ops, [])
     ).
 
 flush(
@@ -554,29 +548,23 @@ check_conflicts(DirtyTopics, TxStartSerial, SafeToReadSerial, Ops) ->
             ),
         %% Verifying precondition requires reading from the storage
         %% too. Make sure we don't ignore the cache:
-        ExpectedTopics = [Topic || {Topic, _, _} <- maps:get(?ds_tx_expected, Ops, [])],
+        ExpectedTopics = [{Topic, TS, TS} || {Topic, TS, _} <- maps:get(?ds_tx_expected, Ops, [])],
         ok ?= do_check_conflicts(DirtyTopics, SafeToReadSerial, ExpectedTopics),
-        UnexpectedTopics = [Topic || {Topic, _} <- maps:get(?ds_tx_unexpected, Ops, [])],
+        UnexpectedTopics = [{Topic, TS, TS} || {Topic, TS} <- maps:get(?ds_tx_unexpected, Ops, [])],
         ok ?= do_check_conflicts(DirtyTopics, SafeToReadSerial, UnexpectedTopics)
     end.
 
 do_check_conflicts(Dirty, Serial, Topics) ->
     Errors = lists:filtermap(
-        fun
-            (ReadTF) when is_list(ReadTF) ->
-                emqx_ds_tx_conflict_trie:is_dirty_topic(
-                    emqx_ds_tx_conflict_trie:topic_filter_to_conflict_domain(ReadTF),
-                    Serial,
-                    Dirty
-                ) andalso
-                    {true, {ReadTF, Serial}};
-            ({Stream, From, To} = StreamRange) ->
-                emqx_ds_tx_conflict_trie:is_dirty_stream_range(
-                    StreamRange,
-                    Serial,
-                    Dirty
-                ) andalso
-                    {true, {Stream, From, To, Serial}}
+        fun({ReadTF, FromTime, ToTime}) ->
+            emqx_ds_tx_conflict_trie:is_dirty_topic(
+                emqx_ds_tx_conflict_trie:topic_filter_to_conflict_domain(ReadTF),
+                FromTime,
+                ToTime,
+                Serial,
+                Dirty
+            ) andalso
+                {true, {ReadTF, {FromTime, ToTime}, Serial}}
         end,
         Topics
     ),
