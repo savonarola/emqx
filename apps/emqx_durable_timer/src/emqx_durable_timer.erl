@@ -117,6 +117,8 @@ Value: empty.
 %% internal exports:
 -export([
     lts_threshold_cb/2,
+    ls_epochs/0,
+    ls_epochs/1,
     now_ms/0,
     epoch/0,
     generation/1,
@@ -224,14 +226,7 @@ Create a timer that activates when the Erlang node that created it
 dies.
 """.
 -spec dead_hand(type(), key(), value(), delay()) -> ok | emqx_ds:error(_).
-dead_hand(Type, Key, Value, Delay) when
-    Type >= 0,
-    Type =< ?max_type,
-    is_binary(Key),
-    is_binary(Value),
-    is_integer(Delay),
-    Delay >= 0
-->
+dead_hand(Type, Key, Value, Delay) when ?is_valid_timer(Type, Key, Value, Delay) ->
     ?tp(debug, ?tp_new_dead_hand, #{type => Type, key => Key, val => Value, delay => Delay}),
     Epoch = epoch(),
     emqx_durable_timer_worker:dead_hand(Type, Epoch, Key, Value, Delay).
@@ -240,14 +235,7 @@ dead_hand(Type, Key, Value, Delay) when
 Create a timer that activates immediately.
 """.
 -spec apply_after(type(), key(), value(), delay()) -> ok | emqx_ds:error(_).
-apply_after(Type, Key, Value, Delay) when
-    Type >= 0,
-    Type =< ?max_type,
-    is_binary(Key),
-    is_binary(Value),
-    is_integer(Delay),
-    Delay >= 0
-->
+apply_after(Type, Key, Value, Delay) when ?is_valid_timer(Type, Key, Value, Delay) ->
     ?tp(debug, ?tp_new_apply_after, #{type => Type, key => Key, val => Value, delay => Delay}),
     NotEarlierThan = now_ms() + Delay,
     Epoch = epoch(),
@@ -298,8 +286,10 @@ handle_event(enter, PrevState, ?s_isolated(NextEpoch), D0) ->
 %% Normal:
 handle_event(enter, PrevState, ?s_normal, S = #s{this_epoch = Epoch}) ->
     ?tp(debug, ?tp_state_change, #{from => PrevState, to => ?s_normal, epoch => Epoch}),
+    %% Close previuos epochs for this node:
+    _ = [update_epoch(node(), E, LH, false) || {E, Up, LH} <- ls_epochs(node()), E =/= Epoch, Up],
     %% Create and init epoch table:
-    ets:new(?epoch_tab, [private, set, {keypos, #ei.k}]),
+    ets:new(?epoch_tab, [protected, named_table, set, {keypos, #ei.k}]),
     _DownEpochs = update_epochs(?s_normal),
     %% Restart workers:
     ok = emqx_durable_timer_sup:start_worker_sup(),
@@ -340,6 +330,28 @@ lts_threshold_cb(N, Root) when Root =:= ?top_deadhand; Root =:= ?top_started ->
     end;
 lts_threshold_cb(_, _) ->
     0.
+
+ls_epochs() ->
+    L = emqx_ds:fold_topic(
+        fun(_, _, {[?top_heartbeat, NodeBin, Epoch], _, <<Time:64, IUp:8>>}, Acc) ->
+            [{binary_to_atom(NodeBin), Epoch, IUp =:= 1, Time} | Acc]
+        end,
+        [],
+        heartbeat_topic('+', '+'),
+        #{db => ?DB_GLOB, errors => ignore}
+    ),
+    lists:keysort(4, L).
+
+ls_epochs(Node) ->
+    L = emqx_ds:fold_topic(
+        fun(_, _, {[?top_heartbeat, _, Epoch], _, <<Time:64, IUp:8>>}, Acc) ->
+            [{Epoch, IUp =:= 1, Time} | Acc]
+        end,
+        [],
+        heartbeat_topic(atom_to_binary(Node), '+'),
+        #{db => ?DB_GLOB, errors => ignore}
+    ),
+    lists:keysort(3, L).
 
 -spec now_ms() -> integer().
 now_ms() ->
@@ -404,12 +416,13 @@ handle_heartbeat(State, S0 = #s{this_epoch = LastEpoch, my_last_heartbeat = MLH}
             _ ->
                 LastEpoch
         end,
-    Result = update_epoch(node(), Epoch, now_ms(), true),
+    LEO = now_ms(),
+    Result = update_epoch(node(), Epoch, LEO, true),
     update_epochs(State),
     Timeout = {state_timeout, cfg_heartbeat_interval(), ?heartbeat},
     DeadlineMissed = now_ms() >= (MLH + cfg_missed_heartbeats() / 2),
     case Result of
-        {atomic, _, LEO} ->
+        ok ->
             ?tp(debug, ?tp_heartbeat, #{epoch => Epoch, state => State}),
             S = S0#s{my_last_heartbeat = LEO, this_epoch = Epoch},
             {next_state, ?s_normal, S, Timeout};

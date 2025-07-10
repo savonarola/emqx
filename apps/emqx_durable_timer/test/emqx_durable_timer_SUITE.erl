@@ -61,17 +61,18 @@ t_lazy_initialization(Config) ->
             %% The node should create a new epoch:
             %%
             wait_heartbeat(Node),
-            [{Epoch1, Epoch1Lifetime}] = ?ON(
-                Node, maps:to_list(emqx_durable_timer:ls_epochs(Node))
+            Epoch1 = ?ON(
+                Node, emqx_durable_timer:epoch()
             ),
-            ?assertMatch({T, undefined} when is_integer(T), Epoch1Lifetime),
+            [{Epoch1, true, T1_1}] = ?ON(Node, emqx_durable_timer:ls_epochs(Node)),
             %% Also verify ls_epochs/0 API:
-            NodesEpochs1 = ?ON(Node, emqx_durable_timer:ls_epochs()),
-            [{Node, #{Epoch1 := Epoch1Lifetime}}] = maps:to_list(NodesEpochs1),
+            ?assertMatch(
+                [{Node, Epoch1, true, _}],
+                ?ON(Node, emqx_durable_timer:ls_epochs())
+            ),
             %% Verify that heartbeat is periodically incrementing:
-            {ok, T1_1} = ?ON(Node, emqx_durable_timer:last_heartbeat(Epoch1)),
             wait_heartbeat(Node),
-            {ok, T1_2} = ?ON(Node, emqx_durable_timer:last_heartbeat(Epoch1)),
+            [{Epoch1, true, T1_2}] = ?ON(Node, emqx_durable_timer:ls_epochs(Node)),
             ?assert(is_integer(T1_1), T1_1),
             ?assert(is_integer(T1_2) andalso T1_2 > T1_1, T1_2),
             %%
@@ -84,24 +85,17 @@ t_lazy_initialization(Config) ->
                 Node,
                 ?assertMatch(ok, emqx_durable_test_timer:init())
             ),
+            Epoch2 = ?ON(Node, emqx_durable_timer:epoch()),
             wait_heartbeat(Node),
             %% Restart complete.
-            NodeEpochs2 = ?ON(Node, emqx_durable_timer:ls_epochs(Node)),
             %% Verify that the new epoch has been created:
-            [{Epoch2, {_, undefined}}] = maps:to_list(maps:without([Epoch1], NodeEpochs2)),
-            %% Verify that the old epoch has been marked as closed:
-            ?assertMatch(
-                #{Epoch1 := {Begin, End}} when is_integer(Begin) andalso is_integer(End),
-                NodeEpochs2
-            ),
-            %% Verify that heartbeat for Epoch2 is ticking:
-            {ok, T1_3} = ?ON(Node, emqx_durable_timer:last_heartbeat(Epoch1)),
-            {ok, T2_1} = ?ON(Node, emqx_durable_timer:last_heartbeat(Epoch2)),
+            [{Epoch1, false, T1_3}, {Epoch2, true, T2_1}] =
+                ?ON(Node, emqx_durable_timer:ls_epochs(Node)),
             wait_heartbeat(Node),
-            {ok, T2_2} = ?ON(Node, emqx_durable_timer:last_heartbeat(Epoch2)),
-            %% Heartbeat for epoch1 stays the same:
-            ?assertEqual({ok, T1_3}, ?ON(Node, emqx_durable_timer:last_heartbeat(Epoch1))),
-            %% Epoch2 is ticking:
+            %% Heartbeat for Epoch1 stays the same and Epoch2 is ticking:
+            [{Epoch1, false, T1_3}, {Epoch2, true, T2_2}] = ?ON(
+                Node, emqx_durable_timer:ls_epochs(Node)
+            ),
             ?assert(is_integer(T2_2) andalso T2_2 > T2_1, T2_2)
         after
             emqx_cth_cluster:stop(Cluster)
@@ -294,12 +288,12 @@ no_replay_failures(Trace) ->
 verify_activation(Trace) ->
     ?strict_causality(
         #{?snk_kind := ?tp_test_register, ?snk_meta := #{node := N}},
-        #{?snk_kind := ?tp_state_change, to := isolated, ?snk_meta := #{node := N}},
+        #{?snk_kind := ?tp_state_change, to := {isolated, _}, ?snk_meta := #{node := N}},
         Trace
     ).
 
 %% Verify that none of the workers encountered an unknwon message.
-%% This should alwasy hold.
+%% This should always hold.
 no_unexpected(Trace) ->
     ?assertMatch([], ?of_kind(?tp_unknown_event, Trace)).
 
@@ -422,10 +416,12 @@ do_verify_timers(
         S
     ).
 
+%% This should hold as long as testcase doesn't issue operations that
+%% update the same key in parallel.
 no_read_conflicts(Trace) ->
     ?assertMatch(
         [],
-        ?of_kind(emqx_ds_tx_retry, Trace)
+        [E || E = #{?snk_kind := emqx_ds_tx_retry, reason := {read_conflict, _}} <- Trace]
     ).
 
 %%------------------------------------------------------------------------------
@@ -452,7 +448,7 @@ init_per_testcase(_TC, Config) ->
     Config.
 
 end_per_testcase(TC, Config) ->
-    emqx_cth_suite:clean_work_dir(emqx_cth_suite:work_dir(TC, Config)),
+    %% emqx_cth_suite:clean_work_dir(emqx_cth_suite:work_dir(TC, Config)),
     ok.
 
 cluster(TC, Config, Nnodes, Env) ->

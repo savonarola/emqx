@@ -23,7 +23,7 @@ A process that is responsible for execution of the timers.
      :              v   v     v       v      :  :          v    v
 -----=----=---=--=--=---=--=--=---=-=-=------------------------------> t
      |              |                 |                    |
- del_up_to  fully_replayed_ts   next_wake_up    safe_active_replay_pos
+ del_up_to  fully_replayed_ts   next_wake_up    active_safe_replay_pos
 ```
 
 - `del_up_to` tracks the last garbage collection.
@@ -36,7 +36,7 @@ Invariants:
 - `del_up_to` =< `fully_replayed_ts`
 - `fully_replayed_ts` =< `next_wake_up`
 - `next_wake_up` < `safe_active_replay_pos`
-- All pending transactions that add new timers update entries with timestamp >= `safe_active_replay_pos`
+- All pending transactions that add new timers insert entries with timestamp >= `active_safe_replay_pos`
 
 """.
 
@@ -75,12 +75,6 @@ Invariants:
 %% States:
 -define(s_active, active).
 
--define(is_valid_timer(TYPE, EPOCH, KEY, VALUE, TIME),
-    (TYPE >= 0 andalso TYPE =< ?max_type andalso is_binary(EPOCH) andalso is_binary(KEY) andalso
-        is_binary(VALUE) andalso
-        is_integer(TIME))
-).
-
 %%================================================================================
 %% API functions
 %%================================================================================
@@ -102,7 +96,7 @@ start_link(Type, Epoch, Shard, CBM, WorkerType) ->
     emqx_durable_timer:delay()
 ) -> ok.
 apply_after(Type, Epoch, Key, Val, NotEarlierThan) when
-    ?is_valid_timer(Type, Epoch, Key, Val, NotEarlierThan)
+    ?is_valid_timer(Type, Key, Val, NotEarlierThan) andalso is_binary(Epoch)
 ->
     Shard = emqx_ds:shard_of(?DB_GLOB, Key),
     gen_statem:call(
@@ -119,7 +113,7 @@ apply_after(Type, Epoch, Key, Val, NotEarlierThan) when
     emqx_durable_timer:delay()
 ) -> ok.
 dead_hand(Type, Epoch, Key, Val, NotEarlierThan) when
-    ?is_valid_timer(Type, Epoch, Key, Val, NotEarlierThan)
+    ?is_valid_timer(Type, Key, Val, NotEarlierThan) andalso is_binary(Epoch)
 ->
     Result = emqx_ds:trans(
         trans_opts({auto, Key}, #{}),

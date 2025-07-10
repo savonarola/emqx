@@ -459,7 +459,7 @@ Options for the `subscribe` API.
         shard => shard(),
         generation => generation(),
 
-        errors => crash | report,
+        errors => crash | report | ignore,
         batch_size => pos_integer(),
         start_time => time(),
         end_time => time() | infinity
@@ -1427,6 +1427,8 @@ fold_topic(Fun, AccIn, TopicFilter, UserOpts = #{db := DB}) ->
     end,
     %% Return result:
     case {Errors, ErrorHandling} of
+        {_, ignore} ->
+            Result;
         {[], crash} ->
             Result;
         {_, crash} ->
