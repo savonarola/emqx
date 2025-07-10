@@ -499,7 +499,7 @@ insert_epoch(Shard, Epoch) ->
     {atomic, _, _} = emqx_ds:trans(
         trans_opts(Shard, #{}),
         fun() ->
-            emqx_ds:tx_write({[?top_epoch, Epoch], ?ds_tx_ts_monotonic, Epoch})
+            emqx_ds:tx_write({[?top_epoch, Epoch], ?ds_tx_ts_monotonic, <<>>})
         end
     ),
     ok.

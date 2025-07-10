@@ -24,7 +24,6 @@
 -define(top_deadhand, <<"d">>).
 -define(top_started, <<"s">>).
 -define(top_heartbeat, <<"h">>).
--define(top_nodes, <<"n">>).
 %% Shard-local epochs:
 -define(top_epoch, <<"e">>).
 
