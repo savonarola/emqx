@@ -1,7 +1,7 @@
 %%--------------------------------------------------------------------
 %% Copyright (c) 2025 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
--module(emqx_durable_test_timer).
+-module(emqx_durable_test_timer2).
 
 %% API:
 -export([init/0, apply_after/3, dead_hand/3, cancel/1]).
@@ -35,7 +35,7 @@ cancel(Key) ->
 %% behavior callbacks
 %%================================================================================
 
-durable_timer_type() -> 16#fffffffe.
+durable_timer_type() -> 16#ffffffff.
 
 timer_introduced_in() -> "6.0.0".
 

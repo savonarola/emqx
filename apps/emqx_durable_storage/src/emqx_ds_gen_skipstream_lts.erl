@@ -676,7 +676,13 @@ fold_loop(Ctx, SK0, BatchSize, Op, Acc0) ->
                     fold_loop(Ctx, SK, BatchSize - 1, next, Acc);
                 false ->
                     fold_loop(Ctx, SK, BatchSize, next, Acc0)
-            end
+            end;
+        Other ->
+            error(
+                {fixme, #{
+                    result => Other, cts => Ctx, sk => SK0, bs => BatchSize, op => Op, acc => Acc0
+                }}
+            )
     end.
 
 fold_step(

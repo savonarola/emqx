@@ -51,7 +51,7 @@ Invariants:
 %% internal exports:
 -export([ls/0, dead_hand_topic/3, started_topic/3]).
 
--export_type([type/0]).
+-export_type([kind/0]).
 
 -include_lib("emqx_durable_storage/include/emqx_ds.hrl").
 -include("internals.hrl").
@@ -60,10 +60,10 @@ Invariants:
 %% Type declarations
 %%================================================================================
 
--type type() :: active | dead_hand | active_replay.
+-type kind() :: active | {closed, started | dead_hand}.
 
--define(name(TYPE, EPOCH, SHARD), {n, l, {?MODULE, TYPE, EPOCH, SHARD}}).
--define(via(TYPE, EPOCH, SHARD), {via, gproc, ?name(TYPE, EPOCH, SHARD)}).
+-define(name(WORKER_KIND, TYPE, EPOCH, SHARD), {n, l, {?MODULE, WORKER_KIND, TYPE, EPOCH, SHARD}}).
+-define(via(WORKER_KIND, TYPE, EPOCH, SHARD), {via, gproc, ?name(WORKER_KIND, TYPE, EPOCH, SHARD)}).
 
 -record(call_apply_after, {
     k :: emqx_durable_timer:key(),
@@ -74,18 +74,19 @@ Invariants:
 
 %% States:
 -define(s_active, active).
+-define(s_candidate(KIND), {candidate, KIND}).
 
 %%================================================================================
 %% API functions
 %%================================================================================
 
 -spec start_link(
-    emqx_durable_timer:type(), emqx_durable_timer:epoch(), emqx_ds:shard(), module(), type()
+    emqx_durable_timer:type(), emqx_durable_timer:epoch(), emqx_ds:shard(), module(), kind()
 ) ->
     {ok, pid()}.
-start_link(Type, Epoch, Shard, CBM, WorkerType) ->
+start_link(Type, Epoch, Shard, CBM, WorkerKind) ->
     gen_statem:start_link(
-        ?via(Type, Epoch, Shard), ?MODULE, [Type, CBM, Epoch, Shard, WorkerType], []
+        ?via(WorkerKind, Type, Epoch, Shard), ?MODULE, [WorkerKind, Type, CBM, Epoch, Shard], []
     ).
 
 -spec apply_after(
@@ -100,7 +101,7 @@ apply_after(Type, Epoch, Key, Val, NotEarlierThan) when
 ->
     Shard = emqx_ds:shard_of(?DB_GLOB, Key),
     gen_statem:call(
-        ?via(Type, Epoch, Shard),
+        ?via(active, Type, Epoch, Shard),
         #call_apply_after{k = Key, v = Val, t = NotEarlierThan},
         infinity
     ).
@@ -173,21 +174,34 @@ cancel(Type, _Epoch, Key) ->
 
 callback_mode() -> [handle_event_function, state_enter].
 
-init([Type, CBM, Epoch, Shard, active]) ->
+init([WorkerKind, Type, CBM, Epoch, Shard]) ->
     process_flag(trap_exit, true),
     logger:update_process_metadata(
-        #{worker_type => active, epoch => Epoch, shard => Shard}
+        #{kind => WorkerKind, type => Type, epoch => Epoch, shard => Shard}
     ),
-    insert_epoch(Shard, Epoch),
-    D = #s{
-        type = Type,
-        cbm = CBM,
-        epoch = Epoch,
-        shard = Shard,
-        pending_tab = addq_new(),
-        replay_pos = undefined
-    },
-    {ok, ?s_active, D}.
+    ?tp(?tp_worker_started, #{}),
+    case WorkerKind of
+        active ->
+            insert_epoch(Shard, Epoch),
+            D = #s{
+                type = Type,
+                cbm = CBM,
+                epoch = Epoch,
+                shard = Shard,
+                pending_tab = addq_new(),
+                replay_pos = undefined
+            },
+            {ok, ?s_active, D};
+        {closed, Closed} ->
+            D = #s{
+                type = Type,
+                cbm = CBM,
+                epoch = Epoch,
+                shard = Shard,
+                replay_pos = undefined
+            },
+            {ok, ?s_candidate(Closed), D}
+    end.
 
 %% Active:
 handle_event(enter, _, ?s_active, _) ->
@@ -206,6 +220,9 @@ handle_event(_ET, ?ds_tx_commit_reply(Ref, Reply), ?s_active, Data) ->
     handle_ds_reply(Ref, Reply, Data);
 handle_event(info, #cast_wake_up{t = Treached}, ?s_active, Data) ->
     clean_replayed(?s_active, replay_active(Data, Treached));
+%% Candidate:
+handle_event(enter, _, ?s_candidate(_), _) ->
+    keep_state_and_data;
 %% Common:
 handle_event(ET, Event, State, Data) ->
     ?tp(error, ?tp_unknown_event, #{m => ?MODULE, ET => Event, state => State, data => Data}),
@@ -221,7 +238,7 @@ terminate(_Reason, _State, _D) ->
 %% @doc Display all active workers:
 -spec ls() -> [{emqx_durable_timer:type(), emqx_durable_timer:epoch(), emqx_ds:shard()}].
 ls() ->
-    MS = {{?name('$1', '$2', '$3'), '_', '_'}, [], [{{'$1', '$2', '$3'}}]},
+    MS = {{?name('$1', '$2', '$3', '$4'), '_', '_'}, [], [{{'$1', '$2', '$3', '$4'}}]},
     gproc:select({local, names}, [MS]).
 
 dead_hand_topic(Type, NodeEpochId, Key) ->

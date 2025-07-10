@@ -45,9 +45,9 @@ t_lazy_initialization(Config) ->
             %% activate the application. Expect: node adds its
             %% metadata to the tables.
             %%
-            ?ON(
-                Node,
-                ?assertMatch(ok, emqx_durable_test_timer:init())
+            ?assertMatch(
+                ok,
+                ?ON(Node, emqx_durable_test_timer:init())
             ),
             %% Verify that the node has opened the DB:
             ?ON(
@@ -96,7 +96,14 @@ t_lazy_initialization(Config) ->
             [{Epoch1, false, T1_3}, {Epoch2, true, T2_2}] = ?ON(
                 Node, emqx_durable_timer:ls_epochs(Node)
             ),
-            ?assert(is_integer(T2_2) andalso T2_2 > T2_1, T2_2)
+            ?assert(is_integer(T2_2) andalso T2_2 > T2_1, T2_2),
+            %% Register a new type, verify that workers have been started:
+            ?assertMatch(
+                ok,
+                ?ON(Node, emqx_durable_test_timer2:init())
+            ),
+            wait_heartbeat(Node),
+            {Epoch1, Epoch2}
         after
             emqx_cth_cluster:stop(Cluster)
         end,
@@ -105,7 +112,34 @@ t_lazy_initialization(Config) ->
             fun no_read_conflicts/1,
             fun no_replay_failures/1,
             fun verify_timers/1,
-            fun verify_activation/1
+            {"Workers lifetime", fun({Epoch1, Epoch2}, Trace) ->
+                F = fun(#{kind := A}, #{kind := B}) -> A =< B end,
+                %% Trace before and after restart:
+                {T1, T23} = ?split_trace_at(#{?snk_kind := test_restart_cluster}, Trace),
+                %% Trace before and after registration of the second type:
+                {T2, T3} = ?split_trace_at(#{?snk_kind := ?tp_register, type := 16#ffffffff}, T23),
+                ?assertMatch(
+                    [#{type := 16#fffffffe, kind := active, epoch := Epoch1}],
+                    ?projection(?snk_meta, ?of_kind(?tp_worker_started, T1))
+                ),
+                ?assertMatch(
+                    [
+                        #{type := 16#fffffffe, kind := active, epoch := Epoch2},
+                        #{type := 16#fffffffe, kind := {closed, dead_hand}, epoch := Epoch1},
+                        #{type := 16#fffffffe, kind := {closed, started}, epoch := Epoch1}
+                    ],
+                    lists:sort(F, ?projection(?snk_meta, ?of_kind(?tp_worker_started, T2)))
+                ),
+                %% Verify that workers have been spawned after type 2 was registered:
+                ?assertMatch(
+                    [
+                        #{type := 16#ffffffff, kind := active, epoch := Epoch2},
+                        #{type := 16#ffffffff, kind := {closed, dead_hand}, epoch := Epoch1},
+                        #{type := 16#ffffffff, kind := {closed, started}, epoch := Epoch1}
+                    ],
+                    lists:sort(F, ?projection(?snk_meta, ?of_kind(?tp_worker_started, T3)))
+                )
+            end}
         ]
     ).
 
@@ -283,14 +317,6 @@ t_cancellation(Config) ->
 %% property should hold as long as DS state is not degraded.
 no_replay_failures(Trace) ->
     ?assertMatch([], ?of_kind(?tp_replay_failed, Trace)).
-
-%% This property is specific for the testcase.
-verify_activation(Trace) ->
-    ?strict_causality(
-        #{?snk_kind := ?tp_test_register, ?snk_meta := #{node := N}},
-        #{?snk_kind := ?tp_state_change, to := {isolated, _}, ?snk_meta := #{node := N}},
-        Trace
-    ).
 
 %% Verify that none of the workers encountered an unknwon message.
 %% This should always hold.

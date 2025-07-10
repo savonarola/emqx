@@ -290,10 +290,14 @@ handle_event(enter, PrevState, ?s_normal, S = #s{this_epoch = Epoch}) ->
     _ = [update_epoch(node(), E, LH, false) || {E, Up, LH} <- ls_epochs(node()), E =/= Epoch, Up],
     %% Create and init epoch table:
     ets:new(?epoch_tab, [protected, named_table, set, {keypos, #ei.k}]),
-    _DownEpochs = update_epochs(?s_normal),
+    %% Read peer info and start replayers of closed epochs:
+    lists:foreach(
+        fun(E) -> start_closed({epoch, E}, S) end,
+        update_epochs(?s_normal)
+    ),
     %% Restart workers:
     ok = emqx_durable_timer_sup:start_worker_sup(),
-    start_workers(S),
+    start_active(S),
     %% Set epoch:
     optvar:set(?epoch_optvar, Epoch),
     %% Read epochs:
@@ -390,11 +394,14 @@ handle_register(State, Module, Data0 = #s{regs = Regs}, From) ->
                 Data = Data0;
             #{} ->
                 Data = Data0#s{regs = Regs#{Type => Module}},
-                ok =
-                    case State of
-                        ?s_normal -> start_workers(Type, Data);
-                        ?s_isolated(_) -> ok
-                    end,
+                ?tp(?tp_register, #{type => Type, cbm => Module}),
+                case State of
+                    ?s_normal ->
+                        start_active(Type, Data),
+                        start_closed({type, Type}, Data);
+                    ?s_isolated(_) ->
+                        ok
+                end,
                 Reply = ok
         end,
         {keep_state, Data, {reply, From, Reply}}
@@ -577,15 +584,15 @@ epoch_trans(Epoch, Fun) ->
         Fun
     ).
 
-start_workers(S = #s{regs = Regs}) ->
+start_active(S = #s{regs = Regs}) ->
     maps:foreach(
-        fun(Type, _CBM) ->
-            start_workers(Type, S)
+        fun(Type, _) ->
+            start_active(Type, S)
         end,
         Regs
     ).
 
-start_workers(Type, #s{regs = Regs, this_epoch = Epoch}) ->
+start_active(Type, #s{regs = Regs, this_epoch = Epoch}) ->
     #{Type := CBM} = Regs,
     lists:foreach(
         fun(Shard) ->
@@ -593,6 +600,36 @@ start_workers(Type, #s{regs = Regs, this_epoch = Epoch}) ->
         end,
         shards()
     ).
+
+start_closed({epoch, Epoch}, S = #s{regs = Regs}) ->
+    maps:foreach(
+        fun(Type, _) ->
+            start_closed(Type, Epoch, S)
+        end,
+        Regs
+    );
+start_closed({type, Type}, S) ->
+    lists:foreach(
+        fun(Epoch) ->
+            start_closed(Type, Epoch, S)
+        end,
+        closed_epochs()
+    ).
+
+start_closed(Type, Epoch, #s{regs = Regs}) ->
+    #{Type := CBM} = Regs,
+    lists:foreach(
+        fun(Shard) ->
+            ok = emqx_durable_timer_sup:start_worker(Type, Epoch, Shard, CBM, {closed, started}),
+            ok = emqx_durable_timer_sup:start_worker(Type, Epoch, Shard, CBM, {closed, dead_hand})
+        end,
+        shards()
+    ).
+
+-dialyzer({nowarn_function, closed_epochs/0}).
+closed_epochs() ->
+    MS = {#ei{k = '$1', up = false, _ = '_'}, [], ['$1']},
+    ets:select(?epoch_tab, [MS]).
 
 shards() ->
     Gen = generation(?DB_GLOB),
