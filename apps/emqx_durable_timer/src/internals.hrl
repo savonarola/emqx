@@ -25,6 +25,8 @@
 -define(top_started, <<"s">>).
 -define(top_heartbeat, <<"h">>).
 -define(top_nodes, <<"n">>).
+%% Shard-local epochs:
+-define(top_epoch, <<"e">>).
 
 -define(type_bits, 32).
 -define(max_type, (1 bsl ?type_bits - 1)).

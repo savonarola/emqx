@@ -36,6 +36,7 @@ init() ->
         ok = emqx_ds:open_db(?PERSISTENT_MESSAGE_DB, get_db_config()),
         ok = emqx_persistent_session_ds_router:init_tables(),
         ok = emqx_persistent_session_ds:create_tables(),
+        ok = emqx_persistent_session_ds_gc_timer:init(),
         ok = emqx_durable_will:init()
     end).
 

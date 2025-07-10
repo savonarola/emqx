@@ -119,6 +119,7 @@ t_lazy_initialization(Config) ->
 %% owner node is not restarted.
 t_normal_execution(Config) ->
     Cluster = cluster(?FUNCTION_NAME, Config, 1, []),
+    Type = emqx_durable_test_timer:durable_timer_type(),
     ?check_trace(
         #{timetrap => 15_000},
         try
@@ -173,9 +174,7 @@ t_normal_execution(Config) ->
                     begin
                         %% Derive topic name:
                         DHT = emqx_durable_timer_worker:dead_hand_topic(
-                            emqx_durable_test_timer:durable_timer_type(),
-                            emqx_durable_timer:epoch(),
-                            '+'
+                            Type, emqx_durable_timer:epoch(), '+'
                         ),
                         %% 1. Set up a dead hand timer with key <<3>>
                         ok = emqx_durable_test_timer:dead_hand(<<3>>, <<1>>, 0),
@@ -188,6 +187,26 @@ t_normal_execution(Config) ->
                 ),
                 #{?snk_kind := ?tp_fire, key := <<3>>, val := <<2>>},
                 infinity
+            ),
+            ct:sleep(1000),
+            %% Verify that all timers have been GC'd:
+            ?assertMatch(
+                [],
+                ?ON(
+                    Node,
+                    emqx_ds:dirty_read(
+                        ?DB_GLOB, emqx_durable_timer_worker:dead_hand_topic(Type, '+', '+')
+                    )
+                )
+            ),
+            ?assertMatch(
+                [],
+                ?ON(
+                    Node,
+                    emqx_ds:dirty_read(
+                        ?DB_GLOB, emqx_durable_timer_worker:started_topic(Type, '+', '+')
+                    )
+                )
             ),
             ok
         after

@@ -379,17 +379,20 @@ handle_register(State, Module, Data0 = #s{regs = Regs}, From) ->
     try
         Type = Module:durable_timer_type(),
         case Regs of
+            #{Type := Module} ->
+                Reply = ok,
+                Data = Data0;
             #{Type := OldMod} ->
                 Reply = {error, {already_registered, OldMod}},
                 Data = Data0;
             #{} ->
+                Data = Data0#s{regs = Regs#{Type => Module}},
                 ok =
                     case State of
-                        ?s_normal -> start_workers(Type, Data0);
+                        ?s_normal -> start_workers(Type, Data);
                         ?s_isolated -> ok
                     end,
-                Reply = ok,
-                Data = Data0#s{regs = Regs#{Type => Module}}
+                Reply = ok
         end,
         {keep_state, Data, {reply, From, Reply}}
     catch
