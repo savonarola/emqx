@@ -103,12 +103,21 @@ If it fails it may be because the local node itself is isolated.
 
 -define(APP, emqx_durable_timer).
 -define(epoch_optvar, {?MODULE, epoch}).
+-define(epoch_tab, ?MODULE).
+
+-record(ei, {
+    k :: epoch(),
+    node :: node(),
+    up :: boolean(),
+    last_heartbeat :: integer(),
+    missed_heartbeats = 0 :: integer()
+}).
 
 -record(s, {
     regs = #{} :: #{type() => module()},
     this_epoch :: epoch() | undefined,
     my_last_heartbeat :: non_neg_integer() | undefined,
-    epochs :: #{node() => #{epoch() => epoch_lifetime()}}
+    epochs :: ets:tid()
 }).
 
 -doc "Unique ID of the timer event".
@@ -192,6 +201,9 @@ dead_hand(Type, Key, Value, Delay) when
     Epoch = epoch(),
     emqx_durable_timer_worker:dead_hand(Type, Epoch, Key, Value, Delay).
 
+-doc """
+Create a timer that activates immediately.
+""".
 -spec apply_after(type(), key(), value(), delay()) -> ok | emqx_ds:error(_).
 apply_after(Type, Key, Value, Delay) when
     Type >= 0,
@@ -326,6 +338,8 @@ ls_epochs() ->
         )
     ).
 
+
+
 -spec last_heartbeat(epoch()) -> {ok, integer()} | undefined.
 last_heartbeat(Epoch) when is_binary(Epoch) ->
     Result = ?retry_fold(
@@ -369,7 +383,7 @@ real_init() ->
             ok = ensure_tables(),
             maybe_close_prev_epoch(),
             #s{
-                epochs = ls_epochs(),
+                epochs = ets:new(?epoch_tab, [private, set, {keypos, #ei.k}]),
                 my_last_heartbeat = now_ms()
             }
         end
@@ -492,8 +506,31 @@ maybe_close_prev_epoch() ->
         ls_epochs(node())
     ).
 
-traverse_epochs(_Slab, _Stream, {[_, NodeBin, Epoch], Time, Val}, Acc0) ->
+traverse_epochs(_Slab, _Stream, {[_, NodeBin, Epoch], Time, Val}, Acc) ->
     Node = binary_to_atom(NodeBin),
+    case ets:lookup(?epoch_tab, Epoch) of
+        [EI = #ei{up = Up, last_heartbeat = LH, missed_heartbeats = MH}] ->
+            %% Known node:
+            case Time of
+                LH when Up ->
+                    %% Node was up and now it's missed a heartbeat:
+                    case cfg_missed_heartbeats() of
+                        MaxMissed when MH >= MaxMissed ->
+                            %% Node went down:
+                            ets:insert(?epoch_tab, EI#ei{up = false}),
+                            [Epoch | Acc];
+                         _ ->
+                            ets:insert(?epoch_tab, EI#ei{missed_heartbeats = MH + 1}),
+                            Acc
+                    end;
+                _ ->
+                    %% Node has updated the heartbeat:
+                    ets:insert(?epoch_tab, EI#ei{last_heartbeat = Time, missed_heartbeats = 0}),
+                    Acc
+            end
+    end.
+
+
     Acc = maps:merge(#{Node => #{}}, Acc0),
     maps:update_with(
         Node,
@@ -511,7 +548,8 @@ traverse_epochs(_Slab, _Stream, {[_, NodeBin, Epoch], Time, Val}, Acc0) ->
             )
         end,
         Acc
-    ).
+    )
+    end.
 
 update_epoch(Node, Epoch, Val) ->
     case epoch_trans(Epoch, fun() -> tx_update_epoch(Node, Epoch, Val) end) of
@@ -561,7 +599,7 @@ cfg_heartbeat_interval() ->
     application:get_env(?APP, heartbeat_interval, 5_000).
 
 cfg_missed_heartbeats() ->
-    application:get_env(?APP, missed_heartbeats, 30_000).
+    application:get_env(?APP, missed_heartbeats, 5).
 
 cfg_replay_retry_interval() ->
     application:get_env(?APP, replay_retry_interval, 500).
