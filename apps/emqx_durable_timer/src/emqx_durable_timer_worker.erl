@@ -387,13 +387,18 @@ get_iterator(_State, #s{replay_pos = ReplayPos}) ->
 %%
 %% This function prevents iterator from advancing past the earliest
 %% timestamp that is being added via a pending transaction.
-active_safe_replay_pos(#s{pending_tab = Tab}, T) ->
-    case addq_first(Tab) of
-        undefined ->
-            T;
-        Bound when is_integer(Bound) ->
-            max(Bound, T)
-    end.
+active_safe_replay_pos(#s{pending_tab = Tab, fully_replayed_ts = FullyReplayed}, T) ->
+    %% 1. We should not attempt to move `fully_replayed_ts' backwards:
+    max(
+        FullyReplayed,
+        case addq_first(Tab) of
+            undefined ->
+                T;
+            MinPending when is_integer(MinPending) ->
+                %% 2. We cannot wake up earlier than `MinPending':
+                max(MinPending, T)
+        end
+    ).
 
 handle_apply_after(From, Key, Val, NotEarlierThan, #s{
     type = Type, epoch = Epoch, pending_tab = Tab
@@ -424,22 +429,24 @@ handle_apply_after(From, Key, Val, NotEarlierThan, #s{
 handle_ds_reply(Ref, DSReply, D = #s{pending_tab = Tab}) ->
     case addq_pop(Ref, Tab) of
         {Time, From} ->
-            case emqx_ds:tx_commit_outcome(?DB_GLOB, Ref, DSReply) of
-                {ok, _Serial} ->
-                    ?tp_ignore_side_effects_in_prod(?tp_apply_after_write_ok, #{ref => Ref}),
-                    handle_add_timer(Time, From, D);
-                Reply ->
-                    ?tp_ignore_side_effects_in_prod(?tp_apply_after_write_fail, #{
-                        ref => Ref, reason => Reply
-                    }),
-                    {keep_state_and_data, [{reply, From, Reply}]}
-            end;
+            Result =
+                case emqx_ds:tx_commit_outcome(?DB_GLOB, Ref, DSReply) of
+                    {ok, _} ->
+                        ?tp_ignore_side_effects_in_prod(?tp_apply_after_write_ok, #{ref => Ref}),
+                        ok;
+                    Err ->
+                        ?tp_ignore_side_effects_in_prod(?tp_apply_after_write_fail, #{
+                            ref => Ref, reason => Err
+                        }),
+                        Err
+                end,
+            active_schedule_wake_up(Time, D, {reply, From, Result});
         undefined ->
             ?tp(error, ?tp_unknown_event, #{m => ?MODULE, event => DSReply}),
             keep_state_and_data
     end.
 
-handle_add_timer(Time, From, D0 = #s{next_wakeup = NextWakeUp}) ->
+active_schedule_wake_up(Time, D0 = #s{next_wakeup = NextWakeUp}, Effects) ->
     D =
         case active_safe_replay_pos(D0, Time) of
             TMax when TMax > NextWakeUp ->
@@ -451,7 +458,7 @@ handle_add_timer(Time, From, D0 = #s{next_wakeup = NextWakeUp}) ->
                 %% Wake up timer already exists
                 D0
         end,
-    {keep_state, D, {reply, From, ok}}.
+    {keep_state, D, Effects}.
 
 -spec handle_timeout(
     emqx_durable_timer:type(),

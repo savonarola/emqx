@@ -313,6 +313,7 @@ no_unexpected(Trace) ->
 -record(vs, {
     active = #{},
     dead_hand = #{},
+    stats = [],
     errors = []
 }).
 
@@ -321,13 +322,30 @@ no_unexpected(Trace) ->
 verify_timers(Trace) ->
     do_verify_timers(Trace, #vs{}).
 
-do_verify_timers([], #vs{errors = Errors}) ->
+do_verify_timers([], #vs{errors = Errors, stats = Stats}) ->
+    case Stats of
+        [] ->
+            ok;
+        _ ->
+            Min = lists:min(Stats),
+            Max = lists:max(Stats),
+            Median = median(Stats),
+            ct:pal(
+                """
+                Deviation statistics (ms):
+                   Min:    ~p
+                   Max:    ~p
+                   Median: ~p
+                """,
+                [Min, Max, Median]
+            )
+    end,
     ?assertMatch([], Errors);
 do_verify_timers(
     [TP = #{?snk_kind := Kind, ?snk_meta := #{time := TimeUs}} | Trace], S0
 ) ->
     TS = erlang:convert_time_unit(TimeUs, microsecond, millisecond),
-    #vs{active = A0, dead_hand = DH0, errors = Err0} = S0,
+    #vs{active = A0, dead_hand = DH0, errors = Err0, stats = Stats0} = S0,
     S =
         case Kind of
             ?tp_new_apply_after ->
@@ -352,20 +370,11 @@ do_verify_timers(
                 #{type := T, key := K, val := ValGot} = TP,
                 case maps:take({T, K}, A0) of
                     {#ats{val = ValExpected, min_ts = MinTS}, A} ->
-                        Err =
-                            case ValExpected of
-                                ValGot when MinTS < TS ->
-                                    [];
-                                ValGot ->
-                                    [
-                                        #{
-                                            '_' => fired_too_early,
-                                            k => K,
-                                            expected => MinTS,
-                                            t => TS,
-                                            v => ValGot
-                                        }
-                                    ];
+                        %% Check value:
+                        Err1 =
+                            case ValGot of
+                                ValExpected ->
+                                    Err0;
                                 _ ->
                                     [
                                         #{
@@ -374,11 +383,31 @@ do_verify_timers(
                                             expected => ValExpected,
                                             got => ValGot
                                         }
+                                        | Err0
+                                    ]
+                            end,
+                        %% Check delay:
+                        Diff = TS - MinTS,
+                        Err =
+                            case Diff >= 0 of
+                                true ->
+                                    Err1;
+                                false ->
+                                    [
+                                        #{
+                                            '_' => fired_too_early,
+                                            k => K,
+                                            expected => MinTS,
+                                            t => TS,
+                                            v => ValGot
+                                        }
+                                        | Err1
                                     ]
                             end,
                         S0#vs{
                             active = A,
-                            errors = Err ++ Err0
+                            stats = [Diff | Stats0],
+                            errors = Err
                         };
                     error ->
                         S0#vs{
@@ -420,11 +449,10 @@ end_per_suite(_Config) ->
     ok.
 
 init_per_testcase(_TC, Config) ->
-    %% snabbkaffe:fix_ct_logging(),
     Config.
 
 end_per_testcase(TC, Config) ->
-    %% emqx_cth_suite:clean_work_dir(emqx_cth_suite:work_dir(TC, Config)),
+    emqx_cth_suite:clean_work_dir(emqx_cth_suite:work_dir(TC, Config)),
     ok.
 
 cluster(TC, Config, Nnodes, Env) ->
@@ -462,3 +490,14 @@ fix_logging() ->
             config => #{file => "erlang.log", max_no_files => 1}
         }
     ).
+
+median(L0) ->
+    L = lists:sort(L0),
+    N = length(L),
+    case N rem 2 of
+        1 ->
+            lists:nth(N div 2 + 1, L);
+        0 ->
+            [A, B | _] = lists:nthtail(N div 2 - 1, L),
+            (A + B) / 2
+    end.
