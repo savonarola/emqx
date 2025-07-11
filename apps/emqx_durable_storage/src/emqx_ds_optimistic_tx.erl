@@ -393,11 +393,12 @@ try_commit(
 ) ->
     #ds_tx{
         ctx = Ctx,
-        ops = Ops,
+        ops = Ops0,
         from = From,
         ref = Ref,
         meta = Meta
     } = Tx,
+    Ops = preprocess_ops(PresumedCommitSerial, Ops0),
     #kv_tx_ctx{serial = TxStartSerial} = Ctx,
     maybe
         ok ?= check_conflicts(DirtyW0, DirtyD0, TxStartSerial, SafeToReadSerial, Ops),
@@ -542,6 +543,29 @@ rotate(D = #d{gens = Gens0}) ->
         gens = Gens,
         last_rotate_ts = erlang:monotonic_time(millisecond)
     }.
+
+preprocess_ops(_PresumedCommitSerial, Tx) ->
+    MonotonicTS = get_monotonic_timestamp(),
+    maps:map(
+        fun
+            (?ds_tx_delete_topic, Ops) ->
+                preprocess_deletes(MonotonicTS, Ops);
+            (_Key, Ops) ->
+                Ops
+        end,
+        Tx
+    ).
+
+preprocess_deletes(MonotonicTS, Ops) ->
+    lists:map(
+        fun
+            ({TopicFilter, From, ?ds_tx_ts_monotonic}) ->
+                {TopicFilter, From, MonotonicTS};
+            (A) ->
+                A
+        end,
+        Ops
+    ).
 
 check_conflicts(DirtyW, DirtyD, TxStartSerial, SafeToReadSerial, Ops) ->
     maybe

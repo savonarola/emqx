@@ -6,6 +6,7 @@
 -compile(export_all).
 -compile(nowarn_export_all).
 
+-include_lib("emqx_durable_storage/include/emqx_ds.hrl").
 -include("../../emqx/include/emqx.hrl").
 -include("../../emqx_durable_storage/include/emqx_ds.hrl").
 -include_lib("common_test/include/ct.hrl").
@@ -2261,7 +2262,27 @@ t_28_ttv_time_limited(Config) ->
                     Got = emqx_ds:tx_read(#{end_time => 70}, ['#']),
                     Compare(0, 70, Msgs2, Got)
                 end
-            )
+            ),
+            %% Test deletion with monotonic ts limit:
+            Trans(
+              fun() ->
+                      emqx_ds:tx_write({[<<"foo">>], ?ds_tx_ts_monotonic, <<1>>})
+              end
+             ),
+            ?assertMatch(
+               [{_, _, <<1>>}],
+               emqx_ds:dirty_read(DB, [<<"foo">>])
+              ),
+            Trans(
+              fun() ->
+                      emqx_ds:tx_write({[<<"foo">>], ?ds_tx_ts_monotonic, <<2>>}),
+                      emqx_ds:tx_del_topic([<<"foo">>], 0, ?ds_tx_ts_monotonic)
+              end
+             ),
+            ?assertMatch(
+               [{_, _, <<2>>}],
+               emqx_ds:dirty_read(DB, [<<"foo">>])
+              )
         end,
         []
     ).

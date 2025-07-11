@@ -271,7 +271,7 @@ Options for limiting the number of streams.
 
 -type delete_next_result() :: delete_next_result(delete_iterator()).
 
--type topic_range() :: {topic(), time(), time()}.
+-type topic_range() :: {topic(), time(), time() | ?ds_tx_ts_monotonic}.
 
 -type error(Reason) :: {error, recoverable | unrecoverable, Reason}.
 
@@ -512,7 +512,7 @@ Options for the `subscribe` API.
 -define(is_time_range(FROM, TO),
     (is_integer(FROM) andalso
         FROM >= 0 andalso
-        (is_integer(TO) orelse TO =:= infinity) andalso
+        (is_integer(TO) orelse TO =:= infinity orelse TO =:= ?ds_tx_ts_monotonic) andalso
         TO >= FROM)
 ).
 
@@ -1161,7 +1161,7 @@ NOTE: Use `<<>>` instead of `''` for empty topic levels
 
 """.
 -doc #{title => <<"Transactions">>, since => <<"6.0.0">>}.
--spec tx_del_topic(topic_filter(), time(), time()) -> ok.
+-spec tx_del_topic(topic_filter(), time(), time() | ?ds_tx_ts_monotonic) -> ok.
 tx_del_topic(TopicFilter, From, To) ->
     case is_topic_filter(TopicFilter) of
         true when ?is_time_range(From, To) ->
