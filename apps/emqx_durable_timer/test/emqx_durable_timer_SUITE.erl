@@ -424,7 +424,7 @@ t_dead_hand(Config) ->
             %% Shut down the first node and wait for dead the event:
             ?wait_async_action(
                 emqx_cth_cluster:stop([N1]),
-                #{?snk_kind := ?tp_test_fire, key := <<1>>, value := <<1>>}
+                #{?snk_kind := ?tp_test_fire, key := <<1>>, val := <<1>>}
             )
         end,
         [
@@ -501,10 +501,10 @@ do_verify_timers(
                     dead_hand = maps:remove(K, DH0)
                 };
             ?tp_new_dead_hand ->
-                #{type := T, key := K, val := ValGot, delay := Delay} = TP,
+                #{type := T, key := K, val := Val, delay := Delay, epoch := Epoch} = TP,
                 S0#vs{
                     active = maps:remove({T, K}, A0),
-                    dead_hand = DH0#{{T, K} => {ValGot, Delay}}
+                    dead_hand = DH0#{{T, K} => {Epoch, Val, Delay}}
                 };
             ?tp_delete ->
                 #{type := T, key := K} = TP,
@@ -512,6 +512,14 @@ do_verify_timers(
                     active = maps:remove({T, K}, A0),
                     dead_hand = maps:remove({T, K}, DH0)
                 };
+            ?tp_update_epoch ->
+                #{epoch := Epoch, up := IsUp} = TP,
+                case IsUp of
+                    true ->
+                        S0;
+                    false ->
+                        epoch_down(Epoch, TS, S0)
+                end;
             ?tp_fire ->
                 #{type := T, key := K, val := ValGot} = TP,
                 case maps:take({T, K}, A0) of
@@ -567,6 +575,24 @@ do_verify_timers(
         Trace,
         S
     ).
+
+epoch_down(Epoch, TS, S = #vs{dead_hand = DH0, active = A}) ->
+    New = maps:filtermap(
+        fun(_Key, {E, Val, Delay}) ->
+            case E of
+                Epoch ->
+                    {true, #ats{val = Val, min_ts = Delay + TS}};
+                _ ->
+                    false
+            end
+        end,
+        DH0
+    ),
+    DH = maps:without(maps:keys(New), DH0),
+    S#vs{
+        active = maps:merge(A, New),
+        dead_hand = DH
+    }.
 
 %% This should hold as long as testcase doesn't issue operations that
 %% update the same key in parallel.

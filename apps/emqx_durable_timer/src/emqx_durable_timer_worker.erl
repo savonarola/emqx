@@ -261,14 +261,16 @@ init_leader(State, Data0) ->
             self() ! #cast_wake_up{t = emqx_durable_timer:now_ms()},
             {keep_state, Data};
         undefined ->
-            complete_replay(State, Data0)
+            complete_replay(State, Data0, 0)
     end.
 
 %%--------------------------------------------------------------------------------
 %% Replay
 %%--------------------------------------------------------------------------------
 
-handle_wake_up(State, Data0 = #s{time_delta = Delta}, Treached) ->
+handle_wake_up(
+    State, Data0 = #s{time_delta = Delta, fully_replayed_ts = FullyReplayedTS0}, Treached
+) ->
     Bound = Treached + 1,
     DSBatchSize =
         case State of
@@ -277,10 +279,15 @@ handle_wake_up(State, Data0 = #s{time_delta = Delta}, Treached) ->
             _ ->
                 emqx_durable_timer:cfg_batch_size()
         end,
-    case replay_timers(Data0, Bound, DSBatchSize) of
-        end_of_stream ->
+    Result = ?tp_span(
+        ?tp_replay,
+        #{bound => Bound, fully_replayed_ts => FullyReplayedTS0},
+        replay_timers(State, Data0, Bound, DSBatchSize)
+    ),
+    case Result of
+        {end_of_stream, FullyReplayedTS} ->
             ?s_leader(_) = State,
-            complete_replay(State, Data0);
+            complete_replay(State, Data0, FullyReplayedTS);
         {ok, Data} ->
             clean_replayed(schedule_next_wake_up(State, Data));
         {retry, Data, Reason} ->
@@ -306,38 +313,44 @@ schedule_next_wake_up(?s_leader(_), #s{tail = Tail, time_delta = Delta}) ->
         #cast_wake_up{t = T}
     ).
 
-complete_replay(?s_leader(_Closed), #s{shard = _Shard, epoch = _Epoch}) ->
+complete_replay(
+    ?s_leader(_Closed), #s{shard = Shard, topic = Topic, epoch = _Epoch}, FullyReplayedTS
+) ->
+    emqx_durable_timer_dl:clean_replayed(Shard, Topic, FullyReplayedTS),
     {stop, normal}.
 
-replay_timers(S = #s{fully_replayed_ts = FullyReplayedTS0, replay_pos = It0}, Bound, DSBatchSize) ->
-    ?tp_span(
-        ?tp_replay,
-        #{s => S, bound => Bound, fully_replayed_ts => FullyReplayedTS0},
-        case do_replay_timers(S, It0, Bound, DSBatchSize, FullyReplayedTS0) of
-            {ok, FullyReplayedTS, It, Tail} ->
-                {ok, S#s{replay_pos = It, fully_replayed_ts = FullyReplayedTS, tail = Tail}};
-            end_of_stream ->
-                end_of_stream;
-            {retry, FullyReplayedTS1, It1, Reason} ->
-                {retry, S#s{replay_pos = It1, fully_replayed_ts = FullyReplayedTS1, tail = []},
-                    Reason}
-        end
-    ).
+replay_timers(
+    State,
+    Data = #s{fully_replayed_ts = FullyReplayedTS0, replay_pos = It0, tail = Tail0},
+    Bound,
+    DSBatchSize
+) ->
+    case do_replay_timers(Data, It0, Bound, DSBatchSize, FullyReplayedTS0, Tail0) of
+        {ok, FullyReplayedTS, _, []} when State =/= ?s_active ->
+            {end_of_stream, FullyReplayedTS};
+        {ok, FullyReplayedTS, It, Tail} ->
+            {ok, Data#s{replay_pos = It, fully_replayed_ts = FullyReplayedTS, tail = Tail}};
+        {retry, FullyReplayedTS1, It1, Reason} ->
+            {retry, Data#s{replay_pos = It1, fully_replayed_ts = FullyReplayedTS1, tail = []},
+                Reason}
+    end.
 
-do_replay_timers(D, It0, Bound, DSBatchSize, FullyReplayedTS0) ->
+do_replay_timers(D, It0, Bound, DSBatchSize, FullyReplayedTS, []) ->
     case emqx_ds:next(?DB_GLOB, It0, DSBatchSize) of
         {ok, It, []} ->
-            {ok, FullyReplayedTS0, It, []};
+            {ok, FullyReplayedTS, It, []};
         {ok, It, Batch} ->
-            {FullyReplayedTS, Tail} = apply_timers_from_batch(D, Bound, FullyReplayedTS0, Batch),
-            case Tail of
-                [] ->
-                    do_replay_timers(D, It, Bound, DSBatchSize, FullyReplayedTS);
-                _ ->
-                    {ok, FullyReplayedTS, It, Tail}
-            end;
+            do_replay_timers(D, It, Bound, DSBatchSize, FullyReplayedTS, Batch);
         ?err_rec(Reason) ->
-            {retry, FullyReplayedTS0, It0, Reason}
+            {retry, FullyReplayedTS, It0, Reason}
+    end;
+do_replay_timers(D, It, Bound, DSBatchSize, FullyReplayedTS0, Batch) ->
+    {FullyReplayedTS, Tail} = apply_timers_from_batch(D, Bound, FullyReplayedTS0, Batch),
+    case Tail of
+        [] ->
+            do_replay_timers(D, It, Bound, DSBatchSize, FullyReplayedTS, []);
+        _ ->
+            {ok, FullyReplayedTS, It, Tail}
     end.
 
 apply_timers_from_batch(

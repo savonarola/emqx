@@ -69,6 +69,7 @@ Value: empty.
     cancel/2,
 
     clean_replayed_async/3,
+    clean_replayed/3,
     started_topic/3,
     dead_hand_topic/3
 ]).
@@ -206,8 +207,8 @@ update_epoch(Node, Epoch, LastHeartbeat, IsUp) ->
     emqx_durable_timer:value(),
     emqx_durable_timer:delay()
 ) -> ok.
-insert_dead_hand(Type, Epoch, Key, Val, NotEarlierThan) when
-    ?is_valid_timer(Type, Key, Val, NotEarlierThan) andalso is_binary(Epoch)
+insert_dead_hand(Type, Epoch, Key, Val, Delay) when
+    ?is_valid_timer(Type, Key, Val, Delay) andalso is_binary(Epoch)
 ->
     Result = emqx_ds:trans(
         epoch_tx_opts({auto, Key}, #{}),
@@ -216,7 +217,7 @@ insert_dead_hand(Type, Epoch, Key, Val, NotEarlierThan) when
             tx_del_started(Type, Key),
             emqx_ds:tx_write({
                 dead_hand_topic(Type, Epoch, Key),
-                NotEarlierThan,
+                Delay,
                 Val
             })
         end
@@ -287,6 +288,23 @@ clean_replayed_async(Shard, Topic, Time) ->
             end
         ),
     Ref.
+
+-spec clean_replayed(emqx_ds:shard(), emqx_ds:topic_filter(), emqx_ds:time()) ->
+    ok | emqx_ds:error(_).
+clean_replayed(Shard, Topic, Time) ->
+    Result =
+        emqx_ds:trans(
+            epoch_tx_opts(Shard, #{}),
+            fun() ->
+                emqx_ds:tx_del_topic(Topic, 0, Time + 1)
+            end
+        ),
+    case Result of
+        {atomic, _, _} ->
+            ok;
+        Other ->
+            Other
+    end.
 
 dead_hand_topic(Type, NodeEpochId, Key) ->
     [?top_deadhand, <<Type:?type_bits>>, NodeEpochId, Key].

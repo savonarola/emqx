@@ -176,8 +176,12 @@ dies.
 """.
 -spec dead_hand(type(), key(), value(), delay()) -> ok | emqx_ds:error(_).
 dead_hand(Type, Key, Value, Delay) when ?is_valid_timer(Type, Key, Value, Delay) ->
-    ?tp(debug, ?tp_new_dead_hand, #{type => Type, key => Key, val => Value, delay => Delay}),
     Epoch = epoch(),
+    ?ds_tx_on_success(
+        ?tp(debug, ?tp_new_dead_hand, #{
+            type => Type, key => Key, val => Value, delay => Delay, epoch => Epoch
+        })
+    ),
     emqx_durable_timer_dl:insert_dead_hand(Type, Epoch, Key, Value, Delay).
 
 -doc """
