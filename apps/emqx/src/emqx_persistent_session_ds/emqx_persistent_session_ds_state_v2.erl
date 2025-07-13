@@ -61,6 +61,22 @@
 -include("session_internals.hrl").
 -include_lib("emqx/gen_src/DurableSession.hrl").
 
+%% TODO: https://github.com/erlang/otp/issues/9841
+-dialyzer(
+    {nowarn_function, [
+        ser_pmap_key/3,
+        deser_pmap_key/2,
+        ser_stream_key/1,
+        deser_stream_key/1,
+        ser_srs/1,
+        deser_srs/1,
+        ser_sub/1,
+        deser_sub/1,
+        ser_sub_state/1,
+        deser_sub_state/1
+    ]}
+).
+
 %%================================================================================
 %% Type declarations
 %%================================================================================
@@ -241,12 +257,13 @@ set_offline_info(Generation, ClientId, Data) ->
     Opts = #{
         db => ?DB, shard => {auto, ClientId}, generation => Generation, timeout => trans_timeout()
     },
-    emqx_ds:trans(
+    _ = emqx_ds:trans(
         Opts,
         fun() ->
             emqx_ds:tx_write({[?top_offline_info, ClientId], 0, term_to_binary(Data)})
         end
-    ).
+    ),
+    ok.
 
 -spec delete(emqx_ds:generation(), emqx_persistent_session_ds_state:t()) -> ok.
 delete(
@@ -307,12 +324,12 @@ lts_threshold_cb(N, ?top_data) ->
 lts_threshold_cb(_, _) ->
     infinity.
 
--spec make_session_iterator(emqx_ds:generation()) -> session_iterator().
+-spec make_session_iterator(emqx_ds:generation()) -> session_iterator() | '$end_of_stream'.
 make_session_iterator(Generation) ->
     emqx_ds:make_multi_iterator(#{db => ?DB, generation => Generation}, [?top_guard, '+']).
 
 -spec session_iterator_next(emqx_ds:generation(), session_iterator(), pos_integer()) ->
-    {list(), session_iterator()}.
+    {list(), session_iterator() | '$end_of_stream'}.
 session_iterator_next(Generation, It0, N) ->
     {Batch, It} = emqx_ds:multi_iterator_next(
         #{db => ?DB, generation => Generation}, [?top_guard, '+'], It0, N
@@ -325,14 +342,18 @@ session_iterator_next(Generation, It0, N) ->
     ),
     {Results, It}.
 
--spec make_subscription_iterator(emqx_ds:generation()) -> subscription_iterator().
+-spec make_subscription_iterator(emqx_ds:generation()) ->
+    subscription_iterator() | '$end_of_stream'.
 make_subscription_iterator(Generation) ->
     emqx_ds:make_multi_iterator(
         #{db => ?DB, generation => Generation}, pmap_topic(?subscriptions, '+', '+')
     ).
 
--spec subscription_iterator_next(emqx_ds:generation(), session_iterator(), pos_integer()) ->
-    {list(), session_iterator()}.
+-spec subscription_iterator_next(emqx_ds:generation(), subscription_iterator(), pos_integer()) ->
+    {
+        {emqx_persistent_session_ds:id(), emqx_persistent_session_ds:topic_filter()},
+        subscription_iterator() | '$end_of_stream'
+    }.
 subscription_iterator_next(Generation, It0, N) ->
     {Batch, It} = emqx_ds:multi_iterator_next(
         #{db => ?DB, generation => Generation}, pmap_topic(?subscriptions, '+', '+'), It0, N
@@ -475,7 +496,7 @@ pmap_delete(ClientId, Name) when is_atom(Name) ->
 %% == Operations over PMap KV pairs ==
 
 %% @doc Write a single key-value pair that belongs to a pmap:
--spec write_pmap_kv(atom(), emqx_persistent_session_ds:id(), _, _) -> emqx_ds:kv_pair().
+-spec write_pmap_kv(atom(), emqx_persistent_session_ds:id(), _, _) -> ok.
 write_pmap_kv(Name, ClientId, Key, Val) ->
     emqx_ds:tx_write(
         {

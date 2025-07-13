@@ -539,7 +539,7 @@ dispatch_events(
     Events = Mod:batch_events(Shard, GenData, CookedBatch),
     DispatchF([?stream_v2(GenId, InnerStream) || InnerStream <- Events]).
 
--spec get_streams(dbshard(), emqx_ds:topic_filter(), emqx_ds:time(), generation()) ->
+-spec get_streams(dbshard(), emqx_ds:topic_filter(), emqx_ds:time(), emqx_ds:generation()) ->
     [{integer(), stream()}].
 get_streams(Shard, TopicFilter, StartTime, MinGeneration) ->
     Gens = generations_since(Shard, StartTime),

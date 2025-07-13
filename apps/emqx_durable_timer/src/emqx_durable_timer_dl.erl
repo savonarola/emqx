@@ -1,0 +1,330 @@
+%%--------------------------------------------------------------------
+%% Copyright (c) 2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%%--------------------------------------------------------------------
+-module(emqx_durable_timer_dl).
+-moduledoc """
+Data layer for the durable timer queue.
+
+## Topic structure
+
+### Heartbeats topic:
+
+```
+"h"/Node/Epoch
+```
+
+Sharding by epoch.
+Time is always = 0.
+Value: <<TimeOfLastHeartbeatMS:64, IsUp:8>>
+
+IsUp: 1 or 0.
+
+### Regular timers
+
+```
+"s"/Type/Epoch/Key
+```
+
+Sharding by key.
+Time: wall time when the timer is due to fire.
+Value = arbitrary binary that is passed to the callback.
+
+### Dead hand timers
+
+```
+"d"/Type/Epoch/Key
+```
+
+Sharding by key.
+Time: offset from the last heartbeat for the epoch when the timer is due to fire.
+Value = arbitrary binary that is passed to the callback.
+
+### Epochs
+
+```
+"e"/"s"/Epoch
+"e"/"d"/Epoch
+```
+
+Sharding: copy in every shard.
+Time: shard monotonic
+Value: empty.
+""".
+
+%% API:
+-export([
+    lts_threshold_cb/2,
+    shards/0,
+
+    update_epoch/4,
+    last_heartbeat/1,
+
+    dirty_ls_epochs/0,
+    dirty_ls_epochs/1,
+
+    insert_epoch_marker/2,
+
+    insert_started_async/5,
+    insert_dead_hand/5,
+    cancel/2,
+
+    clean_replayed_async/3,
+    started_topic/3,
+    dead_hand_topic/3
+]).
+
+-export_type([]).
+
+-include_lib("emqx_durable_storage/include/emqx_ds.hrl").
+-include("internals.hrl").
+
+%%================================================================================
+%% Type declarations
+%%================================================================================
+
+%%================================================================================
+%% API functions
+%%================================================================================
+
+lts_threshold_cb(0, _) ->
+    infinity;
+lts_threshold_cb(N, Root) when Root =:= ?top_deadhand; Root =:= ?top_started ->
+    %% [<<"d">>, Type, Epoch, Key]
+    if
+        N =:= 1 -> infinity;
+        true -> 0
+    end;
+lts_threshold_cb(_, _) ->
+    0.
+
+%%--------------------------------------------------------------------------------
+%% Heartbeats
+%%--------------------------------------------------------------------------------
+
+-spec dirty_ls_epochs() ->
+    [{node(), emqx_durable_timer:epoch(), IsUp, LastHeartbeat}]
+when
+    IsUp :: boolean(),
+    LastHeartbeat :: integer().
+dirty_ls_epochs() ->
+    L = emqx_ds:fold_topic(
+        fun(_, _, ?hb(NodeBin, Epoch, Time, IUp), Acc) ->
+            [{binary_to_atom(NodeBin), Epoch, IUp =:= 1, Time} | Acc]
+        end,
+        [],
+        ?hb_topic('+', '+'),
+        #{db => ?DB_GLOB, errors => ignore}
+    ),
+    lists:keysort(4, L).
+
+-spec dirty_ls_epochs(node()) ->
+    [{emqx_durable_timer:epoch(), IsUp, LastHeartbeat}]
+when
+    IsUp :: boolean(),
+    LastHeartbeat :: integer().
+dirty_ls_epochs(Node) ->
+    L = emqx_ds:fold_topic(
+        fun(_, _, ?hb(_, Epoch, Time, IUp), Acc) ->
+            [{Epoch, IUp =:= 1, Time} | Acc]
+        end,
+        [],
+        ?hb_topic(atom_to_binary(Node), '+'),
+        #{db => ?DB_GLOB, errors => ignore}
+    ),
+    lists:keysort(3, L).
+
+-spec shards() -> [emqx_ds:shard()].
+shards() ->
+    Gen = generation(),
+    maps:fold(
+        fun({Shard, G}, _Info, Acc) ->
+            case G of
+                Gen -> [Shard | Acc];
+                _ -> Acc
+            end
+        end,
+        [],
+        emqx_ds:list_generations_with_lifetimes(?DB_GLOB)
+    ).
+
+-spec last_heartbeat(emqx_durable_timer:epoch()) -> {ok, integer()} | undefined.
+last_heartbeat(Epoch) ->
+    emqx_ds:fold_topic(
+        fun(_, _, ?hb(_, _, Time, _), _) ->
+            {ok, Time}
+        end,
+        undefined,
+        ?hb_topic('+', Epoch),
+        #{
+            db => ?DB_GLOB,
+            generation => generation(),
+            shard => emqx_ds:shard_of(?DB_GLOB, Epoch)
+        }
+    ).
+
+-spec update_epoch(node(), emqx_durable_timer:epoch(), integer(), boolean()) ->
+    ok | emqx_ds:error(_).
+update_epoch(Node, Epoch, LastHeartbeat, IsUp) ->
+    NodeBin = atom_to_binary(Node),
+    Result = emqx_ds:trans(
+        #{
+            db => ?DB_GLOB,
+            generation => generation(),
+            shard => {auto, Epoch},
+            retries => 10,
+            retry_interval => 100
+        },
+        fun() ->
+            IUp =
+                case IsUp of
+                    true -> 1;
+                    false -> 0
+                end,
+            ?ds_tx_on_success(
+                ?tp(debug, ?tp_update_epoch, #{
+                    node => Node, epoch => Epoch, up => IsUp, hb => LastHeartbeat
+                })
+            ),
+            emqx_ds:tx_write(?hb(NodeBin, Epoch, LastHeartbeat, IUp))
+        end
+    ),
+    case Result of
+        {atomic, _, _} ->
+            ok;
+        Err ->
+            Err
+    end.
+
+%%--------------------------------------------------------------------------------
+%% Epoch data
+%%--------------------------------------------------------------------------------
+
+-spec insert_dead_hand(
+    emqx_durable_timer:type(),
+    emqx_durable_timer:epoch(),
+    emqx_durable_timer:key(),
+    emqx_durable_timer:value(),
+    emqx_durable_timer:delay()
+) -> ok.
+insert_dead_hand(Type, Epoch, Key, Val, NotEarlierThan) when
+    ?is_valid_timer(Type, Key, Val, NotEarlierThan) andalso is_binary(Epoch)
+->
+    Result = emqx_ds:trans(
+        epoch_tx_opts({auto, Key}, #{}),
+        fun() ->
+            tx_del_dead_hand(Type, Key),
+            tx_del_started(Type, Key),
+            emqx_ds:tx_write({
+                dead_hand_topic(Type, Epoch, Key),
+                NotEarlierThan,
+                Val
+            })
+        end
+    ),
+    case Result of
+        {atomic, _, _} ->
+            ok;
+        Err ->
+            Err
+    end.
+
+-spec cancel(emqx_durable_timer:type(), emqx_durable_timer:key()) -> ok.
+cancel(Type, Key) ->
+    Result = emqx_ds:trans(
+        epoch_tx_opts({auto, Key}, #{}),
+        fun() ->
+            tx_del_dead_hand(Type, Key),
+            tx_del_started(Type, Key)
+        end
+    ),
+    case Result of
+        {atomic, _, _} ->
+            ok;
+        Err ->
+            Err
+    end.
+
+-spec insert_started_async(
+    emqx_durable_timer:type(),
+    emqx_durable_timer:epoch(),
+    emqx_durable_timer:key(),
+    emqx_durable_timer:value(),
+    emqx_durable_timer:delay()
+) -> reference().
+insert_started_async(Type, Epoch, Key, Val, NotEarlierThan) when
+    ?is_valid_timer(Type, Key, Val, NotEarlierThan) andalso is_binary(Epoch)
+->
+    {async, Ref, _Ret} =
+        emqx_ds:trans(
+            epoch_tx_opts({auto, Key}, #{sync => false}),
+            fun() ->
+                %% Clear previous data:
+                tx_del_dead_hand(Type, Key),
+                tx_del_started(Type, Key),
+                %% Insert the new data:
+                emqx_ds:tx_write({started_topic(Type, Epoch, Key), NotEarlierThan, Val})
+            end
+        ),
+    Ref.
+
+-spec insert_epoch_marker(emqx_ds:shard(), emqx_durable_timer:epoch()) -> ok.
+insert_epoch_marker(Shard, Epoch) ->
+    {atomic, _, _} = emqx_ds:trans(
+        epoch_tx_opts(Shard, #{}),
+        fun() ->
+            emqx_ds:tx_write({[?top_epoch, Epoch], ?ds_tx_ts_monotonic, <<>>})
+        end
+    ),
+    ok.
+
+-spec clean_replayed_async(emqx_ds:shard(), emqx_ds:topic_filter(), emqx_ds:time()) -> reference().
+clean_replayed_async(Shard, Topic, Time) ->
+    {async, Ref, _} =
+        emqx_ds:trans(
+            epoch_tx_opts(Shard, #{sync => false}),
+            fun() ->
+                emqx_ds:tx_del_topic(Topic, 0, Time + 1)
+            end
+        ),
+    Ref.
+
+dead_hand_topic(Type, NodeEpochId, Key) ->
+    [?top_deadhand, <<Type:?type_bits>>, NodeEpochId, Key].
+
+started_topic(Type, NodeEpochId, Key) ->
+    [?top_started, <<Type:?type_bits>>, NodeEpochId, Key].
+
+%%================================================================================
+%% Internal functions
+%%================================================================================
+
+generation() ->
+    1.
+
+%%--------------------------------------------------------------------------------
+%% Epoch data
+%%--------------------------------------------------------------------------------
+
+tx_del_dead_hand(Type, Key) ->
+    [emqx_ds:tx_del_topic(dead_hand_topic(Type, Epoch, Key)) || Epoch <- tx_ls_epochs()],
+    ok.
+
+tx_del_started(Type, Key) ->
+    [emqx_ds:tx_del_topic(started_topic(Type, Epoch, Key)) || Epoch <- tx_ls_epochs()],
+    ok.
+
+tx_ls_epochs() ->
+    emqx_ds:tx_fold_topic(
+        fun(_, _, {[?top_epoch, E], _, _}, Acc) ->
+            [E | Acc]
+        end,
+        [],
+        [?top_epoch, '+']
+    ).
+
+epoch_tx_opts(Shard, Other) ->
+    Other#{
+        db => ?DB_GLOB,
+        generation => generation(),
+        shard => Shard
+    }.

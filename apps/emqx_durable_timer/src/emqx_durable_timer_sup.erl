@@ -112,7 +112,7 @@ start_link_workers_sup() ->
 %%================================================================================
 
 init(?TOP) ->
-    ets:new(?regs_tab, [public, named_table, set, {keypos, 1}]),
+    _ = ets:new(?regs_tab, [public, named_table, set, {keypos, 1}]),
     %% Start dormant:
     Children = [],
     SupFlags = #{
@@ -139,7 +139,7 @@ init(?SYSTEM) ->
         }
     ],
     SupFlags = #{
-        strategy => one_for_one,
+        strategy => one_for_all,
         intensity => 10,
         period => 10
     },

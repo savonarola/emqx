@@ -271,7 +271,7 @@ Options for limiting the number of streams.
 
 -type delete_next_result() :: delete_next_result(delete_iterator()).
 
--type topic_range() :: {topic(), time(), time() | ?ds_tx_ts_monotonic}.
+-type topic_range() :: {topic(), time(), time() | ?ds_tx_ts_monotonic | infinity}.
 
 -type error(Reason) :: {error, recoverable | unrecoverable, Reason}.
 
@@ -478,7 +478,7 @@ Options for the `subscribe` API.
     tf :: topic_filter(),
     start_time :: time(),
     batch_size :: pos_integer(),
-    errors :: crash | report
+    errors :: crash | report | ignore
 }).
 
 -type fold_ctx() :: #fold_ctx{}.
@@ -494,7 +494,7 @@ Options for the `subscribe` API.
     it :: iterator()
 }).
 
--opaque multi_iterator() :: #m_iter{} | '$end_of_table'.
+-type multi_iterator() :: #m_iter{}.
 
 -type multi_iter_opts() ::
     #{
@@ -1161,7 +1161,7 @@ NOTE: Use `<<>>` instead of `''` for empty topic levels
 
 """.
 -doc #{title => <<"Transactions">>, since => <<"6.0.0">>}.
--spec tx_del_topic(topic_filter(), time(), time() | ?ds_tx_ts_monotonic) -> ok.
+-spec tx_del_topic(topic_filter(), time(), time() | ?ds_tx_ts_monotonic | infinity) -> ok.
 tx_del_topic(TopicFilter, From, To) ->
     case is_topic_filter(TopicFilter) of
         true when ?is_time_range(From, To) ->
@@ -1454,7 +1454,7 @@ snapshots. Don't use this API if you need any degree of consistency.
 
 """.
 -doc #{title => <<"Utility functions">>, since => <<"6.0.0">>}.
--spec make_multi_iterator(multi_iter_opts(), topic_filter()) -> multi_iterator().
+-spec make_multi_iterator(multi_iter_opts(), topic_filter()) -> multi_iterator() | '$end_of_table'.
 make_multi_iterator(UserOpts = #{db := _}, TF) ->
     Opts = multi_iter_opts(UserOpts),
     case multi_iter_get_streams(Opts, TF) of
@@ -1479,7 +1479,7 @@ create the iterator.
     multi_iterator(),
     pos_integer()
 ) ->
-    {[payload()], multi_iterator()}.
+    {[payload()], multi_iterator() | '$end_of_table'}.
 multi_iterator_next(UserOpts, TF, It = #m_iter{}, N) ->
     do_multi_iterator_next(multi_iter_opts(UserOpts), TF, It, N, []).
 

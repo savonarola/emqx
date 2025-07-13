@@ -38,7 +38,7 @@
 -define(tp_unknown_event, emqx_durable_timer_unknown_event).
 -define(tp_app_activation, emqx_durable_timer_app_activated).
 -define(tp_state_change, emqx_durable_timer_state_change).
--define(tp_active_replay, emqx_durable_timer_active_replay).
+-define(tp_replay, emqx_durable_timer_replay).
 -define(tp_replay_failed, emqx_durable_timer_replay_failed).
 -define(tp_worker_started, emqx_durable_timer_worker_started).
 

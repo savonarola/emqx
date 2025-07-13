@@ -56,51 +56,6 @@ node tries to close the epoch using `update_epoch`.
 
 If this operation succeeds, the remote is considered down.
 If it fails it may be because the local node itself is isolated.
-
-## Topic structure
-
-### Heartbeats topic:
-
-```
-"h"/Node/Epoch
-```
-
-Sharding by epoch.
-Time is always = 0.
-Value: <<TimeOfLastHeartbeatMS:64, IsUp:8>>
-
-IsUp: 1 or 0.
-
-### Regular timers
-
-```
-"s"/Type/Epoch/Key
-```
-
-Sharding by key.
-Time: wall time when the timer is due to fire.
-Value = arbitrary binary that is passed to the callback.
-
-### Dead hand timers
-
-```
-"d"/Type/Epoch/Key
-```
-
-Sharding by key.
-Time: offset from the last heartbeat for the epoch when the timer is due to fire.
-Value = arbitrary binary that is passed to the callback.
-
-### Epochs
-
-```
-"e"/"s"/Epoch
-"e"/"d"/Epoch
-```
-
-Sharding: copy in every shard.
-Time: shard monotonic
-Value: empty.
 """.
 
 -behavior(gen_statem).
@@ -118,10 +73,8 @@ Value: empty.
 %% internal exports:
 -export([
     start_link/0,
-    last_heartbeat/1,
     now_ms/0,
     epoch/0,
-    generation/1,
     get_cbm/1,
     list_types/0,
 
@@ -225,7 +178,7 @@ dies.
 dead_hand(Type, Key, Value, Delay) when ?is_valid_timer(Type, Key, Value, Delay) ->
     ?tp(debug, ?tp_new_dead_hand, #{type => Type, key => Key, val => Value, delay => Delay}),
     Epoch = epoch(),
-    emqx_durable_timer_worker:dead_hand(Type, Epoch, Key, Value, Delay).
+    emqx_durable_timer_dl:insert_dead_hand(Type, Epoch, Key, Value, Delay).
 
 -doc """
 Create a timer that activates immediately.
@@ -241,8 +194,8 @@ apply_after(Type, Key, Value, Delay) when ?is_valid_timer(Type, Key, Value, Dela
 -spec cancel(type(), key()) -> ok | emqx_ds:error(_).
 cancel(Type, Key) when Type >= 0, Type =< ?max_type, is_binary(Key) ->
     ?tp(debug, ?tp_delete, #{type => Type, key => Key}),
-    Epoch = epoch(),
-    emqx_durable_timer_worker:cancel(Type, Epoch, Key).
+    _Epoch = epoch(),
+    emqx_durable_timer_dl:cancel(Type, Key).
 
 %%================================================================================
 %% behavior callbacks
@@ -287,7 +240,7 @@ terminate(Reason, ?s_normal, #s{this_epoch = Epoch}) ->
     ?tp(debug, emqx_durable_timer_terminate, #{reason => Reason, epoch => Epoch}),
     optvar:unset(?epoch_optvar),
     emqx_durable_timer_sup:restart_worker_sup(),
-    _ = update_epoch(node(), Epoch, now_ms(), false),
+    _ = emqx_durable_timer_dl:update_epoch(node(), Epoch, now_ms(), false),
     ok;
 terminate(_Reason, _State, _D) ->
     ok.
@@ -295,20 +248,6 @@ terminate(_Reason, _State, _D) ->
 %%================================================================================
 %% Internal exports
 %%================================================================================
-
-last_heartbeat(Epoch) ->
-    emqx_ds:fold_topic(
-        fun(_, _, ?hb(_, _, Time, _), _) ->
-            {ok, Time}
-        end,
-        undefined,
-        ?hb_topic('+', Epoch),
-        #{
-            db => ?DB_GLOB,
-            generation => generation(?DB_GLOB),
-            shard => emqx_ds:shard_of(?DB_GLOB, Epoch)
-        }
-    ).
 
 -spec now_ms() -> integer().
 now_ms() ->
@@ -341,7 +280,7 @@ enter_normal(PrevState, S = #s{this_epoch = Epoch}) ->
     ?tp(debug, ?tp_state_change, #{from => PrevState, to => ?s_normal, epoch => Epoch}),
     %% Close all previuos epochs for this node:
     _ = [
-        update_epoch(node(), E, LH, false)
+        emqx_durable_timer_dl:update_epoch(node(), E, LH, false)
      || {E, Up, LH} <- emqx_durable_timer_dl:dirty_ls_epochs(node()),
         E =/= Epoch,
         Up
@@ -386,7 +325,7 @@ handle_heartbeat(
             ?s_isolated(NewEpoch) -> NewEpoch;
             ?s_normal -> LastEpoch
         end,
-    case update_epoch(node(), Epoch, LEO, true) of
+    case emqx_durable_timer_dl:update_epoch(node(), Epoch, LEO, true) of
         ok ->
             S = S0#s{
                 my_missed_heartbeats = 0,
@@ -490,7 +429,7 @@ check_remote_heartbeat(
             ?tp(info, ?tp_remote_missed_heartbeat, #{
                 node => Node, last_heartbeat => Heartbeat, epoch => Epoch, missed => MH
             }),
-            case update_epoch(Node, Epoch, Heartbeat, false) of
+            case emqx_durable_timer_dl:update_epoch(Node, Epoch, Heartbeat, false) of
                 ok ->
                     {true, EI#ei{up = false}};
                 {error, _, _} ->
@@ -501,34 +440,6 @@ check_remote_heartbeat(
             %% Epoch missed a heartbeat:
             {false, EI#ei{missed_heartbeats = MH + 1}}
     end.
-
-update_epoch(Node, Epoch, LastHeartbeat, IsUp) ->
-    NodeBin = atom_to_binary(Node),
-    Result = epoch_trans(
-        Epoch,
-        fun() ->
-            IUp =
-                case IsUp of
-                    true -> 1;
-                    false -> 0
-                end,
-            ?ds_tx_on_success(
-                ?tp(debug, ?tp_update_epoch, #{
-                    node => Node, epoch => Epoch, up => IsUp, hb => LastHeartbeat
-                })
-            ),
-            emqx_ds:tx_write(?hb(NodeBin, Epoch, LastHeartbeat, IUp))
-        end
-    ),
-    case Result of
-        {atomic, _, _} ->
-            ok;
-        Err ->
-            Err
-    end.
-
-generation(_DB) ->
-    1.
 
 cfg_heartbeat_interval() ->
     application:get_env(?APP, heartbeat_interval, 5_000).
@@ -566,24 +477,8 @@ cfg_transactions() ->
 cfg_batch_size() ->
     application:get_env(?APP, cfg_batch_size, 1000).
 
--doc """
-A wrapper for transactions that operate on a particular epoch.
-""".
-epoch_trans(Epoch, Fun) ->
-    %% FIXME: config
-    emqx_ds:trans(
-        #{
-            db => ?DB_GLOB,
-            shard => {auto, Epoch},
-            generation => generation(?DB_GLOB),
-            retries => 10,
-            retry_interval => 100
-        },
-        Fun
-    ).
-
 start_active(Types, #s{this_epoch = Epoch}) ->
-    Shards = shards(),
+    Shards = emqx_durable_timer_dl:shards(),
     [
         emqx_durable_timer_sup:start_worker(active, Type, Epoch, Shard)
      || Shard <- Shards,
@@ -592,7 +487,7 @@ start_active(Types, #s{this_epoch = Epoch}) ->
     ok.
 
 start_closed(Types, Epochs) ->
-    Shards = shards(),
+    Shards = emqx_durable_timer_dl:shards(),
     [
         begin
             ok = emqx_durable_timer_sup:start_worker({closed, started}, Type, Epoch, Shard),
@@ -614,19 +509,6 @@ closed_epochs(#s{peer_info = PI}) ->
         end,
         [],
         PI
-    ).
-
-shards() ->
-    Gen = generation(?DB_GLOB),
-    maps:fold(
-        fun({Shard, G}, _Info, Acc) ->
-            case G of
-                Gen -> [Shard | Acc];
-                _ -> Acc
-            end
-        end,
-        [],
-        emqx_ds:list_generations_with_lifetimes(?DB_GLOB)
     ).
 
 new_epoch_id() ->

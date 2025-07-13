@@ -36,7 +36,7 @@ t_lazy_initialization(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
         #{timetrap => 30_000},
-        try
+        begin
             [Node] = emqx_cth_cluster:start(Cluster),
             %% Application is started but dormant. Databases don't exist yet:
             ?ON(
@@ -145,10 +145,6 @@ t_lazy_initialization(Config) ->
             ),
             ?assertNot(Epoch3 =:= Epoch2),
             {Epoch1, Epoch2, Epoch3}
-        after
-            %% FIXME: give time to flush logs
-            timer:sleep(1000),
-            emqx_cth_cluster:stop(Cluster)
         end,
         [
             %% fun no_unexpected/1, % Disabled due to some disturbance introduced by mock
@@ -234,7 +230,7 @@ t_normal_execution(Config) ->
     Type = emqx_durable_test_timer:durable_timer_type(),
     ?check_trace(
         #{timetrap => 15_000},
-        try
+        begin
             [Node] = emqx_cth_cluster:start(Cluster),
             ?assertMatch(ok, ?ON(Node, emqx_durable_test_timer:init())),
             %%
@@ -285,7 +281,7 @@ t_normal_execution(Config) ->
                     Node,
                     begin
                         %% Derive topic name:
-                        DHT = emqx_durable_timer_worker:dead_hand_topic(
+                        DHT = emqx_durable_timer_dl:dead_hand_topic(
                             Type, emqx_durable_timer:epoch(), '+'
                         ),
                         %% 1. Set up a dead hand timer with key <<3>>
@@ -307,7 +303,7 @@ t_normal_execution(Config) ->
                 ?ON(
                     Node,
                     emqx_ds:dirty_read(
-                        ?DB_GLOB, emqx_durable_timer_worker:dead_hand_topic(Type, '+', '+')
+                        ?DB_GLOB, emqx_durable_timer_dl:dead_hand_topic(Type, '+', '+')
                     )
                 )
             ),
@@ -316,13 +312,11 @@ t_normal_execution(Config) ->
                 ?ON(
                     Node,
                     emqx_ds:dirty_read(
-                        ?DB_GLOB, emqx_durable_timer_worker:started_topic(Type, '+', '+')
+                        ?DB_GLOB, emqx_durable_timer_dl:started_topic(Type, '+', '+')
                     )
                 )
             ),
             ok
-        after
-            emqx_cth_cluster:stop(Cluster)
         end,
         [
             fun no_unexpected/1,
@@ -355,7 +349,7 @@ t_cancellation(Config) ->
             ?ON(
                 Node,
                 begin
-                    DHT = emqx_durable_timer_worker:dead_hand_topic(
+                    DHT = emqx_durable_timer_dl:dead_hand_topic(
                         emqx_durable_test_timer:durable_timer_type(),
                         emqx_durable_timer:epoch(),
                         '+'
@@ -373,7 +367,7 @@ t_cancellation(Config) ->
             ?ON(
                 Node,
                 begin
-                    AAT = emqx_durable_timer_worker:started_topic(
+                    AAT = emqx_durable_timer_dl:started_topic(
                         emqx_durable_test_timer:durable_timer_type(),
                         emqx_durable_timer:epoch(),
                         '+'
@@ -397,6 +391,47 @@ t_cancellation(Config) ->
             fun(Trace) ->
                 ?assertMatch([], ?of_kind(?tp_fire, Trace))
             end
+        ]
+    ).
+
+%% This testcase verifies the functionality related to timer
+%% cancellation.
+t_dead_hand({init, Config}) ->
+    Env = [
+        {n_sites, 3},
+        {replication_factor, 3},
+        {heartbeat_interval, 1_000},
+        {missed_heartbeats, 3}
+    ],
+    Cluster = cluster(?FUNCTION_NAME, Config, 3, Env),
+    [{cluster, Cluster} | Config];
+t_dead_hand({stop, Config}) ->
+    %% FIXME: flush logs
+    timer:sleep(1000),
+    Cluster = proplists:get_value(cluster, Config),
+    emqx_cth_cluster:stop(Cluster);
+t_dead_hand(Config) ->
+    Cluster = proplists:get_value(cluster, Config),
+    ?check_trace(
+        #{timetrap => 30_000},
+        begin
+            %% Prepare system:
+            [N1, N2, _N3] = Nodes = emqx_cth_cluster:start(Cluster),
+            [?assertMatch(ok, ?ON(N, emqx_durable_test_timer:init())) || N <- Nodes],
+            timer:sleep(5000),
+            ?assertMatch(ok, ?ON(N1, emqx_durable_test_timer:dead_hand(<<1>>, <<1>>, 0))),
+            ?assertMatch(ok, ?ON(N2, emqx_durable_test_timer:dead_hand(<<2>>, <<2>>, 0))),
+            %% Shut down the first node and wait for dead the event:
+            ?wait_async_action(
+                emqx_cth_cluster:stop([N1]),
+                #{?snk_kind := ?tp_test_fire, key := <<1>>, value := <<1>>}
+            )
+        end,
+        [
+            fun no_unexpected/1,
+            fun no_read_conflicts/1,
+            fun no_replay_failures/1,
+            fun verify_timers/1
         ]
     ).
 

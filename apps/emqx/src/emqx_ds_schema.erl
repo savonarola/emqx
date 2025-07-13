@@ -49,7 +49,6 @@ db_config(Path) ->
             translate_builtin_raft(ConfigTree)
     end.
 
--spec session_config() -> emqx_ds:create_db_opts().
 session_config() ->
     %% FIXME:
     #{

@@ -294,11 +294,12 @@ batch_delete(#s{data_cf = DataCF, hash_bytes = HashBytes}, Batch, Static, Varyin
     [emqx_ds_lts:level()],
     stream_key(),
     stream_key(),
-    rocksdb:write_options()
+    %% rocksdb:write_options(),
+    _WriteOptions
 ) -> ok.
 delete_key_range(#s{db = DB, data_cf = DataCF}, Static, Varying, From, To, WriteOpts) ->
     %% Delete indexes
-    lists:foldl(
+    _ = lists:foldl(
         fun(WCHash, WCLevel) ->
             rocksdb:delete_range(
                 DB,
