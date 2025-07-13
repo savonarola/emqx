@@ -7,13 +7,19 @@
 -include_lib("snabbkaffe/include/trace.hrl").
 
 -define(DB_GLOB, global_timers).
+-define(regs_tab, emqx_durable_timer_registry).
 
 %% Topics:
 -define(top_heartbeat, <<"h">>).
 -define(top_started, <<"s">>).
 -define(top_deadhand, <<"d">>).
-%% Shard-local epochs:
+%%   Shard-local epochs:
 -define(top_epoch, <<"e">>).
+%%   Heartbeats:
+%%      Topic:
+-define(hb_topic(NODE, EPOCH), [?top_heartbeat, NODE, EPOCH]).
+%%      Value:
+-define(hb(NODE, EPOCH, TIME, ISUP), {?hb_topic(NODE, EPOCH), 0, <<TIME:64, ISUP:8>>}).
 
 -define(type_bits, 32).
 -define(max_type, (1 bsl ?type_bits - 1)).
@@ -21,10 +27,10 @@
 %% Tracepoints:
 -define(tp_init, emqx_durable_timer_init).
 -define(tp_register, emqx_durable_timer_register).
--define(tp_open_epoch, emqx_durable_timer_open_epoch).
--define(tp_close_epoch, emqx_durable_timer_close_epoch).
+-define(tp_update_epoch, emqx_durable_timer_update_epoch).
 -define(tp_heartbeat, emqx_durable_timer_heartbeat).
 -define(tp_missed_heartbeat, emqx_durable_timer_missed_heartbeat).
+-define(tp_remote_missed_heartbeat, emqx_durable_timer_remote_missed_heartbeat).
 -define(tp_new_apply_after, emqx_durable_timer_apply_after).
 -define(tp_new_dead_hand, emqx_durable_timer_dead_hand).
 -define(tp_delete, emqx_durable_timer_delete).

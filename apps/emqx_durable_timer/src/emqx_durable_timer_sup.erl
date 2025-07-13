@@ -2,38 +2,53 @@
 %% Copyright (c) 2025 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
 -module(emqx_durable_timer_sup).
+-moduledoc """
+```
+ worker worker ...                       % Worker processes for each kind, type, epoch and shard
+    \     |    /
+    ?WORKERS_SUP  coordinator            % main process (emqx_durable_timer)
+             \     /
+             ?SYSTEM(one_for_all)        % started on demand
+               |
+             ?TOP                        % root application supervisor
+```
+""".
 
 -behavior(supervisor).
 
 %% API:
--export([start_link/0, start_worker_sup/0, stop_worker_sup/0, start_worker/5]).
+-export([ensure_running/0, start_top/0, restart_worker_sup/0, start_worker/4]).
 
 %% behavior callbacks:
 -export([init/1]).
 
 %% internal exports:
--export([start_link_workers_sup/0]).
+-export([start_link_system/0, start_link_workers_sup/0]).
 
 -export_type([]).
+
+-include("internals.hrl").
 
 %%================================================================================
 %% Type declarations
 %%================================================================================
 
 -define(TOP, ?MODULE).
+-define(SYSTEM, emqx_durable_timer_system_sup).
 -define(WORKERS_SUP, emqx_durable_timer_workers).
 
 %%================================================================================
 %% API functions
 %%================================================================================
 
--spec start_link() -> supervisor:startlink_ret().
-start_link() ->
+-spec start_top() -> supervisor:startlink_ret().
+start_top() ->
     supervisor:start_link({local, ?TOP}, ?MODULE, ?TOP).
 
--spec start_worker_sup() -> ok.
-start_worker_sup() ->
-    case supervisor:restart_child(?TOP, types_sup) of
+-spec restart_worker_sup() -> ok.
+restart_worker_sup() ->
+    _ = supervisor:terminate_child(?TOP, types_sup),
+    case supervisor:restart_child(?SYSTEM, types_sup) of
         {ok, _} ->
             ok;
         {ok, _, _} ->
@@ -42,23 +57,51 @@ start_worker_sup() ->
             ok
     end.
 
--spec stop_worker_sup() -> ok.
-stop_worker_sup() ->
-    ok = supervisor:terminate_child(?TOP, types_sup).
-
 -spec start_worker(
+    emqx_durable_timer_worker:kind(),
     emqx_durable_timer:type(),
     emqx_durable_timer:epoch(),
-    emqx_ds:shard(),
-    module(),
-    emqx_durable_timer_worker:type()
+    emqx_ds:shard()
 ) -> ok.
-start_worker(Type, Epoch, Shard, CBM, Active) ->
-    start_simple_child(?WORKERS_SUP, [Type, Epoch, Shard, CBM, Active]).
+start_worker(Kind, Type, Epoch, Shard) ->
+    case supervisor:start_child(?WORKERS_SUP, [Kind, Type, Epoch, Shard]) of
+        {ok, _} ->
+            ok;
+        {error, {already_started, _}} ->
+            ok;
+        {error, normal} ->
+            %% Happens when there's no data to replay:
+            ok;
+        Err ->
+            Err
+    end.
+
+-spec ensure_running() -> ok.
+ensure_running() ->
+    ChildSpec = #{
+        id => ?SYSTEM,
+        start => {?MODULE, start_link_system, []},
+        type => supervisor,
+        shutdown => infinity
+    },
+    case supervisor:start_child(?TOP, ChildSpec) of
+        {ok, _} ->
+            ok;
+        {error, {already_started, _}} ->
+            ok;
+        {error, already_present} ->
+            ok;
+        Error ->
+            Error
+    end.
 
 %%================================================================================
 %% Internal exports
 %%================================================================================
+
+-spec start_link_system() -> supervisor:startlink_ret().
+start_link_system() ->
+    supervisor:start_link({local, ?SYSTEM}, ?MODULE, ?SYSTEM).
 
 -spec start_link_workers_sup() -> supervisor:startlink_ret().
 start_link_workers_sup() ->
@@ -69,16 +112,26 @@ start_link_workers_sup() ->
 %%================================================================================
 
 init(?TOP) ->
+    ets:new(?regs_tab, [public, named_table, set, {keypos, 1}]),
+    %% Start dormant:
+    Children = [],
+    SupFlags = #{
+        strategy => one_for_one,
+        intensity => 100,
+        period => 100
+    },
+    {ok, {SupFlags, Children}};
+init(?SYSTEM) ->
     Children = [
         #{
-            id => types_sup,
+            id => ?WORKERS_SUP,
             start => {?MODULE, start_link_workers_sup, []},
             shutdown => infinity,
             restart => permanent,
             type => supervisor
         },
         #{
-            id => main,
+            id => coordinator,
             start => {emqx_durable_timer, start_link, []},
             shutdown => 5_000,
             restart => permanent,
@@ -97,7 +150,8 @@ init(?WORKERS_SUP) ->
             id => worker,
             start => {emqx_durable_timer_worker, start_link, []},
             shutdown => 5_000,
-            type => worker
+            type => worker,
+            restart => transient
         }
     ],
     SupFlags = #{
@@ -110,13 +164,3 @@ init(?WORKERS_SUP) ->
 %%================================================================================
 %% Internal functions
 %%================================================================================
-
-start_simple_child(Sup, Args) ->
-    case supervisor:start_child(Sup, Args) of
-        {ok, _} ->
-            ok;
-        {error, {already_started, _}} ->
-            ok;
-        Err ->
-            Err
-    end.

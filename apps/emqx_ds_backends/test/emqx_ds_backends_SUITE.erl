@@ -2265,24 +2265,24 @@ t_28_ttv_time_limited(Config) ->
             ),
             %% Test deletion with monotonic ts limit:
             Trans(
-              fun() ->
-                      emqx_ds:tx_write({[<<"foo">>], ?ds_tx_ts_monotonic, <<1>>})
-              end
-             ),
+                fun() ->
+                    emqx_ds:tx_write({[<<"foo">>], ?ds_tx_ts_monotonic, <<1>>})
+                end
+            ),
             ?assertMatch(
-               [{_, _, <<1>>}],
-               emqx_ds:dirty_read(DB, [<<"foo">>])
-              ),
+                [{_, _, <<1>>}],
+                emqx_ds:dirty_read(DB, [<<"foo">>])
+            ),
             Trans(
-              fun() ->
-                      emqx_ds:tx_write({[<<"foo">>], ?ds_tx_ts_monotonic, <<2>>}),
-                      emqx_ds:tx_del_topic([<<"foo">>], 0, ?ds_tx_ts_monotonic)
-              end
-             ),
+                fun() ->
+                    emqx_ds:tx_write({[<<"foo">>], ?ds_tx_ts_monotonic, <<2>>}),
+                    emqx_ds:tx_del_topic([<<"foo">>], 0, ?ds_tx_ts_monotonic)
+                end
+            ),
             ?assertMatch(
-               [{_, _, <<2>>}],
-               emqx_ds:dirty_read(DB, [<<"foo">>])
-              )
+                [{_, _, <<2>>}],
+                emqx_ds:dirty_read(DB, [<<"foo">>])
+            )
         end,
         []
     ).

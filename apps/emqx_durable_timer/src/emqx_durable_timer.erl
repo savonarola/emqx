@@ -17,13 +17,13 @@ If data stored in the timer key or value changes, a new timer type should be cre
 ## State machine
 
 ```
-                         (failed heartbeat)                       ,-----.
-                             |    |                              |       |
-                             |    v                              v       |
- dormant -(register_type)-> isolated -(successful heartbeat)-> normal --<
-                               ^                                         |
-                               |                                         |
-                               `--(failed multple heartbeats in a row)--'
+   (failed heartbeat)                       ,-----.
+       |    |                              |       |
+       |    v                              v       |
+()--> isolated -(successful heartbeat)-> normal --<
+         ^                                         |
+         |                                         |
+         `--(failed multple heartbeats in a row)--'
 ```
 
 ## Down detection
@@ -94,7 +94,8 @@ Value = arbitrary binary that is passed to the callback.
 ### Epochs
 
 ```
-"e"/Epoch
+"e"/"s"/Epoch
+"e"/"d"/Epoch
 ```
 
 Sharding: copy in every shard.
@@ -105,7 +106,7 @@ Value: empty.
 -behavior(gen_statem).
 
 %% API:
--export([start_link/0, register_type/1, dead_hand/4, apply_after/4, cancel/2]).
+-export([register_type/1, dead_hand/4, apply_after/4, cancel/2]).
 
 -ifdef(TEST).
 -export([drop_tables/0]).
@@ -116,16 +117,19 @@ Value: empty.
 
 %% internal exports:
 -export([
-    lts_threshold_cb/2,
-    ls_epochs/0,
-    ls_epochs/1,
+    start_link/0,
+    last_heartbeat/1,
     now_ms/0,
     epoch/0,
     generation/1,
+    get_cbm/1,
+    list_types/0,
+
     cfg_heartbeat_interval/0,
     cfg_missed_heartbeats/0,
     cfg_replay_retry_interval/0,
-    cfg_transaction_timeout/0
+    cfg_transaction_timeout/0,
+    cfg_batch_size/0
 ]).
 
 -export_type([
@@ -146,10 +150,8 @@ Value: empty.
 
 -define(APP, emqx_durable_timer).
 -define(epoch_optvar, {?MODULE, epoch}).
--define(epoch_tab, ?MODULE).
 
 -record(ei, {
-    k :: epoch(),
     node :: node(),
     up :: boolean(),
     last_heartbeat :: integer(),
@@ -157,10 +159,11 @@ Value: empty.
 }).
 
 -record(s, {
-    regs = #{} :: #{type() => module()},
+    hb_timer :: timer:tref(),
     this_epoch :: epoch() | undefined,
-    my_last_heartbeat :: non_neg_integer() | undefined,
-    epochs :: ets:tid() | undefined
+    my_missed_heartbeats = 0 :: non_neg_integer(),
+    my_last_heartbeat = 0 :: non_neg_integer(),
+    peer_info = #{} :: #{epoch() => #ei{}}
 }).
 
 -doc "Unique ID of the timer event".
@@ -187,10 +190,6 @@ Value: empty.
 -optional_callbacks([timer_deprected_since/0]).
 
 %% States:
-%%
-%%  Unless at least one timer type is registered, this application
-%%  lies dormant:
--define(s_dormant, dormant).
 %%  There's no current epoch:
 -define(s_isolated(NEW_EPOCH_ID), {isolated, NEW_EPOCH_ID}).
 %%  Normal operation:
@@ -199,13 +198,9 @@ Value: empty.
 %% Timeouts:
 -define(heartbeat, heartbeat).
 
--define(epoch_start, <<"s">>).
--define(epoch_end, <<"e">>).
-
 %% Calls/casts:
 -record(call_register, {module :: module()}).
-
--define(retry_fold(N, SLEEP, BODY), retry_fold(N, SLEEP, fun() -> BODY end)).
+-record(cast_check_peers, {}).
 
 %%================================================================================
 %% API functions
@@ -219,6 +214,7 @@ start_link() ->
 
 -spec register_type(module()) -> ok | {error, _}.
 register_type(Module) ->
+    ok = emqx_durable_timer_sup:ensure_running(),
     gen_statem:call(?SERVER, #call_register{module = Module}, infinity).
 
 -doc """
@@ -256,56 +252,29 @@ callback_mode() ->
     [handle_event_function, state_enter].
 
 init(_) ->
-    {ok, ?s_dormant, undefined}.
+    process_flag(trap_exit, true),
+    ok = ensure_tables(),
+    self() ! ?heartbeat,
+    {ok, TRef} = timer:send_interval(cfg_heartbeat_interval(), ?heartbeat),
+    {ok, ?s_isolated(new_epoch_id()), #s{hb_timer = TRef}}.
 
-%% Dormant:
-handle_event(enter, PrevState, ?s_dormant, _) ->
-    ?tp(debug, ?tp_state_change, #{from => PrevState, to => ?s_dormant}),
-    keep_state_and_data;
-handle_event(EventType, Event, ?s_dormant, D) ->
-    ?tp(debug, ?tp_app_activation, #{type => EventType, event => Event}),
-    {next_state, ?s_isolated(new_epoch_id()), D, postpone};
 %% Isolated:
-handle_event(enter, PrevState, ?s_isolated(NextEpoch), D0) ->
-    %% Need lazy initialization?
-    D =
-        case PrevState of
-            ?s_dormant ->
-                ?tp(debug, ?tp_state_change, #{from => PrevState, to => ?s_isolated(NextEpoch)}),
-                real_init();
-            ?s_normal ->
-                ?tp(error, ?tp_state_change, #{from => PrevState, to => ?s_isolated(NextEpoch)}),
-                %% Shut down the workers.
-                emqx_durable_timer_sup:stop_worker_sup(),
-                %% Erase epoch optvar:
-                optvar:unset(?epoch_optvar),
-                ets:delete(?epoch_tab),
-                D0
-        end,
-    {keep_state, D, {state_timeout, 0, ?heartbeat}};
+handle_event(enter, PrevState, ?s_isolated(NextEpoch), D) ->
+    enter_isolated(PrevState, NextEpoch, D);
+handle_event(cast, #cast_check_peers{}, ?s_isolated(_), _D) ->
+    keep_state_and_data;
 %% Normal:
-handle_event(enter, PrevState, ?s_normal, S = #s{this_epoch = Epoch}) ->
-    ?tp(debug, ?tp_state_change, #{from => PrevState, to => ?s_normal, epoch => Epoch}),
-    %% Close previuos epochs for this node:
-    _ = [update_epoch(node(), E, LH, false) || {E, Up, LH} <- ls_epochs(node()), E =/= Epoch, Up],
-    %% Create and init epoch table:
-    ets:new(?epoch_tab, [protected, named_table, set, {keypos, #ei.k}]),
-    %% Read peer info and start replayers of closed epochs:
-    lists:foreach(
-        fun(E) -> start_closed({epoch, E}, S) end,
-        update_epochs(?s_normal)
-    ),
-    %% Restart workers:
-    ok = emqx_durable_timer_sup:start_worker_sup(),
-    start_active(S),
-    %% Set epoch:
-    optvar:set(?epoch_optvar, Epoch),
-    %% Read epochs:
-    {keep_state_and_data, {state_timeout, cfg_heartbeat_interval(), ?heartbeat}};
+handle_event(enter, PrevState, ?s_normal, D) ->
+    enter_normal(PrevState, D);
+handle_event(cast, #cast_check_peers{}, ?s_normal, D = #s{peer_info = PeerInfo0}) ->
+    {ClosedEpochs, PeerInfo} = check_peers(PeerInfo0),
+    start_closed(list_types(), ClosedEpochs),
+    {keep_state, D#s{peer_info = PeerInfo}};
 %% Common:
 handle_event({call, From}, #call_register{module = Module}, State, Data) ->
-    handle_register(State, Module, Data, From);
-handle_event(state_timeout, ?heartbeat, State, Data) ->
+    Result = do_register_type(State, Module, Data),
+    {keep_state_and_data, {reply, From, Result}};
+handle_event(_, ?heartbeat, State, Data) ->
     handle_heartbeat(State, Data);
 handle_event(state_enter, From, To, _Data) ->
     ?tp(debug, ?tp_state_change, #{from => From, to => To}),
@@ -314,7 +283,10 @@ handle_event(ET, Event, State, Data) ->
     ?tp(error, ?tp_unknown_event, #{m => ?MODULE, ET => Event, state => State, data => Data}),
     keep_state_and_data.
 
-terminate(_Reason, ?s_normal, #s{this_epoch = Epoch}) ->
+terminate(Reason, ?s_normal, #s{this_epoch = Epoch}) ->
+    ?tp(debug, emqx_durable_timer_terminate, #{reason => Reason, epoch => Epoch}),
+    optvar:unset(?epoch_optvar),
+    emqx_durable_timer_sup:restart_worker_sup(),
     _ = update_epoch(node(), Epoch, now_ms(), false),
     ok;
 terminate(_Reason, _State, _D) ->
@@ -324,38 +296,19 @@ terminate(_Reason, _State, _D) ->
 %% Internal exports
 %%================================================================================
 
-lts_threshold_cb(0, _) ->
-    infinity;
-lts_threshold_cb(N, Root) when Root =:= ?top_deadhand; Root =:= ?top_started ->
-    %% [<<"d">>, Type, Epoch, Key]
-    if
-        N =:= 1 -> infinity;
-        true -> 0
-    end;
-lts_threshold_cb(_, _) ->
-    0.
-
-ls_epochs() ->
-    L = emqx_ds:fold_topic(
-        fun(_, _, {[?top_heartbeat, NodeBin, Epoch], _, <<Time:64, IUp:8>>}, Acc) ->
-            [{binary_to_atom(NodeBin), Epoch, IUp =:= 1, Time} | Acc]
+last_heartbeat(Epoch) ->
+    emqx_ds:fold_topic(
+        fun(_, _, ?hb(_, _, Time, _), _) ->
+            {ok, Time}
         end,
-        [],
-        heartbeat_topic('+', '+'),
-        #{db => ?DB_GLOB, errors => ignore}
-    ),
-    lists:keysort(4, L).
-
-ls_epochs(Node) ->
-    L = emqx_ds:fold_topic(
-        fun(_, _, {[?top_heartbeat, _, Epoch], _, <<Time:64, IUp:8>>}, Acc) ->
-            [{Epoch, IUp =:= 1, Time} | Acc]
-        end,
-        [],
-        heartbeat_topic(atom_to_binary(Node), '+'),
-        #{db => ?DB_GLOB, errors => ignore}
-    ),
-    lists:keysort(3, L).
+        undefined,
+        ?hb_topic('+', Epoch),
+        #{
+            db => ?DB_GLOB,
+            generation => generation(?DB_GLOB),
+            shard => emqx_ds:shard_of(?DB_GLOB, Epoch)
+        }
+    ).
 
 -spec now_ms() -> integer().
 now_ms() ->
@@ -365,162 +318,188 @@ now_ms() ->
 epoch() ->
     optvar:read(?epoch_optvar).
 
+get_cbm(Type) ->
+    ets:lookup_element(?regs_tab, Type, 2).
+
 %%================================================================================
 %% Internal functions
 %%================================================================================
 
-real_init() ->
-    ?tp_span(
-        debug,
-        ?tp_init,
-        #{},
-        begin
-            ok = ensure_tables(),
-            #s{
-                my_last_heartbeat = now_ms()
-            }
-        end
-    ).
+enter_isolated(PrevState, NextEpoch, D0) ->
+    case PrevState of
+        ?s_isolated(_) ->
+            ok;
+        ?s_normal ->
+            ?tp(error, ?tp_state_change, #{from => PrevState, to => ?s_isolated(NextEpoch)}),
+            optvar:unset(?epoch_optvar),
+            emqx_durable_timer_sup:restart_worker_sup()
+    end,
+    D = D0#s{peer_info = #{}},
+    {keep_state, D}.
 
-handle_register(State, Module, Data0 = #s{regs = Regs}, From) ->
+enter_normal(PrevState, S = #s{this_epoch = Epoch}) ->
+    ?tp(debug, ?tp_state_change, #{from => PrevState, to => ?s_normal, epoch => Epoch}),
+    %% Close all previuos epochs for this node:
+    _ = [
+        update_epoch(node(), E, LH, false)
+     || {E, Up, LH} <- emqx_durable_timer_dl:dirty_ls_epochs(node()),
+        E =/= Epoch,
+        Up
+    ],
+    start_active(list_types(), S),
+    optvar:set(?epoch_optvar, Epoch),
+    keep_state_and_data.
+
+do_register_type(State, Module, Data) ->
     try
         Type = Module:durable_timer_type(),
-        case Regs of
-            #{Type := Module} ->
-                Reply = ok,
-                Data = Data0;
-            #{Type := OldMod} ->
-                Reply = {error, {already_registered, OldMod}},
-                Data = Data0;
-            #{} ->
-                Data = Data0#s{regs = Regs#{Type => Module}},
+        case ets:lookup(?regs_tab, Type) of
+            [{_, Module}] ->
+                %% Same thing:
+                ok;
+            [{_, OldMod}] ->
+                {error, {already_registered, OldMod}};
+            [] ->
                 ?tp(?tp_register, #{type => Type, cbm => Module}),
+                ets:insert(?regs_tab, {Type, Module}),
                 case State of
                     ?s_normal ->
-                        start_active(Type, Data),
-                        start_closed({type, Type}, Data);
+                        start_active([Type], Data),
+                        start_closed([Type], closed_epochs(Data)),
+                        ok;
                     ?s_isolated(_) ->
                         ok
-                end,
-                Reply = ok
-        end,
-        {keep_state, Data, {reply, From, Reply}}
+                end
+        end
     catch
         EC:Err:Stack ->
-            {keep_state_and_data, {reply, From, {error, {EC, Err, Stack}}}}
+            {error, {EC, Err, Stack}}
     end.
 
-handle_heartbeat(State, S0 = #s{this_epoch = LastEpoch, my_last_heartbeat = MLH}) ->
-    %% Should we try to close the previous epoch?
+handle_heartbeat(
+    State, S0 = #s{this_epoch = LastEpoch, my_missed_heartbeats = MMH}
+) ->
+    ?tp(debug, ?tp_heartbeat, #{state => State}),
+    LEO = now_ms(),
     Epoch =
         case State of
-            ?s_isolated(NewEpochId) ->
-                %% Try to close the previous one:
-                _ =
-                    is_binary(LastEpoch) andalso
-                        update_epoch(node(), LastEpoch, MLH, false),
-                NewEpochId;
-            _ ->
-                LastEpoch
+            ?s_isolated(NewEpoch) -> NewEpoch;
+            ?s_normal -> LastEpoch
         end,
-    LEO = now_ms(),
-    Result = update_epoch(node(), Epoch, LEO, true),
-    update_epochs(State),
-    Timeout = {state_timeout, cfg_heartbeat_interval(), ?heartbeat},
-    DeadlineMissed = now_ms() >= (MLH + cfg_missed_heartbeats() / 2),
-    case Result of
+    case update_epoch(node(), Epoch, LEO, true) of
         ok ->
-            ?tp(debug, ?tp_heartbeat, #{epoch => Epoch, state => State}),
-            S = S0#s{my_last_heartbeat = LEO, this_epoch = Epoch},
-            {next_state, ?s_normal, S, Timeout};
-        {error, EC, Err} when DeadlineMissed ->
-            ?tp(error, ?tp_missed_heartbeat, #{epoch => Epoch, EC => Err, state => State}),
-            {next_state, ?s_isolated(new_epoch_id()), S0, Timeout};
+            S = S0#s{
+                my_missed_heartbeats = 0,
+                my_last_heartbeat = LEO,
+                this_epoch = Epoch
+            },
+            {next_state, ?s_normal, S, {next_event, cast, #cast_check_peers{}}};
         {error, EC, Err} ->
-            ?tp(info, ?tp_missed_heartbeat, #{epoch => Epoch, EC => Err, state => State}),
-            {keep_state_and_data, Timeout}
+            MaxMissed = cfg_missed_heartbeats(),
+            S = S0#s{my_missed_heartbeats = MMH + 1},
+            case State of
+                ?s_normal when MMH > MaxMissed div 2 ->
+                    ?tp(error, ?tp_missed_heartbeat, #{epoch => Epoch, EC => Err, state => State}),
+                    {next_state, ?s_isolated(new_epoch_id()), S};
+                _ ->
+                    ?tp(debug, ?tp_missed_heartbeat, #{epoch => Epoch, EC => Err, state => State}),
+                    {keep_state, S}
+            end
     end.
 
 ensure_tables() ->
-    %% FIXME: config
-    NShards = 1,
-    NSites = 1,
-    RFactor = 5,
     Storage =
         {emqx_ds_storage_skipstream_lts_v2, #{
-            lts_threshold_spec => {mf, ?MODULE, lts_threshold_cb},
+            lts_threshold_spec => {mf, emqx_durable_timer_dl, lts_threshold_cb},
             timestamp_bytes => 8
         }},
-    Transaction = #{
-        flush_interval => 1000, idle_flush_interval => 1, conflict_window => 5000
-    },
     ok = emqx_ds:open_db(
         ?DB_GLOB,
         #{
             backend => builtin_raft,
             store_ttv => true,
-            transaction => Transaction,
+            transaction => cfg_transactions(),
             storage => Storage,
-            replication => #{},
-            n_shards => NShards,
-            n_sites => NSites,
-            replication_factor => RFactor,
+            replication => cfg_replication(),
+            n_shards => cfg_n_shards(),
+            n_sites => cfg_n_sites(),
+            replication_factor => cfg_replication_factor(),
             atomic_batches => true,
             append_only => false,
             reads => leader_preferred
         }
     ).
 
-update_epochs(?s_normal) ->
-    {MissedEpochs, _Errors} =
-        emqx_ds:fold_topic(
-            fun traverse_epochs/4,
-            [],
-            heartbeat_topic('+', '+'),
-            #{db => ?DB_GLOB, errors => report}
-        ),
-    MissedEpochs;
-update_epochs(?s_isolated(_)) ->
-    [].
-
-traverse_epochs(_Slab, _Stream, {[_, NodeBin, Epoch], _, Val}, Acc) ->
-    Node = binary_to_atom(NodeBin),
-    <<Time:64, IUp:8>> = Val,
-    IsUp = IUp =:= 1,
-    case ets:lookup(?epoch_tab, Epoch) of
-        [EI = #ei{last_heartbeat = LH, missed_heartbeats = MH}] ->
-            %% Known epoch:
-            case Time of
-                LH when IsUp ->
-                    %% Epoch was up and now it's missed a heartbeat:
-                    case cfg_missed_heartbeats() of
-                        MaxMissed when MH >= MaxMissed ->
-                            %% Node missed enough heartbeats. Shut it down:
-                            update_epoch(Node, Epoch, Time, false),
-                            ets:insert(?epoch_tab, EI#ei{up = false}),
-                            [Epoch | Acc];
-                        _ ->
-                            ets:insert(?epoch_tab, EI#ei{missed_heartbeats = MH + 1}),
-                            Acc
-                    end;
-                _ when IsUp ->
-                    %% Heartbeat success:
-                    ets:insert(?epoch_tab, EI#ei{last_heartbeat = Time, missed_heartbeats = 0}),
-                    Acc;
-                _ ->
-                    %% Epoch went down:
-                    ets:insert(?epoch_tab, EI#ei{up = false}),
-                    Acc
-            end;
-        [] ->
-            %% New epoch:
-            ets:insert(?epoch_tab, #ei{k = Epoch, node = Node, up = IsUp, last_heartbeat = Time}),
-            case IsUp of
-                true ->
-                    Acc;
-                false ->
-                    [Epoch | Acc]
+check_peers(PeerInfo0) ->
+    %% Note: we ignore errors since data accumulates in the ets. So
+    %% the check will be retried on every heartbeat:
+    emqx_ds:fold_topic(
+        fun(_Slab, _Stream, Payload, {AccClosed, AccPeerInfo}) ->
+            ?hb(NodeBin, Epoch, LastHeartbeat, IUp) = Payload,
+            Node = binary_to_atom(NodeBin),
+            IsUp = IUp =:= 1,
+            case traverse_epochs(Node, Epoch, LastHeartbeat, IsUp, AccPeerInfo) of
+                {true, EI} ->
+                    {[Epoch | AccClosed], AccPeerInfo#{Epoch => EI}};
+                {false, EI} ->
+                    {AccClosed, AccPeerInfo#{Epoch => EI}}
             end
+        end,
+        {[], PeerInfo0},
+        ?hb_topic('+', '+'),
+        #{db => ?DB_GLOB, errors => ignore}
+    ).
+
+traverse_epochs(Node, Epoch, LastHeartbeat, IsUp, PeerInfo) ->
+    MaxMissed = cfg_missed_heartbeats(),
+    case PeerInfo of
+        #{Epoch := EI} ->
+            %% Known epoch:
+            check_remote_heartbeat(MaxMissed, Epoch, EI, Node, LastHeartbeat, IsUp);
+        #{} ->
+            %% New epoch:
+            EI = #ei{node = Node, up = IsUp, last_heartbeat = LastHeartbeat},
+            case IsUp of
+                false ->
+                    {true, EI};
+                true ->
+                    {false, EI}
+            end
+    end.
+
+check_remote_heartbeat(
+    MaxMissed,
+    Epoch,
+    EI = #ei{last_heartbeat = LastHeartbeat, missed_heartbeats = MH, up = WasUp},
+    Node,
+    Heartbeat,
+    IsUp
+) ->
+    case IsUp of
+        false when WasUp ->
+            %% Epoch went down:
+            {true, EI#ei{up = false}};
+        false ->
+            %% We already know it's down:
+            {false, EI};
+        true when Heartbeat > LastHeartbeat ->
+            %% Epoch is healthy:
+            {false, EI#ei{last_heartbeat = Heartbeat, missed_heartbeats = 0}};
+        true when MH >= MaxMissed ->
+            %% Epoch was up, but missed enough heartbeats. Try to shut it down:
+            ?tp(info, ?tp_remote_missed_heartbeat, #{
+                node => Node, last_heartbeat => Heartbeat, epoch => Epoch, missed => MH
+            }),
+            case update_epoch(Node, Epoch, Heartbeat, false) of
+                ok ->
+                    {true, EI#ei{up = false}};
+                {error, _, _} ->
+                    %% Shard is unreachable?
+                    {false, EI}
+            end;
+        true ->
+            %% Epoch missed a heartbeat:
+            {false, EI#ei{missed_heartbeats = MH + 1}}
     end.
 
 update_epoch(Node, Epoch, LastHeartbeat, IsUp) ->
@@ -530,17 +509,15 @@ update_epoch(Node, Epoch, LastHeartbeat, IsUp) ->
         fun() ->
             IUp =
                 case IsUp of
-                    true ->
-                        1;
-                    false ->
-                        ?ds_tx_on_success(?tp(debug, ?tp_close_epoch, #{epoch => Epoch})),
-                        0
+                    true -> 1;
+                    false -> 0
                 end,
-            emqx_ds:tx_write({
-                heartbeat_topic(NodeBin, Epoch),
-                0,
-                <<LastHeartbeat:64, IUp:8>>
-            })
+            ?ds_tx_on_success(
+                ?tp(debug, ?tp_update_epoch, #{
+                    node => Node, epoch => Epoch, up => IsUp, hb => LastHeartbeat
+                })
+            ),
+            emqx_ds:tx_write(?hb(NodeBin, Epoch, LastHeartbeat, IUp))
         end
     ),
     case Result of
@@ -553,9 +530,6 @@ update_epoch(Node, Epoch, LastHeartbeat, IsUp) ->
 generation(_DB) ->
     1.
 
-heartbeat_topic(NodeBin, NodeEpochId) ->
-    [?top_heartbeat, NodeBin, NodeEpochId].
-
 cfg_heartbeat_interval() ->
     application:get_env(?APP, heartbeat_interval, 5_000).
 
@@ -567,6 +541,30 @@ cfg_replay_retry_interval() ->
 
 cfg_transaction_timeout() ->
     application:get_env(?APP, transaction_timeout, 1000).
+
+cfg_n_shards() ->
+    application:get_env(?APP, n_shards, 16).
+
+cfg_n_sites() ->
+    application:get_env(?APP, n_sites, 1).
+
+cfg_replication_factor() ->
+    application:get_env(?APP, replication_factor, 5).
+
+cfg_replication() ->
+    application:get_env(?APP, replication, #{}).
+
+cfg_transactions() ->
+    application:get_env(
+        ?APP,
+        transactions,
+        #{
+            flush_interval => 10, idle_flush_interval => 1, conflict_window => 5000
+        }
+    ).
+
+cfg_batch_size() ->
+    application:get_env(?APP, cfg_batch_size, 1000).
 
 -doc """
 A wrapper for transactions that operate on a particular epoch.
@@ -584,52 +582,39 @@ epoch_trans(Epoch, Fun) ->
         Fun
     ).
 
-start_active(S = #s{regs = Regs}) ->
-    maps:foreach(
-        fun(Type, _) ->
-            start_active(Type, S)
-        end,
-        Regs
-    ).
+start_active(Types, #s{this_epoch = Epoch}) ->
+    Shards = shards(),
+    [
+        emqx_durable_timer_sup:start_worker(active, Type, Epoch, Shard)
+     || Shard <- Shards,
+        Type <- Types
+    ],
+    ok.
 
-start_active(Type, #s{regs = Regs, this_epoch = Epoch}) ->
-    #{Type := CBM} = Regs,
-    lists:foreach(
-        fun(Shard) ->
-            emqx_durable_timer_sup:start_worker(Type, Epoch, Shard, CBM, active)
-        end,
-        shards()
-    ).
+start_closed(Types, Epochs) ->
+    Shards = shards(),
+    [
+        begin
+            ok = emqx_durable_timer_sup:start_worker({closed, started}, Type, Epoch, Shard),
+            ok = emqx_durable_timer_sup:start_worker({closed, dead_hand}, Type, Epoch, Shard)
+        end
+     || Epoch <- Epochs,
+        Shard <- Shards,
+        Type <- Types
+    ],
+    ok.
 
-start_closed({epoch, Epoch}, S = #s{regs = Regs}) ->
-    maps:foreach(
-        fun(Type, _) ->
-            start_closed(Type, Epoch, S)
+closed_epochs(#s{peer_info = PI}) ->
+    maps:fold(
+        fun
+            (Epoch, #ei{up = false}, Acc) ->
+                [Epoch | Acc];
+            (_, _, Acc) ->
+                Acc
         end,
-        Regs
-    );
-start_closed({type, Type}, S) ->
-    lists:foreach(
-        fun(Epoch) ->
-            start_closed(Type, Epoch, S)
-        end,
-        closed_epochs()
+        [],
+        PI
     ).
-
-start_closed(Type, Epoch, #s{regs = Regs}) ->
-    #{Type := CBM} = Regs,
-    lists:foreach(
-        fun(Shard) ->
-            ok = emqx_durable_timer_sup:start_worker(Type, Epoch, Shard, CBM, {closed, started}),
-            ok = emqx_durable_timer_sup:start_worker(Type, Epoch, Shard, CBM, {closed, dead_hand})
-        end,
-        shards()
-    ).
-
--dialyzer({nowarn_function, closed_epochs/0}).
-closed_epochs() ->
-    MS = {#ei{k = '$1', up = false, _ = '_'}, [], ['$1']},
-    ets:select(?epoch_tab, [MS]).
 
 shards() ->
     Gen = generation(?DB_GLOB),
@@ -646,6 +631,10 @@ shards() ->
 
 new_epoch_id() ->
     crypto:strong_rand_bytes(8).
+
+list_types() ->
+    MS = {{'$1', '_'}, [], ['$1']},
+    ets:select(?regs_tab, [MS]).
 
 -ifdef(TEST).
 drop_tables() ->

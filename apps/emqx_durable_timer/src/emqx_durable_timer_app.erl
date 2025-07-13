@@ -7,4 +7,4 @@
 -export([start/2]).
 
 start(_Type, _Args) ->
-    emqx_durable_timer_sup:start_link().
+    emqx_durable_timer_sup:start_top().

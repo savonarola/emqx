@@ -65,9 +65,8 @@ durable_timer_type() -> 16#DEAD5E55.
 
 timer_introduced_in() -> "6.0.0".
 
-handle_durable_timeout(SessionId, ChannelCookie) ->
+handle_durable_timeout(SessionId, _ChannelCookie) ->
     %% TODO: verify that we're kicking the correct channel?
-    ?tp(warning, 'OHAYO', #{session_id => SessionId, cookie => ChannelCookie}),
     emqx_persistent_session_ds:kick_offline_session(SessionId).
 
 %%================================================================================

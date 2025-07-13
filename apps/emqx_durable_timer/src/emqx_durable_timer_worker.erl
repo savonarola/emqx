@@ -43,7 +43,7 @@ Invariants:
 -behavior(gen_statem).
 
 %% API:
--export([start_link/5, apply_after/5, dead_hand/5, cancel/3]).
+-export([start_link/4, apply_after/5, dead_hand/5, cancel/3]).
 
 %% behavior callbacks:
 -export([callback_mode/0, init/1, terminate/3, handle_event/4]).
@@ -71,22 +71,25 @@ Invariants:
     t :: integer()
 }).
 -record(cast_wake_up, {t :: integer()}).
+-define(elect_leader, elect_leader).
 
 %% States:
 -define(s_active, active).
 -define(s_candidate(KIND), {candidate, KIND}).
+-define(s_backup(KIND, REF), {backup, KIND, REF}).
+-define(s_leader(KIND), {leader, KIND}).
 
 %%================================================================================
 %% API functions
 %%================================================================================
 
 -spec start_link(
-    emqx_durable_timer:type(), emqx_durable_timer:epoch(), emqx_ds:shard(), module(), kind()
+    kind(), emqx_durable_timer:type(), emqx_durable_timer:epoch(), emqx_ds:shard()
 ) ->
     {ok, pid()}.
-start_link(Type, Epoch, Shard, CBM, WorkerKind) ->
+start_link(WorkerKind, Type, Epoch, Shard) ->
     gen_statem:start_link(
-        ?via(WorkerKind, Type, Epoch, Shard), ?MODULE, [WorkerKind, Type, CBM, Epoch, Shard], []
+        ?via(WorkerKind, Type, Epoch, Shard), ?MODULE, [WorkerKind, Type, Epoch, Shard], []
     ).
 
 -spec apply_after(
@@ -163,9 +166,15 @@ cancel(Type, _Epoch, Key) ->
     pending_tab :: ets:tid(),
     %% Iterator pointing at the beginning of un-replayed timers:
     replay_pos :: emqx_ds:iterator() | undefined,
+    %% Remaining entries from the last replay (relevent for closed)
+    tail = [] :: emqx_ds:ttv(),
     %% Reference to the pending transaction that async-ly cleans up
     %% the replayed data:
     pending_del_tx :: reference() | undefined,
+    topic :: emqx_ds:topic(),
+    %% This value should be added to the timestamp of the timer TTV to
+    %% convert it to the local time:
+    time_delta :: integer(),
     %% Timeline:
     del_up_to = 0 :: integer(),
     fully_replayed_ts = 0 :: integer(),
@@ -174,33 +183,48 @@ cancel(Type, _Epoch, Key) ->
 
 callback_mode() -> [handle_event_function, state_enter].
 
-init([WorkerKind, Type, CBM, Epoch, Shard]) ->
+init([WorkerKind, Type, Epoch, Shard]) ->
     process_flag(trap_exit, true),
     logger:update_process_metadata(
         #{kind => WorkerKind, type => Type, epoch => Epoch, shard => Shard}
     ),
+    CBM = emqx_durable_timer:get_cbm(Type),
     ?tp(?tp_worker_started, #{}),
+    D0 = #s{
+        type = Type,
+        cbm = CBM,
+        epoch = Epoch,
+        shard = Shard
+    },
     case WorkerKind of
         active ->
             insert_epoch(Shard, Epoch),
-            D = #s{
-                type = Type,
-                cbm = CBM,
-                epoch = Epoch,
-                shard = Shard,
+            D = D0#s{
                 pending_tab = addq_new(),
-                replay_pos = undefined
+                time_delta = 0,
+                topic = started_topic(Type, Epoch, '+')
             },
             {ok, ?s_active, D};
         {closed, Closed} ->
-            D = #s{
-                type = Type,
-                cbm = CBM,
-                epoch = Epoch,
-                shard = Shard,
-                replay_pos = undefined
-            },
-            {ok, ?s_candidate(Closed), D}
+            case has_data(Closed, Shard, Epoch) of
+                true ->
+                    case Closed of
+                        started ->
+                            Topic = started_topic(Type, Epoch, '+'),
+                            %% TODO: try to account for clock skew?
+                            Delta = 0;
+                        dead_hand ->
+                            {ok, Delta} = emqx_durable_timer:last_heartbeat(Epoch),
+                            Topic = dead_hand_topic(Type, Epoch, '+')
+                    end,
+                    D = D0#s{
+                        time_delta = Delta,
+                        topic = Topic
+                    },
+                    {ok, ?s_candidate(Closed), D};
+                false ->
+                    {stop, normal}
+            end
     end.
 
 %% Active:
@@ -208,22 +232,26 @@ handle_event(enter, _, ?s_active, _) ->
     keep_state_and_data;
 handle_event({call, From}, #call_apply_after{k = Key, v = Value, t = NotEarlierThan}, ?s_active, S) ->
     handle_apply_after(From, Key, Value, NotEarlierThan, S);
-handle_event(_TT, ?ds_tx_commit_reply(Ref, Reply), State, D = #s{pending_del_tx = Ref}) ->
-    case emqx_ds:tx_commit_outcome(?DB_GLOB, Ref, Reply) of
-        {ok, _} ->
-            ok;
-        Other ->
-            ?tp(info, "Failed to clean up expired timers", #{reason => Other})
-    end,
-    clean_replayed(State, D#s{pending_del_tx = undefined});
+handle_event(_TT, ?ds_tx_commit_reply(Ref, Reply), _State, D = #s{pending_del_tx = Ref}) ->
+    on_clean_complete(Ref, Reply, D);
 handle_event(_ET, ?ds_tx_commit_reply(Ref, Reply), ?s_active, Data) ->
     handle_ds_reply(Ref, Reply, Data);
-handle_event(info, #cast_wake_up{t = Treached}, ?s_active, Data) ->
-    clean_replayed(?s_active, replay_active(Data, Treached));
 %% Candidate:
-handle_event(enter, _, ?s_candidate(_), _) ->
+handle_event(enter, _, ?s_candidate(_Kind), _Data) ->
+    {keep_state_and_data, {state_timeout, 0, ?elect_leader}};
+handle_event(state_timeout, ?elect_leader, ?s_candidate(Kind), Data) ->
+    handle_election(Kind, Data);
+handle_event(enter, _, ?s_leader(_Kind), Data) ->
+    self() ! #cast_wake_up{t = emqx_durable_timer:now_ms()},
     keep_state_and_data;
+%% Backup:
+handle_event(enter, _, ?s_backup(_, _), _) ->
+    keep_state_and_data;
+handle_event(info, {'DOWN', Ref, _, _, Reason}, ?s_backup(Kind, Ref), Data) ->
+    handle_leader_down(Kind, Data, Reason);
 %% Common:
+handle_event(info, #cast_wake_up{t = Treached}, State, Data) ->
+    handle_wake_up(State, Data, Treached);
 handle_event(ET, Event, State, Data) ->
     ?tp(error, ?tp_unknown_event, #{m => ?MODULE, ET => Event, state => State, data => Data}),
     keep_state_and_data.
@@ -241,6 +269,21 @@ ls() ->
     MS = {{?name('$1', '$2', '$3', '$4'), '_', '_'}, [], [{{'$1', '$2', '$3', '$4'}}]},
     gproc:select({local, names}, [MS]).
 
+has_data(Kind, Shard, Epoch) ->
+    {atomic, _Serial, Result} =
+        emqx_ds:trans(
+            trans_opts(Shard, #{}),
+            fun() ->
+                case emqx_ds:tx_read([?top_epoch, kind_to_topic(Kind), Epoch]) of
+                    [] ->
+                        false;
+                    _ ->
+                        true
+                end
+            end
+        ),
+    Result.
+
 dead_hand_topic(Type, NodeEpochId, Key) ->
     [?top_deadhand, <<Type:?type_bits>>, NodeEpochId, Key].
 
@@ -251,16 +294,65 @@ started_topic(Type, NodeEpochId, Key) ->
 %% Internal functions
 %%================================================================================
 
-replay_active(S = #s{fully_replayed_ts = FullyReplayedTS0}, Treached) ->
+%%--------------------------------------------------------------------------------
+%% Leader election
+%%--------------------------------------------------------------------------------
+
+handle_leader_down(_Kind, _Data, _Reason) ->
+    %% FIXME
+    keep_state_and_data.
+
+handle_election(Kind, Data = #s{type = T, epoch = E, shard = S}) ->
+    Name = ?name(Kind, T, E, S),
+    case global:whereis_name(Name) of
+        Leader when is_pid(Leader) ->
+            MRef = monitor(process, Leader),
+            {next_state, ?s_backup(Kind, MRef), Data};
+        undefined ->
+            %% FIXME: do something smarter
+            case global:register_name(Name, self()) of
+                yes ->
+                    {next_state, ?s_leader(Kind), Data};
+                no ->
+                    {next_state, ?s_candidate(Kind), Data,
+                        {state_timeout, rand:uniform(1000), ?elect_leader}}
+            end
+    end.
+
+%%--------------------------------------------------------------------------------
+%% Replay
+%%--------------------------------------------------------------------------------
+
+handle_wake_up(State, Data0, Treached) ->
+    case replay_timers(State, Data0, Treached) of
+        end_of_stream ->
+            ?s_leader(_) = State,
+            complete_replay(State, Data0);
+        {ok, Data} ->
+            clean_replayed(Data)
+    end.
+
+complete_replay(?s_leader(Closed), #s{shard = Shard, epoch = Epoch}) ->
+    emqx_ds:trans(
+        trans_opts(Shard, #{}),
+        fun() ->
+            emqx_ds:tx_del_topic([?top_epoch, kind_to_topic(Closed), Epoch])
+        end
+    ),
+    {stop, normal}.
+
+replay_timers(State, S = #s{fully_replayed_ts = FullyReplayedTS0}, Treached) ->
     Bound = Treached + 1,
     ?tp_span(
         ?tp_active_replay,
         #{s => S, bound => Bound, fully_replayed_ts => FullyReplayedTS0},
         maybe
-            {ok, It0} ?= get_iterator(?s_active, S),
-            {ok, FullyReplayedTS, It} ?= do_replay_active(S, It0, Bound, FullyReplayedTS0),
-            S#s{replay_pos = It, fully_replayed_ts = FullyReplayedTS}
+            {ok, It0} ?= get_iterator(State, S),
+            {ok, FullyReplayedTS, It} ?= do_replay_timers(S, It0, Bound, FullyReplayedTS0),
+            {ok, S#s{replay_pos = It, fully_replayed_ts = FullyReplayedTS}}
         else
+            end_of_stream ->
+                end_of_stream;
             {retry, FullyReplayedTS1, It1, Reason} ->
                 ?tp(warning, ?tp_replay_failed, #{
                     from => S#s.replay_pos, to => It1, reason => Reason
@@ -270,53 +362,57 @@ replay_active(S = #s{fully_replayed_ts = FullyReplayedTS0}, Treached) ->
                     self(),
                     #cast_wake_up{t = Treached}
                 ),
-                S#s{replay_pos = It1, fully_replayed_ts = FullyReplayedTS1}
+                {ok, S#s{replay_pos = It1, fully_replayed_ts = FullyReplayedTS1}}
         end
     ).
 
 clean_replayed(
-    _State,
-    D = #s{pending_del_tx = Pending, fully_replayed_ts = FullyReplayed, del_up_to = DelUpTo}
+    D = #s{
+        pending_del_tx = Pending,
+        fully_replayed_ts = FullyReplayed,
+        del_up_to = DelUpTo
+    }
 ) when is_reference(Pending); FullyReplayed =:= DelUpTo ->
+    %% Clean up is already in progress or there's nothing to clean:
     {keep_state, D};
 clean_replayed(
-    State,
     D = #s{
         shard = Shard,
-        type = Type,
-        epoch = Epoch,
+        topic = Topic,
         pending_del_tx = undefined,
         fully_replayed_ts = DelUpTo
     }
 ) ->
-    Topic =
-        case State of
-            ?s_active -> started_topic(Type, Epoch, '+')
-        end,
     {async, Ref, _} =
         emqx_ds:trans(
             trans_opts(Shard, #{sync => false}),
             fun() ->
-                ?tp(warning, 'deleting old stuffs', #{
-                    type => Type, epoch => Epoch, up_to => DelUpTo
-                }),
                 emqx_ds:tx_del_topic(Topic, 0, DelUpTo + 1)
             end
         ),
     {keep_state, D#s{pending_del_tx = Ref, del_up_to = DelUpTo}}.
 
-do_replay_active(D, It0, Bound, FullyReplayedTS0) ->
-    BS = 1000,
-    case emqx_ds:next(?DB_GLOB, It0, {time, Bound, BS}) of
+on_clean_complete(Ref, Reply, Data) ->
+    case emqx_ds:tx_commit_outcome(?DB_GLOB, Ref, Reply) of
+        {ok, _} ->
+            ok;
+        Other ->
+            ?tp(info, "Failed to clean up expired timers", #{reason => Other})
+    end,
+    clean_replayed(Data#s{pending_del_tx = undefined}).
+
+do_replay_timers(D = #s{time_delta = Delta}, It0, Bound, FullyReplayedTS0) ->
+    BS = emqx_durable_timer:cfg_batch_size(),
+    case emqx_ds:next(?DB_GLOB, It0, {time, Bound + Delta, BS}) of
         {ok, It, Batch} ->
-            {FullyReplayedTS, Nreplayed, []} =
+            {FullyReplayedTS, Nreplayed} =
                 apply_timers_from_batch(D, Bound, FullyReplayedTS0, Batch),
             %% Have we reached the end?
             case Nreplayed < BS of
                 true ->
                     {ok, FullyReplayedTS, It};
                 false ->
-                    do_replay_active(D, It, Bound, FullyReplayedTS)
+                    do_replay_timers(D, It, Bound, FullyReplayedTS)
             end;
         ?err_rec(Reason) ->
             {retry, FullyReplayedTS0, It0, Reason}
@@ -328,12 +424,27 @@ apply_timers_from_batch(D, Bound, FullyReplayedTS, L) ->
 apply_timers_from_batch(D = #s{type = Type, cbm = CBM}, Bound, FullyReplayedTS, L, N) ->
     case L of
         [] ->
-            {FullyReplayedTS, N, []};
-        [{_Topic, Time, _Key} | _] when Time >= Bound ->
-            {FullyReplayedTS, N, L};
+            {FullyReplayedTS, N};
         [{[_Root, _Type, _Epoch, Key], Time, Val} | Rest] ->
             handle_timeout(Type, CBM, Time, Key, Val),
             apply_timers_from_batch(D, Bound, Time, Rest, N + 1)
+    end.
+
+-spec handle_timeout(
+    emqx_durable_timer:type(),
+    module(),
+    integer(),
+    emqx_durable_timer:key(),
+    emqx_durable_timer:value()
+) -> ok.
+handle_timeout(Type, CBM, Time, Key, Value) ->
+    ?tp(warning, ?tp_fire, #{type => Type, key => Key, val => Value, t => Time}),
+    try
+        CBM:handle_durable_timeout(Key, Value),
+        ok
+    catch
+        _:_ ->
+            ok
     end.
 
 -doc """
@@ -341,23 +452,25 @@ Get starting position for the replay.
 Either create a new iterator at the very beginning of the timer stream,
 or return the existing iterator that points at the beginning of un-replayed timers.
 """.
-get_iterator(State, #s{replay_pos = undefined, shard = Shard, type = Type, epoch = Epoch}) ->
+get_iterator(State, #s{replay_pos = undefined, shard = Shard, topic = Topic}) ->
     %% This is the first start of the worker. Start from the beginning:
-    maybe
-        TopicFilter =
-            case State of
-                ?s_active ->
-                    started_topic(Type, Epoch, '+')
-            end,
-        {[{_, Stream}], []} ?= emqx_ds:get_streams(?DB_GLOB, TopicFilter, 0, #{shard => Shard}),
-        {ok, _It} ?= emqx_ds:make_iterator(?DB_GLOB, Stream, TopicFilter, 0)
-    else
-        Reason ->
-            {retry, #s.fully_replayed_ts, undefined, Reason}
+    case emqx_ds:get_streams(?DB_GLOB, Topic, 0, #{shard => Shard}) of
+        {[{_, Stream}], []} ->
+            emqx_ds:make_iterator(?DB_GLOB, Stream, Topic, 0);
+        {[], []} when State =:= ?s_active ->
+            {retry, #s.fully_replayed_ts, undefined, no_data};
+        {[], []} ->
+            end_of_stream;
+        {_, Errors} ->
+            {retry, #s.fully_replayed_ts, undefined, Errors}
     end;
 get_iterator(_State, #s{replay_pos = ReplayPos}) ->
     %% Iterator already exists:
     {ok, ReplayPos}.
+
+%%--------------------------------------------------------------------------------
+%% Adding a new timer to the active queue
+%%--------------------------------------------------------------------------------
 
 %% Active replayer should be careful to not jump over timers that are
 %% still being added via pending transactions. Consider the following
@@ -471,56 +584,9 @@ active_schedule_wake_up(Time, D0 = #s{next_wakeup = NextWakeUp}, Effects) ->
         end,
     {keep_state, D, Effects}.
 
--spec handle_timeout(
-    emqx_durable_timer:type(),
-    module(),
-    integer(),
-    emqx_durable_timer:key(),
-    emqx_durable_timer:value()
-) -> ok.
-handle_timeout(Type, CBM, Time, Key, Value) ->
-    ?tp(warning, ?tp_fire, #{type => Type, key => Key, val => Value, t => Time}),
-    try
-        CBM:handle_durable_timeout(Key, Value),
-        ok
-    catch
-        _:_ ->
-            ok
-    end.
-
-tx_del_dead_hand(Type, Key) ->
-    [emqx_ds:tx_del_topic(dead_hand_topic(Type, Epoch, Key)) || Epoch <- tx_ls_epochs()],
-    ok.
-
-tx_del_started(Type, Key) ->
-    [emqx_ds:tx_del_topic(started_topic(Type, Epoch, Key)) || Epoch <- tx_ls_epochs()],
-    ok.
-
-%% TODO: add a cache
-tx_ls_epochs() ->
-    emqx_ds:tx_fold_topic(
-        fun(_, _, {[?top_epoch, E], _, _}, Acc) ->
-            [E | Acc]
-        end,
-        [],
-        [?top_epoch, '+']
-    ).
-
-insert_epoch(Shard, Epoch) ->
-    {atomic, _, _} = emqx_ds:trans(
-        trans_opts(Shard, #{}),
-        fun() ->
-            emqx_ds:tx_write({[?top_epoch, Epoch], ?ds_tx_ts_monotonic, <<>>})
-        end
-    ),
-    ok.
-
-trans_opts(Shard, Other) ->
-    Other#{
-        db => ?DB_GLOB,
-        generation => emqx_durable_timer:generation(?DB_GLOB),
-        shard => Shard
-    }.
+%%--------------------------------------------------------------------------------
+%% Pending transaction queue
+%%--------------------------------------------------------------------------------
 
 addq_new() ->
     ets:new(pending_trans, [private, ordered_set, {keypos, 1}]).
@@ -546,3 +612,47 @@ addq_pop(Ref, Tab) ->
         [] ->
             undefined
     end.
+
+%%--------------------------------------------------------------------------------
+%% Misc
+%%--------------------------------------------------------------------------------
+
+tx_del_dead_hand(Type, Key) ->
+    [emqx_ds:tx_del_topic(dead_hand_topic(Type, Epoch, Key)) || Epoch <- tx_ls_epochs(dead_hand)],
+    ok.
+
+tx_del_started(Type, Key) ->
+    [emqx_ds:tx_del_topic(started_topic(Type, Epoch, Key)) || Epoch <- tx_ls_epochs(started)],
+    ok.
+
+%% TODO: add a cache
+tx_ls_epochs(Kind) ->
+    emqx_ds:tx_fold_topic(
+        fun(_, _, {[?top_epoch, _, E], _, _}, Acc) ->
+            [E | Acc]
+        end,
+        [],
+        [?top_epoch, kind_to_topic(Kind), '+']
+    ).
+
+insert_epoch(Shard, Epoch) ->
+    {atomic, _, _} = emqx_ds:trans(
+        trans_opts(Shard, #{}),
+        fun() ->
+            emqx_ds:tx_write({[?top_epoch, ?top_started, Epoch], ?ds_tx_ts_monotonic, <<>>}),
+            emqx_ds:tx_write({[?top_epoch, ?top_deadhand, Epoch], ?ds_tx_ts_monotonic, <<>>})
+        end
+    ),
+    ok.
+
+trans_opts(Shard, Other) ->
+    Other#{
+        db => ?DB_GLOB,
+        generation => emqx_durable_timer:generation(?DB_GLOB),
+        shard => Shard
+    }.
+
+kind_to_topic(started) ->
+    ?top_started;
+kind_to_topic(dead_hand) ->
+    ?top_deadhand.
