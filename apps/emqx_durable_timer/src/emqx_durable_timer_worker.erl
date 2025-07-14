@@ -141,6 +141,8 @@ apply_after(Type, Epoch, Key, Val, NotEarlierThan) when
     next_wakeup = -1 :: integer()
 }).
 
+-type data() :: #s{}.
+
 callback_mode() -> [handle_event_function, state_enter].
 
 init([WorkerKind, Type, Epoch, Shard]) ->
@@ -170,7 +172,9 @@ init([WorkerKind, Type, Epoch, Shard]) ->
                     %% TODO: try to account for clock skew?
                     Delta = 0;
                 dead_hand ->
-                    {ok, Delta} = emqx_durable_timer_dl:last_heartbeat(Epoch),
+                    {ok, LastHeartbeat} = emqx_durable_timer_dl:last_heartbeat(Epoch),
+                    %% Upper margin for error:
+                    Delta = LastHeartbeat + emqx_durable_timer:cfg_heartbeat_interval(),
                     Topic = emqx_durable_timer_dl:dead_hand_topic(Type, Epoch, '+')
             end,
             D = #s{
@@ -304,14 +308,15 @@ handle_wake_up(
 
 schedule_next_wake_up(?s_active, Data) ->
     Data;
-schedule_next_wake_up(?s_leader(_), #s{tail = Tail, time_delta = Delta}) ->
+schedule_next_wake_up(?s_leader(_), Data = #s{tail = Tail, time_delta = Delta}) ->
     [{_, T, _} | _] = Tail,
     After = max(0, (T + Delta) - emqx_durable_timer:now_ms()),
     erlang:send_after(
         After,
         self(),
         #cast_wake_up{t = T}
-    ).
+    ),
+    Data.
 
 complete_replay(
     ?s_leader(_Closed), #s{shard = Shard, topic = Topic, epoch = _Epoch}, FullyReplayedTS
@@ -366,6 +371,7 @@ apply_timers_from_batch(
             {FullyReplayedTS, L}
     end.
 
+-spec clean_replayed(data()) -> data().
 clean_replayed(
     D = #s{
         pending_del_tx = Pending,
@@ -386,6 +392,7 @@ clean_replayed(
     Ref = emqx_durable_timer_dl:clean_replayed_async(Shard, Topic, DelUpTo),
     {keep_state, D#s{pending_del_tx = Ref, del_up_to = DelUpTo}}.
 
+-spec on_clean_complete(reference(), _, data()) -> data().
 on_clean_complete(Ref, Reply, Data) ->
     case emqx_ds:tx_commit_outcome(?DB_GLOB, Ref, Reply) of
         {ok, _} ->
@@ -403,7 +410,7 @@ on_clean_complete(Ref, Reply, Data) ->
     emqx_durable_timer:value()
 ) -> ok.
 handle_timeout(Type, CBM, Time, Key, Value) ->
-    ?tp(warning, ?tp_fire, #{type => Type, key => Key, val => Value, t => Time}),
+    ?tp(debug, ?tp_fire, #{type => Type, key => Key, val => Value, t => Time}),
     try
         CBM:handle_durable_timeout(Key, Value),
         ok

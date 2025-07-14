@@ -344,5 +344,7 @@ epoch_tx_opts(Shard, Other) ->
     Other#{
         db => ?DB_GLOB,
         generation => generation(),
-        shard => Shard
+        shard => Shard,
+        retries => 10,
+        retry_interval => 1000
     }.

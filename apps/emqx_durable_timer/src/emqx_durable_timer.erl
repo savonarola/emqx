@@ -176,12 +176,11 @@ dies.
 """.
 -spec dead_hand(type(), key(), value(), delay()) -> ok | emqx_ds:error(_).
 dead_hand(Type, Key, Value, Delay) when ?is_valid_timer(Type, Key, Value, Delay) ->
+    true = is_registered(Type),
     Epoch = epoch(),
-    ?ds_tx_on_success(
-        ?tp(debug, ?tp_new_dead_hand, #{
-            type => Type, key => Key, val => Value, delay => Delay, epoch => Epoch
-        })
-    ),
+    ?tp(debug, ?tp_new_dead_hand, #{
+        type => Type, key => Key, val => Value, delay => Delay, epoch => Epoch
+    }),
     emqx_durable_timer_dl:insert_dead_hand(Type, Epoch, Key, Value, Delay).
 
 -doc """
@@ -189,6 +188,7 @@ Create a timer that activates immediately.
 """.
 -spec apply_after(type(), key(), value(), delay()) -> ok | emqx_ds:error(_).
 apply_after(Type, Key, Value, Delay) when ?is_valid_timer(Type, Key, Value, Delay) ->
+    true = is_registered(Type),
     ?tp(debug, ?tp_new_apply_after, #{type => Type, key => Key, val => Value, delay => Delay}),
     NotEarlierThan = now_ms() + Delay,
     Epoch = epoch(),
@@ -197,6 +197,7 @@ apply_after(Type, Key, Value, Delay) when ?is_valid_timer(Type, Key, Value, Dela
 
 -spec cancel(type(), key()) -> ok | emqx_ds:error(_).
 cancel(Type, Key) when Type >= 0, Type =< ?max_type, is_binary(Key) ->
+    true = is_registered(Type),
     ?tp(debug, ?tp_delete, #{type => Type, key => Key}),
     _Epoch = epoch(),
     emqx_durable_timer_dl:cancel(Type, Key).
@@ -237,7 +238,7 @@ handle_event(state_enter, From, To, _Data) ->
     ?tp(debug, ?tp_state_change, #{from => From, to => To}),
     keep_state_and_data;
 handle_event(ET, Event, State, Data) ->
-    ?tp(error, ?tp_unknown_event, #{m => ?MODULE, ET => Event, state => State, data => Data}),
+    ?tp(error, ?tp_unknown_event, #{m => ?MODULE, ET => Event, state => State, d => Data}),
     keep_state_and_data.
 
 terminate(Reason, ?s_normal, #s{this_epoch = Epoch}) ->
@@ -479,7 +480,7 @@ cfg_transactions() ->
     ).
 
 cfg_batch_size() ->
-    application:get_env(?APP, cfg_batch_size, 1000).
+    application:get_env(?APP, batch_size, 1000).
 
 start_active(Types, #s{this_epoch = Epoch}) ->
     Shards = emqx_durable_timer_dl:shards(),
@@ -521,6 +522,14 @@ new_epoch_id() ->
 list_types() ->
     MS = {{'$1', '_'}, [], ['$1']},
     ets:select(?regs_tab, [MS]).
+
+is_registered(Type) ->
+    case ets:lookup(?regs_tab, Type) of
+        [_] ->
+            true;
+        [] ->
+            false
+    end.
 
 -ifdef(TEST).
 drop_tables() ->
