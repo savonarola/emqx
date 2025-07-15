@@ -10,13 +10,14 @@ A process responsible for execution of the timers.
 
          .--(type = active)--> active
         /
- [start]                      ,-->(leader, Kind)
+ [start]                      ,--select_self--->(leader, Kind)
         \                    /
          `--(candidate, Kind)
                   ^          \
-                  |           `-->(backup, Kind)
-                   \                   /
-                    `---leader down---'
+                  |           `--leader is up-->(standby, Kind, MRef)
+                   \                              /
+                    `--------leader down---------'
+
 ```
 
 ### Active worker's timeline
@@ -74,16 +75,22 @@ Invariants:
     v :: emqx_durable_timer:value(),
     t :: integer()
 }).
-%% Note: here t is local time:
+%% Note: here t is local time (adjusted for delta):
 -record(cast_wake_up, {t :: integer()}).
--define(elect_leader, elect_leader).
+-define(try_select_self, try_select_self).
+-record(cast_became_leader, {pid :: pid()}).
 -define(replay_complete, replay_complete).
 
 %% States:
+%%    Active workers replay `apply_after' timers that are added in the
+%%    current (open) epoch for the node.
 -define(s_active, active).
+%%    Replayers for the closed epochs start in this state:
 -define(s_candidate(KIND), {candidate, KIND}).
--define(s_backup(KIND, REF), {backup, KIND, REF}).
+%%    Active worker for the closed epoch:
 -define(s_leader(KIND), {leader, KIND}).
+%%    Standby worker that becomes candidate when the leader dies:
+-define(s_standby(KIND, REF), {standby, KIND, REF}).
 
 %%================================================================================
 %% API functions
@@ -166,9 +173,9 @@ init([WorkerKind, Type, Epoch, Shard]) ->
                 topic = emqx_durable_timer_dl:started_topic(Type, Epoch, '+')
             },
             {ok, ?s_active, D};
-        {closed, Closed} ->
-            pg:join(?workers_pg, {Closed, Type, Epoch, Shard}, self()),
-            case Closed of
+        {closed, Kind} ->
+            pg:join(?workers_pg, {Kind, Type, Epoch, Shard}, self()),
+            case Kind of
                 started ->
                     Topic = emqx_durable_timer_dl:started_topic(Type, Epoch, '+'),
                     %% TODO: try to account for clock skew?
@@ -187,7 +194,7 @@ init([WorkerKind, Type, Epoch, Shard]) ->
                 time_delta = Delta,
                 topic = Topic
             },
-            {ok, ?s_candidate(Closed), D}
+            {ok, ?s_candidate(Kind), D}
     end.
 
 %% Active:
@@ -195,21 +202,34 @@ handle_event(enter, _, ?s_active, _) ->
     keep_state_and_data;
 handle_event({call, From}, #call_apply_after{k = Key, v = Value, t = NotEarlierThan}, ?s_active, S) ->
     handle_apply_after(From, Key, Value, NotEarlierThan, S);
-%% Candidate:
-handle_event(enter, _, ?s_candidate(_Kind), _Data) ->
-    {keep_state_and_data, {state_timeout, 0, ?elect_leader}};
-handle_event(state_timeout, ?elect_leader, ?s_candidate(Kind), Data) ->
-    handle_election(Kind, Data);
-handle_event(enter, _, State = ?s_leader(_Kind), Data) ->
+%% Candidate and standby:
+handle_event(enter, From, ?s_candidate(Kind), Data) ->
+    ?tp(debug, ?tp_state_change, #{from => From, to => ?s_candidate(Kind)}),
+    init_candidate(Kind, Data);
+handle_event(state_timeout, ?try_select_self, ?s_candidate(Kind), Data) ->
+    handle_leader_selection(Kind, Data);
+handle_event(enter, From, State = ?s_leader(_Kind), Data) ->
+    ?tp(debug, ?tp_state_change, #{from => From, to => State}),
     init_leader(State, Data);
-handle_event(info, ?replay_complete, ?s_candidate(_), _Data) ->
+handle_event(_, #cast_became_leader{pid = Leader}, State, Data) ->
+    case State of
+        ?s_candidate(Kind) ->
+            init_standby(Kind, Data, Leader);
+        ?s_standby(_, _) ->
+            keep_state_and_data
+    end;
+handle_event(info, ?replay_complete, State, _Data) ->
+    case State of
+        ?s_candidate(_) -> ok;
+        ?s_standby(_, _) -> ok
+    end,
     {stop, normal};
-%% Backup:
-handle_event(enter, _, ?s_backup(_, _), _) ->
+handle_event(enter, From, State = ?s_standby(_, _), _) ->
+    ?tp(debug, ?tp_state_change, #{from => From, to => State}),
     keep_state_and_data;
-handle_event(info, {'DOWN', Ref, _, _, Reason}, ?s_backup(Kind, Ref), Data) ->
+handle_event(info, {'DOWN', Ref, _, _, Reason}, ?s_standby(Kind, Ref), Data) ->
     handle_leader_down(Kind, Data, Reason);
-handle_event(info, ?replay_complete, ?s_backup(_, _), _Data) ->
+handle_event(info, ?replay_complete, ?s_standby(_, _), _Data) ->
     {stop, normal};
 %% Common:
 handle_event(_ET, ?ds_tx_commit_reply(Ref, Reply), _State, Data) ->
@@ -239,40 +259,54 @@ ls() ->
 %%================================================================================
 
 %%--------------------------------------------------------------------------------
-%% Leader election
+%% Leader selection
 %%--------------------------------------------------------------------------------
 
-handle_leader_down(_Kind, _Data, _Reason) ->
-    %% FIXME
-    keep_state_and_data.
+handle_leader_down(Kind, Data, _Reason) ->
+    {next_state, ?s_candidate(Kind), Data}.
 
-handle_election(Kind, Data = #s{type = T, epoch = E, shard = S}) ->
-    Name = ?name(Kind, T, E, S),
-    case global:whereis_name(Name) of
+init_candidate(Kind, #s{type = T, epoch = E, shard = S}) ->
+    case global:whereis_name(?name(Kind, T, E, S)) of
         Leader when is_pid(Leader) ->
-            MRef = monitor(process, Leader),
-            {next_state, ?s_backup(Kind, MRef), Data};
+            self() ! #cast_became_leader{pid = Leader},
+            keep_state_and_data;
         undefined ->
-            %% FIXME: do something smarter
-            case global:register_name(Name, self()) of
-                yes ->
-                    {next_state, ?s_leader(Kind), Data};
-                no ->
-                    {next_state, ?s_candidate(Kind), Data,
-                        {state_timeout, rand:uniform(1000), ?elect_leader}}
-            end
+            %% Try to become leader immediately when leader for the
+            %% raft shard:
+            Timeout =
+                case emqx_ds_builtin_raft_shard:servers(?DB_GLOB, S, leader) of
+                    [{_, Node}] when Node =:= node() ->
+                        0;
+                    _ ->
+                        rand:uniform(1000)
+                end,
+            {keep_state_and_data, {state_timeout, Timeout, ?try_select_self}}
     end.
 
-init_leader(State, Data0) ->
+init_standby(Kind, Data, Leader) ->
+    MRef = monitor(process, Leader),
+    {next_state, ?s_standby(Kind, MRef), Data}.
+
+handle_leader_selection(Kind, Data = #s{type = T, epoch = E, shard = S}) ->
+    case global:register_name(?name(Kind, T, E, S), self()) of
+        yes ->
+            {next_state, ?s_leader(Kind), Data};
+        no ->
+            {next_state, ?s_candidate(Kind), Data}
+    end.
+
+init_leader(Kind, Data0) ->
     case get_iterator(Data0) of
         {ok, It} ->
             Data = Data0#s{
                 replay_pos = It
             },
             self() ! #cast_wake_up{t = emqx_durable_timer:now_ms()},
+            %% Broadcast the decision to the peers:
+            pg_bcast(Kind, Data, #cast_became_leader{pid = self()}),
             {keep_state, Data};
         undefined ->
-            complete_replay(State, Data0, 0)
+            complete_replay(Kind, Data0, 0)
     end.
 
 %%--------------------------------------------------------------------------------
@@ -297,8 +331,8 @@ handle_wake_up(
     ),
     case Result of
         {end_of_stream, FullyReplayedTS} ->
-            ?s_leader(_) = State,
-            complete_replay(State, Data0, FullyReplayedTS);
+            ?s_leader(LeaderKind) = State,
+            complete_replay(LeaderKind, Data0, FullyReplayedTS);
         {ok, Data} ->
             clean_replayed(schedule_next_wake_up(State, Data));
         {retry, Data, Reason} ->
@@ -317,26 +351,29 @@ schedule_next_wake_up(?s_active, Data) ->
     Data;
 schedule_next_wake_up(?s_leader(_), Data = #s{tail = Tail, time_delta = Delta}) ->
     [{_, T, _} | _] = Tail,
-    After = max(0, (T + Delta) - emqx_durable_timer:now_ms()),
+    Tadj = T + Delta,
     erlang:send_after(
-        After,
+        max(0, Tadj - emqx_durable_timer:now_ms()),
         self(),
-        #cast_wake_up{t = T}
+        #cast_wake_up{t = Tadj}
     ),
     Data.
 
 complete_replay(
-    ?s_leader(Closed), #s{shard = Shard, type = Type, topic = Topic, epoch = Epoch}, FullyReplayedTS
+    LeaderKind, Data = #s{shard = Shard, type = Type, topic = Topic, epoch = Epoch}, FullyReplayedTS
 ) ->
     emqx_durable_timer_dl:clean_replayed(Shard, Topic, FullyReplayedTS),
-    lists:foreach(
-        fun(Peer) ->
-            Peer ! ?replay_complete
-        end,
-        pg:get_members(?workers_pg, {Closed, Type, Epoch, Shard})
-    ),
+    pg_bcast(LeaderKind, Data, ?replay_complete),
     _ = emqx_durable_timer_dl:delete_epoch_if_empty(Epoch),
     {stop, normal}.
+
+pg_bcast(LeaderKind, #s{type = Type, epoch = Epoch, shard = Shard}, Msg) ->
+    _ = [
+        Peer ! Msg
+     || Peer <- pg:get_members(?workers_pg, {LeaderKind, Type, Epoch, Shard}),
+        Peer =/= self()
+    ],
+    ok.
 
 replay_timers(
     State,

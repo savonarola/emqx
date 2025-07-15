@@ -214,9 +214,11 @@ commit_kv_tx(DB, Ctx = #kv_tx_ctx{opts = #{timeout := Timeout}}, Ops) ->
 tx_commit_outcome(Reply) ->
     case Reply of
         ?ds_tx_commit_ok(Ref, TRef, Serial) ->
+            demonitor(Ref, [flush]),
             emqx_ds_lib:cancel_timer(TRef, tx_timeout_msg(Ref)),
             {ok, Serial};
         ?ds_tx_commit_error(Ref, TRef, Class, Info) ->
+            demonitor(Ref, [flush]),
             emqx_ds_lib:cancel_timer(TRef, tx_timeout_msg(Ref)),
             {error, Class, Info};
         {'DOWN', _Ref, Type, Object, Info} ->

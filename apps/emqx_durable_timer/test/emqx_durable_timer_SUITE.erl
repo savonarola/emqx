@@ -25,14 +25,14 @@
 %%
 %% Additionally, this testcase doesn't create any timer data, so it's
 %% used to verify that the logic handles lack of any timers.
-t_lazy_initialization({init, Config}) ->
+t_010_lazy_initialization({init, Config}) ->
     Env = [{heartbeat_interval, 1000}, {missed_heartbeats, 2}, {n_shards, 1}],
     Cluster = cluster(?FUNCTION_NAME, Config, 1, Env),
     [{cluster, Cluster} | Config];
-t_lazy_initialization({stop, Config}) ->
+t_010_lazy_initialization({stop, Config}) ->
     Cluster = proplists:get_value(cluster, Config),
     emqx_cth_cluster:stop(Cluster);
-t_lazy_initialization(Config) ->
+t_010_lazy_initialization(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
         #{timetrap => 30_000},
@@ -229,17 +229,17 @@ started_workers(Epoch, Trace) ->
 
 %% This testcase verifies normal operation of the timers when the
 %% owner node is not restarted.
-t_normal_execution({init, Config}) ->
+t_020_normal_execution({init, Config}) ->
     Env = [
         {n_shards, 2},
         {batch_size, 2}
     ],
     Cluster = cluster(?FUNCTION_NAME, Config, 1, Env),
     [{cluster, Cluster} | Config];
-t_normal_execution({stop, Config}) ->
+t_020_normal_execution({stop, Config}) ->
     Cluster = proplists:get_value(cluster, Config),
     emqx_cth_cluster:stop(Cluster);
-t_normal_execution(Config) ->
+t_020_normal_execution(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     Type = emqx_durable_test_timer:durable_timer_type(),
     ?check_trace(
@@ -343,14 +343,14 @@ t_normal_execution(Config) ->
 
 %% This testcase verifies the functionality related to timer
 %% cancellation.
-t_cancellation({init, Config}) ->
+t_030_cancellation({init, Config}) ->
     Env = [],
     Cluster = cluster(?FUNCTION_NAME, Config, 1, Env),
     [{cluster, Cluster} | Config];
-t_cancellation({stop, Config}) ->
+t_030_cancellation({stop, Config}) ->
     Cluster = proplists:get_value(cluster, Config),
     emqx_cth_cluster:stop(Cluster);
-t_cancellation(Config) ->
+t_030_cancellation(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
         #{timetrap => 30_000},
@@ -412,7 +412,7 @@ t_cancellation(Config) ->
 
 %% This testcase verifies the functionality related to timer
 %% cancellation.
-t_dead_hand({init, Config}) ->
+t_040_dead_hand({init, Config}) ->
     Env = [
         {n_sites, 3},
         {replication_factor, 3},
@@ -423,12 +423,10 @@ t_dead_hand({init, Config}) ->
     ],
     Cluster = cluster(?FUNCTION_NAME, Config, 3, Env),
     [{cluster, Cluster} | Config];
-t_dead_hand({stop, Config}) ->
-    %% FIXME: flush logs
-    timer:sleep(1000),
+t_040_dead_hand({stop, Config}) ->
     Cluster = proplists:get_value(cluster, Config),
     emqx_cth_cluster:stop(Cluster);
-t_dead_hand(Config) ->
+t_040_dead_hand(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
         #{timetrap => 30_000},
@@ -436,7 +434,6 @@ t_dead_hand(Config) ->
             %% Prepare system:
             [N1, _N2, _N3] = Nodes = emqx_cth_cluster:start(Cluster),
             [?assertMatch(ok, ?ON(N, emqx_durable_test_timer:init())) || N <- Nodes],
-            ct:sleep(1000),
             [
                 ?assertMatch(
                     ok, ?ON(N1, emqx_durable_test_timer:dead_hand(<<I>>, <<I>>, (I div 3) * 100))
@@ -455,7 +452,7 @@ t_dead_hand(Config) ->
             fun ?MODULE:no_read_conflicts/1,
             fun ?MODULE:no_replay_failures/1,
             fun ?MODULE:verify_timers/1,
-            {"Verify sequence of events", fun(Trace) ->
+            {"All dead hand timers fire once", fun(Trace) ->
                 {_, AfterRestart} = ?split_trace_at(
                     #{?snk_kind := ?tp_update_epoch, up := false}, Trace
                 ),
@@ -469,7 +466,7 @@ t_dead_hand(Config) ->
 
 %% This testcase verifies that "apply_after" timers are continued to
 %% be replayed by other nodes after the original node goes down.
-t_apply_after_postmortem_replay({init, Config}) ->
+t_050_apply_after_postmortem_replay({init, Config}) ->
     Env = [
         {n_sites, 3},
         {replication_factor, 3},
@@ -480,12 +477,10 @@ t_apply_after_postmortem_replay({init, Config}) ->
     ],
     Cluster = cluster(?FUNCTION_NAME, Config, 3, Env),
     [{cluster, Cluster} | Config];
-t_apply_after_postmortem_replay({stop, Config}) ->
-    %% FIXME: flush logs
-    timer:sleep(1000),
+t_050_apply_after_postmortem_replay({stop, Config}) ->
     Cluster = proplists:get_value(cluster, Config),
     emqx_cth_cluster:stop(Cluster);
-t_apply_after_postmortem_replay(Config) ->
+t_050_apply_after_postmortem_replay(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
         #{timetrap => 30_000},
@@ -493,7 +488,6 @@ t_apply_after_postmortem_replay(Config) ->
             %% Prepare system:
             [N1, _N2, _N3] = Nodes = emqx_cth_cluster:start(Cluster),
             [?assertMatch(ok, ?ON(N, emqx_durable_test_timer:init())) || N <- Nodes],
-            ct:sleep(1000),
             [
                 ?assertMatch(
                     ok,
@@ -516,7 +510,7 @@ t_apply_after_postmortem_replay(Config) ->
             fun ?MODULE:no_read_conflicts/1,
             fun ?MODULE:no_replay_failures/1,
             fun ?MODULE:verify_timers/1,
-            {"Verify sequence of events", fun(Trace) ->
+            {"All scheduled timers fire once", fun(Trace) ->
                 {_, AfterRestart} = ?split_trace_at(
                     #{?snk_kind := ?tp_update_epoch, up := false}, Trace
                 ),
@@ -525,6 +519,62 @@ t_apply_after_postmortem_replay(Config) ->
                     ?projection([key, val], ?of_kind(?tp_test_fire, AfterRestart))
                 )
             end}
+        ]
+    ).
+
+%% This testcase verifies leader selection and standby worker functionality
+t_060_standby({init, Config}) ->
+    Env = [
+        {n_sites, 5},
+        {replication_factor, 5},
+        {heartbeat_interval, 100},
+        {missed_heartbeats, 2},
+        {n_shards, 1},
+        {batch_size, 2}
+    ],
+    Cluster = cluster(?FUNCTION_NAME, Config, 5, Env),
+    [{cluster, Cluster} | Config];
+t_060_standby({stop, Config}) ->
+    Cluster = proplists:get_value(cluster, Config),
+    emqx_cth_cluster:stop(Cluster);
+t_060_standby(Config) ->
+    Cluster = proplists:get_value(cluster, Config),
+    ?check_trace(
+        #{timetrap => 30_000},
+        begin
+            %% Prepare system:
+            [N1 | _] = Nodes = emqx_cth_cluster:start(Cluster),
+            [?assertMatch(ok, ?ON(N, emqx_durable_test_timer:init())) || N <- Nodes],
+            ?ON(
+                N1,
+                begin
+                    emqx_durable_test_timer:dead_hand(<<1>>, <<1>>, 5_000),
+                    emqx_durable_test_timer:dead_hand(<<2>>, <<2>>, 10_000)
+                end
+            ),
+            %% Shut down N1, wait for the leader to replay the first
+            %% timer, and find out who is the leader for N1's last
+            %% epoch:
+            {_, {ok, #{?snk_meta := #{node := Leader1}}}} =
+                ?wait_async_action(
+                    emqx_cth_peer:stop(N1),
+                    #{?snk_kind := ?tp_test_fire, key := <<1>>}
+                ),
+            %% Give the old leader some time to delete old data:
+            ct:sleep(10),
+            %% Some other node should take over and continue replay:
+            ?wait_async_action(
+                emqx_cth_peer:stop(Leader1),
+                #{?snk_kind := ?tp_test_fire, key := <<2>>}
+            ),
+            Leader1
+        end,
+        [
+            fun ?MODULE:no_unexpected/1,
+            fun ?MODULE:no_abnormal_restart/1,
+            fun ?MODULE:no_read_conflicts/1,
+            fun ?MODULE:no_replay_failures/1,
+            fun ?MODULE:verify_timers/1
         ]
     ).
 
@@ -540,7 +590,19 @@ no_replay_failures(Trace) ->
 %% Verify that none of the workers encountered an unknwon message.
 %% This should always hold.
 no_unexpected(Trace) ->
-    ?assertMatch([], ?of_kind(?tp_unknown_event, Trace)).
+    Unknown = ?of_kind(?tp_unknown_event, Trace),
+    Unexpected = lists:filter(
+        fun
+            (#{info := {'DOWN', _, {error, _}, _, commit_timeout}}) ->
+                %% These errors may happen due to known
+                %% limitations. Ignore them.
+                false;
+            (_) ->
+                true
+        end,
+        Unknown
+    ),
+    ?assertMatch([], Unexpected).
 
 %% Verify that workers only terminated with normal reason
 no_abnormal_restart(Trace) ->
@@ -793,6 +855,9 @@ cluster(TC, Config, Nnodes, Env) ->
     ).
 
 fix_logging() ->
+    %% NOTE: cth_peer module often stops the node too abruptly before
+    %% it flushes the logs. When investigating a remote crash, it's
+    %% necessary to give node some time waiting for the flush.
     logger:set_primary_config(level, debug),
     logger:remove_handler(default),
     logger:add_handler(

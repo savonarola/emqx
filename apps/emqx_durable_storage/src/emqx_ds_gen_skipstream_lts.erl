@@ -678,12 +678,9 @@ fold_loop(Ctx, SK0, BatchSize, Op, Acc0) ->
                 false ->
                     fold_loop(Ctx, SK, BatchSize, next, Acc0)
             end;
-        Other ->
-            error(
-                {fixme, #{
-                    result => Other, cts => Ctx, sk => SK0, bs => BatchSize, op => Op, acc => Acc0
-                }}
-            )
+        next ->
+            ?dbg(skipstream_invalid_index, #{r => next}),
+            fold_loop(Ctx, SK0, BatchSize, next, Acc0)
     end.
 
 fold_step(
@@ -737,7 +734,9 @@ fold_step(
                                     inc_counter(?DS_SKIPSTREAM_LTS_HIT),
                                     {ok, NextSK, CompressedTopic, Key, Timestamp, Payload};
                                 false ->
-                                    %% Hash collision. Advance to the
+                                    %% Hash collision or payload has
+                                    %% been deleted before the index
+                                    %% non-atomically. Advance to the
                                     %% next key:
                                     inc_counter(?DS_SKIPSTREAM_LTS_HASH_COLLISION),
                                     %% FIXME: this part is different
