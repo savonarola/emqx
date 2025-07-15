@@ -75,7 +75,7 @@ Invariants:
     v :: emqx_durable_timer:value(),
     t :: integer()
 }).
-%% Note: here t is local time (adjusted for delta):
+%% Note: here t is epoch time (not adjusted for delta):
 -record(cast_wake_up, {t :: integer()}).
 -define(try_select_self, try_select_self).
 -record(cast_became_leader, {pid :: pid()}).
@@ -143,8 +143,8 @@ apply_after(Type, Epoch, Key, Val, NotEarlierThan) when
     %% This value should be added to the timestamp of the timer TTV to
     %% convert it to the local time:
     time_delta :: integer(),
-    %% Timeline:
-    del_up_to = 0 :: integer(),
+    %% Timeline (Note: here times are NOT adjusted for delta):
+    del_up_to = -1 :: integer(),
     fully_replayed_ts = 0 :: integer(),
     next_wakeup = -1 :: integer()
 }).
@@ -181,9 +181,9 @@ init([WorkerKind, Type, Epoch, Shard]) ->
                     %% TODO: try to account for clock skew?
                     Delta = 0;
                 dead_hand ->
-                    {ok, LastHeartbeat} = emqx_durable_timer_dl:last_heartbeat(Epoch),
+                    {ok, LastHeartbeat0} = emqx_durable_timer_dl:last_heartbeat(Epoch),
                     %% Upper margin for error:
-                    Delta = LastHeartbeat + emqx_durable_timer:cfg_heartbeat_interval(),
+                    Delta = LastHeartbeat0 + emqx_durable_timer:cfg_heartbeat_interval(),
                     Topic = emqx_durable_timer_dl:dead_hand_topic(Type, Epoch, '+')
             end,
             D = #s{
@@ -198,7 +198,8 @@ init([WorkerKind, Type, Epoch, Shard]) ->
     end.
 
 %% Active:
-handle_event(enter, _, ?s_active, _) ->
+handle_event(enter, From, ?s_active, _) ->
+    ?tp(debug, ?tp_state_change, #{from => From, to => ?s_active}),
     keep_state_and_data;
 handle_event({call, From}, #call_apply_after{k = Key, v = Value, t = NotEarlierThan}, ?s_active, S) ->
     handle_apply_after(From, Key, Value, NotEarlierThan, S);
@@ -229,8 +230,6 @@ handle_event(enter, From, State = ?s_standby(_, _), _) ->
     keep_state_and_data;
 handle_event(info, {'DOWN', Ref, _, _, Reason}, ?s_standby(Kind, Ref), Data) ->
     handle_leader_down(Kind, Data, Reason);
-handle_event(info, ?replay_complete, ?s_standby(_, _), _Data) ->
-    {stop, normal};
 %% Common:
 handle_event(_ET, ?ds_tx_commit_reply(Ref, Reply), _State, Data) ->
     handle_ds_reply(Ref, Reply, Data);
@@ -301,9 +300,10 @@ init_leader(Kind, Data0) ->
             Data = Data0#s{
                 replay_pos = It
             },
-            self() ! #cast_wake_up{t = emqx_durable_timer:now_ms()},
-            %% Broadcast the decision to the peers:
+            %% Broadcast the self-appointment to the peers:
             pg_bcast(Kind, Data, #cast_became_leader{pid = self()}),
+            %% Start the replay loop:
+            wake_up(Data, 0),
             {keep_state, Data};
         undefined ->
             complete_replay(Kind, Data0, 0)
@@ -314,13 +314,13 @@ init_leader(Kind, Data0) ->
 %%--------------------------------------------------------------------------------
 
 handle_wake_up(
-    State, Data0 = #s{time_delta = Delta, fully_replayed_ts = FullyReplayedTS0}, Treached
+    State, Data0 = #s{fully_replayed_ts = FullyReplayedTS0}, Treached
 ) ->
     Bound = Treached + 1,
     DSBatchSize =
         case State of
             ?s_active ->
-                {time, Bound + Delta, emqx_durable_timer:cfg_batch_size()};
+                {time, Bound, emqx_durable_timer:cfg_batch_size()};
             _ ->
                 emqx_durable_timer:cfg_batch_size()
         end,
@@ -332,9 +332,9 @@ handle_wake_up(
     case Result of
         {end_of_stream, FullyReplayedTS} ->
             ?s_leader(LeaderKind) = State,
-            complete_replay(LeaderKind, Data0, FullyReplayedTS);
+            complete_replay(LeaderKind, clean_replayed(Data0), FullyReplayedTS);
         {ok, Data} ->
-            clean_replayed(schedule_next_wake_up(State, Data));
+            {keep_state, clean_replayed(schedule_next_wake_up(State, Data))};
         {retry, Data, Reason} ->
             ?tp(warning, ?tp_replay_failed, #{
                 from => Data0#s.replay_pos, to => Bound, reason => Reason
@@ -349,18 +349,12 @@ handle_wake_up(
 
 schedule_next_wake_up(?s_active, Data) ->
     Data;
-schedule_next_wake_up(?s_leader(_), Data = #s{tail = Tail, time_delta = Delta}) ->
-    [{_, T, _} | _] = Tail,
-    Tadj = T + Delta,
-    erlang:send_after(
-        max(0, Tadj - emqx_durable_timer:now_ms()),
-        self(),
-        #cast_wake_up{t = Tadj}
-    ),
+schedule_next_wake_up(?s_leader(_), Data = #s{tail = [{_, NextTime, _} | _]}) ->
+    wake_up(Data, NextTime),
     Data.
 
 complete_replay(
-    LeaderKind, Data = #s{shard = Shard, type = Type, topic = Topic, epoch = Epoch}, FullyReplayedTS
+    LeaderKind, Data = #s{shard = Shard, topic = Topic, epoch = Epoch}, FullyReplayedTS
 ) ->
     emqx_durable_timer_dl:clean_replayed(Shard, Topic, FullyReplayedTS),
     pg_bcast(LeaderKind, Data, ?replay_complete),
@@ -410,12 +404,12 @@ do_replay_timers(D, It, Bound, DSBatchSize, FullyReplayedTS0, Batch) ->
     end.
 
 apply_timers_from_batch(
-    D = #s{type = Type, cbm = CBM, time_delta = Delta}, Bound, FullyReplayedTS, L
+    D = #s{type = Type, cbm = CBM}, Bound, FullyReplayedTS, L
 ) ->
     case L of
         [] ->
             {FullyReplayedTS, []};
-        [{[_Root, _Type, _Epoch, Key], Time, Val} | Rest] when Time + Delta =< Bound ->
+        [{[_Root, _Type, _Epoch, Key], Time, Val} | Rest] when Time =< Bound ->
             handle_timeout(Type, CBM, Time, Key, Val),
             apply_timers_from_batch(D, Bound, Time, Rest);
         _ ->
@@ -431,7 +425,7 @@ clean_replayed(
     }
 ) when is_reference(Pending); FullyReplayed =:= DelUpTo ->
     %% Clean up is already in progress or there's nothing to clean:
-    {keep_state, D};
+    D;
 clean_replayed(
     D = #s{
         shard = Shard,
@@ -441,7 +435,7 @@ clean_replayed(
     }
 ) ->
     Ref = emqx_durable_timer_dl:clean_replayed_async(Shard, Topic, DelUpTo),
-    {keep_state, D#s{pending_del_tx = Ref, del_up_to = DelUpTo}}.
+    D#s{pending_del_tx = Ref, del_up_to = DelUpTo}.
 
 -spec on_clean_complete(reference(), _, data()) -> data().
 on_clean_complete(Ref, Reply, Data) ->
@@ -565,7 +559,7 @@ handle_apply_after(From, Key, Val, NotEarlierThan, #s{
     keep_state_and_data.
 
 handle_ds_reply(Ref, DSReply, D = #s{pending_del_tx = Ref}) ->
-    on_clean_complete(Ref, DSReply, D);
+    {keep_state, on_clean_complete(Ref, DSReply, D)};
 handle_ds_reply(Ref, DSReply, D = #s{pending_tab = Tab}) ->
     case addq_pop(Ref, Tab) of
         {Time, From} ->
@@ -591,8 +585,7 @@ active_schedule_wake_up(Time, D0 = #s{next_wakeup = NextWakeUp}, Effects) ->
         case active_safe_replay_pos(D0, Time) of
             TMax when TMax > NextWakeUp ->
                 %% New maximum wait time reached:
-                Delay = max(0, TMax - emqx_durable_timer:now_ms()),
-                erlang:send_after(Delay, self(), #cast_wake_up{t = TMax}),
+                wake_up(D0, TMax),
                 D0#s{next_wakeup = TMax};
             _ ->
                 %% Wake up timer already exists
@@ -632,3 +625,15 @@ addq_pop(Ref, Tab) ->
 %%--------------------------------------------------------------------------------
 %% Misc
 %%--------------------------------------------------------------------------------
+
+epoch_to_local(#s{time_delta = Delta}, T) ->
+    T + Delta.
+
+%% Schedule next wake up. T is in "epoch" time
+wake_up(Data, T) ->
+    Delay = epoch_to_local(Data, T) - emqx_durable_timer:now_ms(),
+    erlang:send_after(
+        max(0, Delay),
+        self(),
+        #cast_wake_up{t = T}
+    ).

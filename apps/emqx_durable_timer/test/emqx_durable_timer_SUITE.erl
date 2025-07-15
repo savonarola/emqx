@@ -160,7 +160,7 @@ t_010_lazy_initialization(Config) ->
             %% fun no_unexpected/1, % Disabled due to some disturbance introduced by mock
             fun ?MODULE:no_read_conflicts/1,
             fun ?MODULE:no_replay_failures/1,
-            fun ?MODULE:no_abnormal_restart/1,
+            fun ?MODULE:no_abnormal_terminate/1,
             fun ?MODULE:verify_timers/1,
             {"Workers lifetime", fun({Epoch1, Epoch2, Epoch3}, Trace) ->
                 %% Trace before restart:
@@ -334,7 +334,7 @@ t_020_normal_execution(Config) ->
         end,
         [
             fun ?MODULE:no_unexpected/1,
-            fun ?MODULE:no_abnormal_restart/1,
+            fun ?MODULE:no_abnormal_terminate/1,
             fun ?MODULE:no_read_conflicts/1,
             fun ?MODULE:no_replay_failures/1,
             fun ?MODULE:verify_timers/1
@@ -400,7 +400,7 @@ t_030_cancellation(Config) ->
         end,
         [
             fun ?MODULE:no_unexpected/1,
-            fun ?MODULE:no_abnormal_restart/1,
+            fun ?MODULE:no_abnormal_terminate/1,
             fun ?MODULE:no_read_conflicts/1,
             fun ?MODULE:no_replay_failures/1,
             fun ?MODULE:verify_timers/1,
@@ -448,7 +448,7 @@ t_040_dead_hand(Config) ->
         end,
         [
             fun ?MODULE:no_unexpected/1,
-            fun ?MODULE:no_abnormal_restart/1,
+            fun ?MODULE:no_abnormal_terminate/1,
             fun ?MODULE:no_read_conflicts/1,
             fun ?MODULE:no_replay_failures/1,
             fun ?MODULE:verify_timers/1,
@@ -506,7 +506,7 @@ t_050_apply_after_postmortem_replay(Config) ->
         end,
         [
             fun ?MODULE:no_unexpected/1,
-            fun ?MODULE:no_abnormal_restart/1,
+            fun ?MODULE:no_abnormal_terminate/1,
             fun ?MODULE:no_read_conflicts/1,
             fun ?MODULE:no_replay_failures/1,
             fun ?MODULE:verify_timers/1,
@@ -528,7 +528,7 @@ t_060_standby({init, Config}) ->
         {n_sites, 5},
         {replication_factor, 5},
         {heartbeat_interval, 100},
-        {missed_heartbeats, 2},
+        {missed_heartbeats, 3},
         {n_shards, 1},
         {batch_size, 2}
     ],
@@ -548,33 +548,50 @@ t_060_standby(Config) ->
             ?ON(
                 N1,
                 begin
-                    emqx_durable_test_timer:dead_hand(<<1>>, <<1>>, 5_000),
+                    emqx_durable_test_timer:dead_hand(<<1>>, <<1>>, 0),
+                    %% Note: spread between the events should be >
+                    %% than time for establishing the leader.
                     emqx_durable_test_timer:dead_hand(<<2>>, <<2>>, 10_000)
                 end
             ),
             %% Shut down N1, wait for the leader to replay the first
             %% timer, and find out who is the leader for N1's last
             %% epoch:
+            ?tp(notice, test_stop_n1, #{}),
             {_, {ok, #{?snk_meta := #{node := Leader1}}}} =
                 ?wait_async_action(
                     emqx_cth_peer:stop(N1),
                     #{?snk_kind := ?tp_test_fire, key := <<1>>}
                 ),
             %% Give the old leader some time to delete old data:
-            ct:sleep(10),
-            %% Some other node should take over and continue replay:
-            ?wait_async_action(
-                emqx_cth_peer:stop(Leader1),
-                #{?snk_kind := ?tp_test_fire, key := <<2>>}
+            ct:sleep(100),
+            ?tp(notice, test_stop_leader1, #{leader => Leader1}),
+            %% Some other node should take over and continue replay of
+            %% the epoch:
+            {_, {ok, #{?snk_meta := #{node := Leader2}}}} =
+                ?wait_async_action(
+                    emqx_cth_peer:stop(Leader1),
+                    #{?snk_kind := ?tp_test_fire, key := <<2>>}
+                ),
+            %% Eventually, the old epoch should be completely removed:
+            ct:sleep(100),
+            ?assertMatch(
+                [],
+                ?ON(Leader2, emqx_durable_timer_dl:dirty_ls_epochs(N1))
             ),
             Leader1
         end,
         [
             fun ?MODULE:no_unexpected/1,
-            fun ?MODULE:no_abnormal_restart/1,
             fun ?MODULE:no_read_conflicts/1,
             fun ?MODULE:no_replay_failures/1,
-            fun ?MODULE:verify_timers/1
+            fun ?MODULE:verify_timers/1,
+            {"Timers each timer was executed once", fun(Trace) ->
+                ?assertMatch(
+                    [<<1>>, <<2>>],
+                    ?projection(key, ?of_kind(?tp_test_fire, Trace))
+                )
+            end}
         ]
     ).
 
@@ -605,7 +622,7 @@ no_unexpected(Trace) ->
     ?assertMatch([], Unexpected).
 
 %% Verify that workers only terminated with normal reason
-no_abnormal_restart(Trace) ->
+no_abnormal_terminate(Trace) ->
     ?assertMatch([], [
         I
      || I = #{?snk_kind := ?tp_terminate, reason := Reason} <- Trace,
