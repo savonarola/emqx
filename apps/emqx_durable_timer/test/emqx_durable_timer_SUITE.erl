@@ -62,7 +62,6 @@ t_lazy_initialization(Config) ->
                     end
                 )
             ),
-            %% FIXME: remove
             %% Verify that the node has opened the DB:
             ?ON(
                 Node,
@@ -94,13 +93,24 @@ t_lazy_initialization(Config) ->
             ct:sleep(1000),
             %%
             %% Restart the node. Expect that node will create a new
-            %% epoch and close the old one.
+            %% epoch and close the old one. Disable the automatic
+            %% clean up of epochs before enabling the app.
             %%
             ?tp(notice, test_restart_cluster, #{}),
             emqx_cth_cluster:restart(Cluster),
             ?ON(
                 Node,
-                ?assertMatch(ok, emqx_durable_test_timer:init())
+                begin
+                    meck:new(emqx_durable_timer_dl, [no_history, passthrough, no_link]),
+                    meck:expect(
+                        emqx_durable_timer_dl,
+                        delete_epoch_if_empty,
+                        fun(_) ->
+                            false
+                        end
+                    ),
+                    ?assertMatch(ok, emqx_durable_test_timer:init())
+                end
             ),
             wait_heartbeat(Node),
             %% Restart complete.
@@ -148,9 +158,10 @@ t_lazy_initialization(Config) ->
         end,
         [
             %% fun no_unexpected/1, % Disabled due to some disturbance introduced by mock
-            fun no_read_conflicts/1,
-            fun no_replay_failures/1,
-            fun verify_timers/1,
+            fun ?MODULE:no_read_conflicts/1,
+            fun ?MODULE:no_replay_failures/1,
+            fun ?MODULE:no_abnormal_restart/1,
+            fun ?MODULE:verify_timers/1,
             {"Workers lifetime", fun({Epoch1, Epoch2, Epoch3}, Trace) ->
                 %% Trace before restart:
                 {BeforeRestart, T1} = ?split_trace_at(#{?snk_kind := test_restart_cluster}, Trace),
@@ -220,7 +231,7 @@ started_workers(Epoch, Trace) ->
 %% owner node is not restarted.
 t_normal_execution({init, Config}) ->
     Env = [
-        {n_shards, 1},
+        {n_shards, 2},
         {batch_size, 2}
     ],
     Cluster = cluster(?FUNCTION_NAME, Config, 1, Env),
@@ -322,10 +333,11 @@ t_normal_execution(Config) ->
             ok
         end,
         [
-            fun no_unexpected/1,
-            fun no_read_conflicts/1,
-            fun no_replay_failures/1,
-            fun verify_timers/1
+            fun ?MODULE:no_unexpected/1,
+            fun ?MODULE:no_abnormal_restart/1,
+            fun ?MODULE:no_read_conflicts/1,
+            fun ?MODULE:no_replay_failures/1,
+            fun ?MODULE:verify_timers/1
         ]
     ).
 
@@ -387,13 +399,14 @@ t_cancellation(Config) ->
             emqx_cth_cluster:stop(Cluster)
         end,
         [
-            fun no_unexpected/1,
-            fun no_read_conflicts/1,
-            fun no_replay_failures/1,
-            fun verify_timers/1,
-            fun(Trace) ->
+            fun ?MODULE:no_unexpected/1,
+            fun ?MODULE:no_abnormal_restart/1,
+            fun ?MODULE:no_read_conflicts/1,
+            fun ?MODULE:no_replay_failures/1,
+            fun ?MODULE:verify_timers/1,
+            {"Verify that cancelled timers didn't fire", fun(Trace) ->
                 ?assertMatch([], ?of_kind(?tp_fire, Trace))
-            end
+            end}
         ]
     ).
 
@@ -421,7 +434,7 @@ t_dead_hand(Config) ->
         #{timetrap => 30_000},
         begin
             %% Prepare system:
-            [N1, N2, _N3] = Nodes = emqx_cth_cluster:start(Cluster),
+            [N1, _N2, _N3] = Nodes = emqx_cth_cluster:start(Cluster),
             [?assertMatch(ok, ?ON(N, emqx_durable_test_timer:init())) || N <- Nodes],
             ct:sleep(1000),
             [
@@ -430,17 +443,88 @@ t_dead_hand(Config) ->
                 )
              || I <- lists:seq(0, 10)
             ],
-            %% Shut down the first node and wait for dead the event:
+            %% Shut down the first node and wait for the full replay of its dead_hand timers:
             ?wait_async_action(
                 emqx_cth_cluster:stop([N1]),
                 #{?snk_kind := ?tp_test_fire, key := <<10>>, val := <<10>>}
             )
         end,
         [
-            fun no_unexpected/1,
-            fun no_read_conflicts/1,
-            fun no_replay_failures/1,
-            fun verify_timers/1
+            fun ?MODULE:no_unexpected/1,
+            fun ?MODULE:no_abnormal_restart/1,
+            fun ?MODULE:no_read_conflicts/1,
+            fun ?MODULE:no_replay_failures/1,
+            fun ?MODULE:verify_timers/1,
+            {"Verify sequence of events", fun(Trace) ->
+                {_, AfterRestart} = ?split_trace_at(
+                    #{?snk_kind := ?tp_update_epoch, up := false}, Trace
+                ),
+                ?assertEqual(
+                    [{<<I>>, <<I>>} || I <- lists:seq(0, 10)],
+                    ?projection([key, val], ?of_kind(?tp_test_fire, AfterRestart))
+                )
+            end}
+        ]
+    ).
+
+%% This testcase verifies that "apply_after" timers are continued to
+%% be replayed by other nodes after the original node goes down.
+t_apply_after_postmortem_replay({init, Config}) ->
+    Env = [
+        {n_sites, 3},
+        {replication_factor, 3},
+        {heartbeat_interval, 1_000},
+        {missed_heartbeats, 3},
+        {n_shards, 1},
+        {batch_size, 2}
+    ],
+    Cluster = cluster(?FUNCTION_NAME, Config, 3, Env),
+    [{cluster, Cluster} | Config];
+t_apply_after_postmortem_replay({stop, Config}) ->
+    %% FIXME: flush logs
+    timer:sleep(1000),
+    Cluster = proplists:get_value(cluster, Config),
+    emqx_cth_cluster:stop(Cluster);
+t_apply_after_postmortem_replay(Config) ->
+    Cluster = proplists:get_value(cluster, Config),
+    ?check_trace(
+        #{timetrap => 30_000},
+        begin
+            %% Prepare system:
+            [N1, _N2, _N3] = Nodes = emqx_cth_cluster:start(Cluster),
+            [?assertMatch(ok, ?ON(N, emqx_durable_test_timer:init())) || N <- Nodes],
+            ct:sleep(1000),
+            [
+                ?assertMatch(
+                    ok,
+                    ?ON(
+                        N1,
+                        emqx_durable_test_timer:apply_after(<<I>>, <<I>>, 1_000 + (I div 3) * 100)
+                    )
+                )
+             || I <- lists:seq(0, 10)
+            ],
+            %% Shut down the first node and wait for the full replay of its apply_after timers:
+            ?wait_async_action(
+                emqx_cth_cluster:stop([N1]),
+                #{?snk_kind := ?tp_test_fire, key := <<10>>, val := <<10>>}
+            )
+        end,
+        [
+            fun ?MODULE:no_unexpected/1,
+            fun ?MODULE:no_abnormal_restart/1,
+            fun ?MODULE:no_read_conflicts/1,
+            fun ?MODULE:no_replay_failures/1,
+            fun ?MODULE:verify_timers/1,
+            {"Verify sequence of events", fun(Trace) ->
+                {_, AfterRestart} = ?split_trace_at(
+                    #{?snk_kind := ?tp_update_epoch, up := false}, Trace
+                ),
+                ?assertEqual(
+                    [{<<I>>, <<I>>} || I <- lists:seq(0, 10)],
+                    ?projection([key, val], ?of_kind(?tp_test_fire, AfterRestart))
+                )
+            end}
         ]
     ).
 
@@ -457,6 +541,15 @@ no_replay_failures(Trace) ->
 %% This should always hold.
 no_unexpected(Trace) ->
     ?assertMatch([], ?of_kind(?tp_unknown_event, Trace)).
+
+%% Verify that workers only terminated with normal reason
+no_abnormal_restart(Trace) ->
+    ?assertMatch([], [
+        I
+     || I = #{?snk_kind := ?tp_terminate, reason := Reason} <- Trace,
+        Reason =/= normal,
+        Reason =/= shutdown
+    ]).
 
 %% Active Timer State:
 -record(ats, {
@@ -676,7 +769,7 @@ init_per_testcase(TC, Config) ->
 
 end_per_testcase(TC, Config) ->
     ?MODULE:TC({stop, Config}),
-    %% emqx_cth_suite:clean_work_dir(emqx_cth_suite:work_dir(TC, Config)),
+    emqx_cth_suite:clean_work_dir(emqx_cth_suite:work_dir(TC, Config)),
     ok.
 
 cluster(TC, Config, Nnodes, Env) ->

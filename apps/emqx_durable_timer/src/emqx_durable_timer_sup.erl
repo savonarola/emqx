@@ -4,13 +4,13 @@
 -module(emqx_durable_timer_sup).
 -moduledoc """
 ```
- worker worker ...                       % Worker processes for each kind, type, epoch and shard
-    \     |    /
-    ?WORKERS_SUP  coordinator            % main process (emqx_durable_timer)
-             \     /
-             ?SYSTEM(one_for_all)        % started on demand
+       worker worker ...
+          \     |    /
+   pg     ?WORKERS_SUP  coordinator
+     \         |        /
+       ?SYSTEM(one_for_all)        % started on demand
                |
-             ?TOP                        % root application supervisor
+              ?TOP                 % root application supervisor
 ```
 """.
 
@@ -47,8 +47,8 @@ start_top() ->
 
 -spec restart_worker_sup() -> ok.
 restart_worker_sup() ->
-    _ = supervisor:terminate_child(?TOP, types_sup),
-    case supervisor:restart_child(?SYSTEM, types_sup) of
+    _ = supervisor:terminate_child(?SYSTEM, ?WORKERS_SUP),
+    case supervisor:restart_child(?SYSTEM, ?WORKERS_SUP) of
         {ok, _} ->
             ok;
         {ok, _, _} ->
@@ -123,6 +123,13 @@ init(?TOP) ->
     {ok, {SupFlags, Children}};
 init(?SYSTEM) ->
     Children = [
+        #{
+            id => pg,
+            start => {pg, start_link, [?workers_pg]},
+            type => worker,
+            shutdown => 5_000,
+            restart => permanent
+        },
         #{
             id => ?WORKERS_SUP,
             start => {?MODULE, start_link_workers_sup, []},

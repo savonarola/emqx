@@ -44,7 +44,7 @@ Side effects:
   is authorized to publish it.
 
 - If it client is allowed to publish the will message, a durable timer is created
-  that will publish the will message if the node goes down abruptly ("failsafe" timer is used).
+  that will publish the will message if the node goes down abruptly ("dead hand" timer is used).
 """.
 -spec on_connect(
     emqx_types:clientid(),
@@ -79,7 +79,7 @@ delete(_ClientId) ->
 %% behavior callbacks
 %%================================================================================
 
-durable_timer_type() -> 16#3ABE_0000.
+durable_timer_type() -> 16#3ABE0000.
 
 timer_introduced_in() -> "6.0.0.".
 

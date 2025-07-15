@@ -3,7 +3,7 @@
 %%--------------------------------------------------------------------
 -module(emqx_durable_timer_worker).
 -moduledoc """
-A process that is responsible for execution of the timers.
+A process responsible for execution of the timers.
 
 ## State machine
 ```
@@ -77,6 +77,7 @@ Invariants:
 %% Note: here t is local time:
 -record(cast_wake_up, {t :: integer()}).
 -define(elect_leader, elect_leader).
+-define(replay_complete, replay_complete).
 
 %% States:
 -define(s_active, active).
@@ -166,6 +167,7 @@ init([WorkerKind, Type, Epoch, Shard]) ->
             },
             {ok, ?s_active, D};
         {closed, Closed} ->
+            pg:join(?workers_pg, {Closed, Type, Epoch, Shard}, self()),
             case Closed of
                 started ->
                     Topic = emqx_durable_timer_dl:started_topic(Type, Epoch, '+'),
@@ -200,11 +202,15 @@ handle_event(state_timeout, ?elect_leader, ?s_candidate(Kind), Data) ->
     handle_election(Kind, Data);
 handle_event(enter, _, State = ?s_leader(_Kind), Data) ->
     init_leader(State, Data);
+handle_event(info, ?replay_complete, ?s_candidate(_), _Data) ->
+    {stop, normal};
 %% Backup:
 handle_event(enter, _, ?s_backup(_, _), _) ->
     keep_state_and_data;
 handle_event(info, {'DOWN', Ref, _, _, Reason}, ?s_backup(Kind, Ref), Data) ->
     handle_leader_down(Kind, Data, Reason);
+handle_event(info, ?replay_complete, ?s_backup(_, _), _Data) ->
+    {stop, normal};
 %% Common:
 handle_event(_ET, ?ds_tx_commit_reply(Ref, Reply), _State, Data) ->
     handle_ds_reply(Ref, Reply, Data);
@@ -215,6 +221,7 @@ handle_event(ET, Event, State, Data) ->
     keep_state_and_data.
 
 terminate(_Reason, _State, _D) ->
+    ?tp(?tp_terminate, #{m => ?MODULE, reason => _Reason, s => _State}),
     ok.
 
 %%================================================================================
@@ -319,9 +326,16 @@ schedule_next_wake_up(?s_leader(_), Data = #s{tail = Tail, time_delta = Delta}) 
     Data.
 
 complete_replay(
-    ?s_leader(_Closed), #s{shard = Shard, topic = Topic, epoch = _Epoch}, FullyReplayedTS
+    ?s_leader(Closed), #s{shard = Shard, type = Type, topic = Topic, epoch = Epoch}, FullyReplayedTS
 ) ->
     emqx_durable_timer_dl:clean_replayed(Shard, Topic, FullyReplayedTS),
+    lists:foreach(
+        fun(Peer) ->
+            Peer ! ?replay_complete
+        end,
+        pg:get_members(?workers_pg, {Closed, Type, Epoch, Shard})
+    ),
+    _ = emqx_durable_timer_dl:delete_epoch_if_empty(Epoch),
     {stop, normal}.
 
 replay_timers(

@@ -58,6 +58,7 @@ Value: empty.
 
     update_epoch/4,
     last_heartbeat/1,
+    delete_epoch_if_empty/1,
 
     dirty_ls_epochs/0,
     dirty_ls_epochs/1,
@@ -194,6 +195,53 @@ update_epoch(Node, Epoch, LastHeartbeat, IsUp) ->
             ok;
         Err ->
             Err
+    end.
+
+-spec delete_epoch_if_empty(emqx_durable_timer:epoch()) -> boolean().
+delete_epoch_if_empty(Epoch) ->
+    HBShard = emqx_ds:shard_of(?DB_GLOB, Epoch),
+    maybe
+        {[?hb(NodeBin, _, _, 0)], []} ?=
+            emqx_ds:dirty_read(
+                #{db => ?DB_GLOB, shard => HBShard, generation => generation(), errors => report},
+                ?hb_topic('+', Epoch)
+            ),
+        false ?=
+            lists:any(
+                fun(Shard) ->
+                    has_data(Shard, [?top_started, '+', Epoch, '+']) orelse
+                        has_data(Shard, [?top_deadhand, '+', Epoch, '+'])
+                end,
+                shards()
+            ),
+        %% Delete epoch markers:
+        lists:foreach(
+            fun(Shard) ->
+                emqx_ds:trans(
+                    epoch_tx_opts(Shard, #{}),
+                    fun() ->
+                        emqx_ds:tx_del_topic([?top_epoch, Epoch])
+                    end
+                )
+            end,
+            shards()
+        ),
+        %% Delete heartbeat:
+        _ = emqx_ds:trans(
+            #{
+                db => ?DB_GLOB,
+                generation => generation(),
+                shard => HBShard,
+                retries => 10,
+                retry_interval => 100
+            },
+            fun() ->
+                emqx_ds:tx_del_topic(?hb_topic(NodeBin, Epoch))
+            end
+        ),
+        true
+    else
+        _ -> false
     end.
 
 %%--------------------------------------------------------------------------------
@@ -348,3 +396,32 @@ epoch_tx_opts(Shard, Other) ->
         retries => 10,
         retry_interval => 1000
     }.
+
+has_data(Shard, Topic) ->
+    case emqx_ds:get_streams(?DB_GLOB, Topic, 0, #{shard => Shard, generation => generation()}) of
+        {[], []} ->
+            false;
+        {Streams, []} ->
+            lists:any(
+                fun({_Slab, Stream}) ->
+                    case emqx_ds:make_iterator(?DB_GLOB, Stream, Topic, 0) of
+                        {ok, It} ->
+                            case emqx_ds:next(?DB_GLOB, It, 1) of
+                                {ok, _, []} ->
+                                    false;
+                                {ok, end_of_stream} ->
+                                    false;
+                                _ ->
+                                    true
+                            end;
+                        _ ->
+                            %% Assume yes on errors:
+                            true
+                    end
+                end,
+                Streams
+            );
+        _ ->
+            %% Assume yes when error happens:
+            true
+    end.

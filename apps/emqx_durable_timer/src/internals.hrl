@@ -41,6 +41,7 @@
 -define(tp_replay, emqx_durable_timer_replay).
 -define(tp_replay_failed, emqx_durable_timer_replay_failed).
 -define(tp_worker_started, emqx_durable_timer_worker_started).
+-define(tp_terminate, emqx_durable_timer_process_terminate).
 
 -define(tp_apply_after_write_begin, emqx_durable_timer_apply_write_begin).
 -define(tp_apply_after_write_ok, emqx_durable_timer_apply_write_ok).
@@ -53,5 +54,7 @@
         is_binary(VALUE) andalso
         is_integer(TIME))
 ).
+
+-define(workers_pg, emqx_durable_timer_worker_pg).
 
 -endif.

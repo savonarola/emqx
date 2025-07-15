@@ -242,12 +242,13 @@ handle_event(ET, Event, State, Data) ->
     keep_state_and_data.
 
 terminate(Reason, ?s_normal, #s{this_epoch = Epoch}) ->
-    ?tp(debug, emqx_durable_timer_terminate, #{reason => Reason, epoch => Epoch}),
+    ?tp(?tp_terminate, #{m => ?MODULE, reason => Reason, s => ?s_normal, epoch => Epoch}),
     optvar:unset(?epoch_optvar),
     emqx_durable_timer_sup:restart_worker_sup(),
     _ = emqx_durable_timer_dl:update_epoch(node(), Epoch, now_ms(), false),
     ok;
 terminate(_Reason, _State, _D) ->
+    ?tp(?tp_terminate, #{m => ?MODULE, reason => _Reason, s => _State}),
     ok.
 
 %%================================================================================
