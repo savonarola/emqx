@@ -2287,6 +2287,47 @@ t_28_ttv_time_limited(Config) ->
         []
     ).
 
+t_multi_iterator(Config) ->
+    DB = ?FUNCTION_NAME,
+    Opts = maps:merge(opts(Config), #{
+        n_shards => 5,
+        store_ttv => true,
+        storage => {emqx_ds_storage_skipstream_lts_v2, #{}}
+    }),
+    ?assertMatch(ok, emqx_ds_open_db(DB, Opts)),
+    Slabs = maps:keys(emqx_ds:list_generations_with_lifetimes(DB)),
+    lists:foreach(
+        fun({Shard, Gen}) ->
+            emqx_ds:trans(
+                #{db => DB, shard => Shard, generation => Gen},
+                fun() ->
+                    [emqx_ds:tx_write({[Shard], T, <<T>>}) || T <- lists:seq(1, 3)]
+                end
+            )
+        end,
+        Slabs
+    ),
+    (fun() ->
+        MIt = emqx_ds:make_multi_iterator(#{db => DB}, ['#']),
+        {L, '$end_of_table'} = emqx_ds:multi_iterator_next(#{db => DB}, ['#'], MIt, 1000),
+        ?assertEqual(length(L), length(Slabs) * 3)
+    end)(),
+    (fun() ->
+        MIt0 = emqx_ds:make_multi_iterator(#{db => DB, shard => <<"0">>}, ['#']),
+        {[{_, 1, <<1>>}, {_, 2, <<2>>}], MIt1} = emqx_ds:multi_iterator_next(
+            #{db => DB, shard => <<"0">>}, ['#'], MIt0, 2
+        ),
+        {[{_, 3, <<3>>}], '$end_of_table'} = emqx_ds:multi_iterator_next(
+            #{db => DB, shard => <<"0">>}, ['#'], MIt1, 2
+        )
+    end)(),
+    (fun() ->
+        MIt0 = emqx_ds:make_multi_iterator(#{db => DB}, ['#']),
+        {[{_, 1, <<1>>}, {_, 2, <<2>>}, {_, 3, <<3>>}, {_, 1, <<1>>}], _MIt1} = emqx_ds:multi_iterator_next(
+            #{db => DB}, ['#'], MIt0, 4
+        )
+    end)().
+
 message(ClientId, Topic, Payload, PublishedAt) ->
     Msg = message(Topic, Payload, PublishedAt),
     Msg#message{from = ClientId}.

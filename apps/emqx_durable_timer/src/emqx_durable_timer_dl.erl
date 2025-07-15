@@ -398,7 +398,7 @@ epoch_tx_opts(Shard, Other) ->
     }.
 
 has_data(Shard, Topic) ->
-    case emqx_ds:get_streams(?DB_GLOB, Topic, 0, #{shard => Shard, generation => generation()}) of
+    case emqx_ds:get_streams(?DB_GLOB, Topic, 0, #{shard => Shard}) of
         {[], []} ->
             false;
         {Streams, []} ->

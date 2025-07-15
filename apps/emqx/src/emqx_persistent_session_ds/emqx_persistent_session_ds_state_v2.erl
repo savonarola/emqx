@@ -324,12 +324,12 @@ lts_threshold_cb(N, ?top_data) ->
 lts_threshold_cb(_, _) ->
     infinity.
 
--spec make_session_iterator(emqx_ds:generation()) -> session_iterator() | '$end_of_stream'.
+-spec make_session_iterator(emqx_ds:generation()) -> session_iterator() | '$end_of_table'.
 make_session_iterator(Generation) ->
     emqx_ds:make_multi_iterator(#{db => ?DB, generation => Generation}, [?top_guard, '+']).
 
 -spec session_iterator_next(emqx_ds:generation(), session_iterator(), pos_integer()) ->
-    {list(), session_iterator() | '$end_of_stream'}.
+    {[emqx_persistent_session_ds:id()], session_iterator() | '$end_of_table'}.
 session_iterator_next(Generation, It0, N) ->
     {Batch, It} = emqx_ds:multi_iterator_next(
         #{db => ?DB, generation => Generation}, [?top_guard, '+'], It0, N
@@ -343,7 +343,7 @@ session_iterator_next(Generation, It0, N) ->
     {Results, It}.
 
 -spec make_subscription_iterator(emqx_ds:generation()) ->
-    subscription_iterator() | '$end_of_stream'.
+    subscription_iterator() | '$end_of_table'.
 make_subscription_iterator(Generation) ->
     emqx_ds:make_multi_iterator(
         #{db => ?DB, generation => Generation}, pmap_topic(?subscriptions, '+', '+')
@@ -351,8 +351,8 @@ make_subscription_iterator(Generation) ->
 
 -spec subscription_iterator_next(emqx_ds:generation(), subscription_iterator(), pos_integer()) ->
     {
-        {emqx_persistent_session_ds:id(), emqx_persistent_session_ds:topic_filter()},
-        subscription_iterator() | '$end_of_stream'
+        [{emqx_persistent_session_ds:id(), emqx_persistent_session_ds:topic_filter()}],
+        subscription_iterator() | '$end_of_table'
     }.
 subscription_iterator_next(Generation, It0, N) ->
     {Batch, It} = emqx_ds:multi_iterator_next(

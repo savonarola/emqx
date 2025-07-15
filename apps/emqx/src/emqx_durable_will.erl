@@ -7,7 +7,7 @@
 
 %% API:
 -export([init/0]).
--export([on_connect/4, on_disconnect/2, delete/1]).
+-export([on_connect/3, on_disconnect/3, clear/1]).
 
 %% behavior callbacks:
 -export([durable_timer_type/0, handle_durable_timeout/2, timer_introduced_in/0]).
@@ -49,16 +49,16 @@ Side effects:
 -spec on_connect(
     emqx_types:clientid(),
     emqx_types:clientinfo(),
-    emqx_types:message() | undefined,
-    non_neg_integer() | undefined
+    emqx_types:message() | undefined
 ) ->
     ok | emqx_ds:error(_).
-on_connect(ClientId, _ClientInfo, undefined, _WillDelay) ->
-    emqx_durable_timer:cancel(durable_timer_type(), ClientId);
-on_connect(ClientId, _ClientInfo, Msg = #message{}, WillDelay) when is_integer(WillDelay) ->
-    %% FIXME: check authorization
-    MsgBin = emqx_ds_msg_serializer:serialize(asn1, Msg),
-    emqx_durable_timer:dead_hand(durable_timer_type(), ClientId, MsgBin, WillDelay).
+on_connect(ClientId, ClientInfo, MaybeWillMsg) ->
+    case check(ClientInfo, MaybeWillMsg) of
+        {ok, Delay, MsgBin} ->
+            emqx_durable_timer:dead_hand(durable_timer_type(), ClientId, MsgBin, Delay);
+        undefined ->
+            clear(ClientId)
+    end.
 
 -doc """
 This function is called by the session when the channel disconnects.
@@ -67,13 +67,20 @@ Side effects:
 
 - If DISCONNECT ReasonCode is 0, the current will message is deleted.
 """.
--spec on_disconnect(emqx_types:clientid(), atom()) -> ok.
-on_disconnect(_ClientId, _Reason) ->
-    ok.
+-spec on_disconnect(
+    emqx_types:clientid(), emqx_types:clientinfo(), emqx_types:message() | undefined
+) -> ok.
+on_disconnect(ClientId, ClientInfo, MsybeWillMsg) ->
+    case check(ClientInfo, MsybeWillMsg) of
+        {ok, Delay, MsgBin} ->
+            emqx_durable_timer:apply_after(durable_timer_type(), ClientId, MsgBin, Delay);
+        undefined ->
+            clear(ClientId)
+    end.
 
--spec delete(emqx_types:clientid()) -> ok.
-delete(_ClientId) ->
-    ok.
+-spec clear(emqx_types:clientid()) -> ok.
+clear(ClientId) ->
+    emqx_durable_timer:cancel(durable_timer_type(), ClientId).
 
 %%================================================================================
 %% behavior callbacks
@@ -87,9 +94,17 @@ handle_durable_timeout(Key, Value) ->
     ?tp(warning, fixme_durable_will, #{key => Key, value => Value}).
 
 %%================================================================================
-%% Internal exports
-%%================================================================================
-
-%%================================================================================
 %% Internal functions
 %%================================================================================
+
+check(_ClientInfo, undefined) ->
+    undefined;
+check(ClientInfo, WillMsg0) ->
+    case emqx_channel:prepare_will_message_for_publishing(ClientInfo, WillMsg0) of
+        {ok, WillMsg} ->
+            WillDelay = emqx_channel:will_delay_interval(WillMsg),
+            MsgBin = emqx_ds_msg_serializer:serialize(asn1, WillMsg),
+            {ok, WillDelay, MsgBin};
+        {error, _} ->
+            undefined
+    end.

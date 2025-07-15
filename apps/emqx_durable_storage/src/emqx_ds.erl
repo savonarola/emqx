@@ -1483,34 +1483,6 @@ create the iterator.
 multi_iterator_next(UserOpts, TF, It = #m_iter{}, N) ->
     do_multi_iterator_next(multi_iter_opts(UserOpts), TF, It, N, []).
 
-do_multi_iterator_next(_Opts, _TF, '$end_of_table', _N, Acc) ->
-    {Acc, '$end_of_table'};
-do_multi_iterator_next(_Opts, _TF, MIt, N, Acc) when N =< 0 ->
-    {Acc, MIt};
-do_multi_iterator_next(Opts = #{db := DB}, TF, MIt0 = #m_iter{it = It0, stream = Stream}, N, Acc0) ->
-    Result = next(DB, It0, N),
-    Len =
-        case Result of
-            {ok, _, Batch0} ->
-                length(Batch0);
-            _ ->
-                0
-        end,
-    case Result of
-        {ok, It, Batch} when Len >= N ->
-            {Batch ++ Acc0, MIt0#m_iter{it = It}};
-        Other ->
-            Acc =
-                case Other of
-                    {ok, _, Batch} ->
-                        Acc0 ++ Batch;
-                    _ ->
-                        Acc0
-                end,
-            MIt = do_multi_iter_make_it(Opts, TF, multi_iter_next_stream(Opts, TF, Stream)),
-            do_multi_iterator_next(Opts, TF, MIt, N - Len, Acc)
-    end.
-
 -doc """
 
 Transactional version of `fold_topic`. Performs fold over **all**
@@ -1775,6 +1747,55 @@ is_topic_filter(_) ->
 dirty_read_topic_fun(_Slab, _Stream, Object, Acc) ->
     [Object | Acc].
 
+-spec multi_iter_opts(multi_iter_opts()) -> multi_iter_opts().
+multi_iter_opts(UserOpts) ->
+    maps:merge(
+        #{shard => '_', generation => '_', start_time => 0},
+        UserOpts
+    ).
+
+-spec do_multi_iterator_next(multi_iter_opts(), topic_filter(), multi_iterator(), pos_integer(), [
+    payload()
+]) -> {[payload()], multi_iterator() | '$end_of_table'}.
+do_multi_iterator_next(_Opts, _TF, '$end_of_table', _N, Acc) ->
+    {Acc, '$end_of_table'};
+do_multi_iterator_next(_Opts, _TF, MIt, N, Acc) when N =< 0 ->
+    {Acc, MIt};
+do_multi_iterator_next(Opts = #{db := DB}, TF, MIt0 = #m_iter{it = It0, stream = Stream}, N, Acc0) ->
+    Result = next(DB, It0, N),
+    Len =
+        case Result of
+            {ok, _, Batch0} ->
+                length(Batch0);
+            _ ->
+                0
+        end,
+    case Result of
+        {ok, It, Batch} when Len >= N ->
+            {Acc0 ++ Batch, MIt0#m_iter{it = It}};
+        Other ->
+            Acc =
+                case Other of
+                    {ok, _, Batch} ->
+                        Acc0 ++ Batch;
+                    _ ->
+                        Acc0
+                end,
+            MIt = do_multi_iter_make_it(Opts, TF, multi_iter_next_stream(Opts, TF, Stream)),
+            do_multi_iterator_next(Opts, TF, MIt, N - Len, Acc)
+    end.
+
+multi_iter_next_stream(Opts, TopicFilter, Stream) ->
+    F = fun
+        F([S1, S2 | _]) when S1 =:= Stream ->
+            {ok, S2};
+        F([_ | Rest]) ->
+            F(Rest);
+        F(_) ->
+            '$end_of_table'
+    end,
+    F(multi_iter_get_streams(Opts, TopicFilter)).
+
 multi_iter_get_streams(
     #{db := DB, start_time := StartTime, shard := Shard, generation := Gen}, TopicFilter
 ) ->
@@ -1789,17 +1810,6 @@ multi_iter_get_streams(
         )
     ).
 
-multi_iter_next_stream(Opts, TopicFilter, Stream) ->
-    F = fun
-        F([S1, S2 | _]) when S1 =:= Stream ->
-            {ok, S2};
-        F([_ | Rest]) ->
-            F(Rest);
-        F(_) ->
-            '$end_of_table'
-    end,
-    F(multi_iter_get_streams(Opts, TopicFilter)).
-
 do_multi_iter_make_it(_Opts, _TopicFilter, '$end_of_table') ->
     '$end_of_table';
 do_multi_iter_make_it(#{db := DB, start_time := StartTime}, TopicFilter, {ok, Stream}) ->
@@ -1808,10 +1818,3 @@ do_multi_iter_make_it(#{db := DB, start_time := StartTime}, TopicFilter, {ok, St
         stream = Stream,
         it = It
     }.
-
--spec multi_iter_opts(multi_iter_opts()) -> multi_iter_opts().
-multi_iter_opts(UserOpts) ->
-    maps:merge(
-        #{shard => '_', generation => '_', start_time => 0},
-        UserOpts
-    ).

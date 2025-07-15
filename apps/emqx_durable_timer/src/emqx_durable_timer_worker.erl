@@ -356,7 +356,7 @@ schedule_next_wake_up(?s_leader(_), Data = #s{tail = [{_, NextTime, _} | _]}) ->
 complete_replay(
     LeaderKind, Data = #s{shard = Shard, topic = Topic, epoch = Epoch}, FullyReplayedTS
 ) ->
-    emqx_durable_timer_dl:clean_replayed(Shard, Topic, FullyReplayedTS),
+    _ = emqx_durable_timer_dl:clean_replayed(Shard, Topic, FullyReplayedTS),
     pg_bcast(LeaderKind, Data, ?replay_complete),
     _ = emqx_durable_timer_dl:delete_epoch_if_empty(Epoch),
     {stop, normal}.

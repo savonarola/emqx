@@ -7,7 +7,7 @@
 
 %% API:
 -export([init/0]).
--export([on_connect/3, on_disconnect/3, delete/1]).
+-export([on_connect/2, on_disconnect/2, delete/1]).
 
 %% behavior callbacks:
 -export([durable_timer_type/0, handle_durable_timeout/2, timer_introduced_in/0]).
@@ -18,7 +18,6 @@
 -export_type([]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
--include("emqx.hrl").
 
 %%================================================================================
 %% Type declarations
@@ -34,23 +33,21 @@ init() ->
 
 -spec on_connect(
     emqx_types:clientid(),
-    binary(),
     non_neg_integer()
 ) ->
     ok | emqx_ds:error(_).
-on_connect(ClientId, ChannelCookie, ExpiryIntervalMS) ->
+on_connect(ClientId, ExpiryInterval) ->
     emqx_durable_timer:dead_hand(
-        durable_timer_type(), ClientId, ChannelCookie, ExpiryIntervalMS
+        durable_timer_type(), ClientId, <<>>, timer:seconds(ExpiryInterval)
     ).
 
 -spec on_disconnect(
     emqx_types:clientid(),
-    binary(),
     non_neg_integer()
 ) -> ok.
-on_disconnect(ClientId, ChannelCookie, ExpiryIntervalMS) ->
+on_disconnect(ClientId, ExpiryInterval) ->
     emqx_durable_timer:apply_after(
-        durable_timer_type(), ClientId, ChannelCookie, ExpiryIntervalMS
+        durable_timer_type(), ClientId, <<>>, timer:seconds(ExpiryInterval)
     ).
 
 -spec delete(emqx_types:clientid()) -> ok.
@@ -66,7 +63,6 @@ durable_timer_type() -> 16#DEAD5E55.
 timer_introduced_in() -> "6.0.0".
 
 handle_durable_timeout(SessionId, _ChannelCookie) ->
-    %% TODO: verify that we're kicking the correct channel?
     emqx_persistent_session_ds:kick_offline_session(SessionId).
 
 %%================================================================================

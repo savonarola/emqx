@@ -508,7 +508,7 @@ fold_topic_index(
         DB,
         DataCF,
         [
-            {itarate_lower_bound, KeyPrefix},
+            {iterate_lower_bound, KeyPrefix},
             {iterate_upper_bound, <<Static/binary, (WildcardLevel + 1):?wcb/big>>}
         ]
     ),

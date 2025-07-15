@@ -1514,7 +1514,7 @@ do_persistent_session_query1(ResultAcc, QueryState, Iter0) ->
 
 check_for_live_and_expired(Rows) ->
     lists:filtermap(
-        fun({ClientId, _Session}) ->
+        fun(ClientId) ->
             case is_live_session(ClientId) of
                 true ->
                     false;
