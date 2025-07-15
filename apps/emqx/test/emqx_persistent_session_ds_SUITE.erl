@@ -1426,6 +1426,47 @@ t_session_replay_retry(_Config) ->
     ),
     ok.
 
+%% Check that we send will messages when performing GC without relying on timers set by
+%% the channel process.
+t_session_gc_will_message(init, Config) ->
+    start_local(?FUNCTION_NAME, Config).
+t_session_gc_will_message(_Config) ->
+    ?check_trace(
+        #{timetrap => 10_000},
+        begin
+            WillTopic = <<"will/t">>,
+            ok = emqx:subscribe(WillTopic, #{qos => 2}),
+            ClientId = <<"will_msg_client">>,
+            Client = start_client(#{
+                clientid => ClientId,
+                will_topic => WillTopic,
+                will_payload => <<"will payload">>,
+                will_qos => 0,
+                will_props => #{'Will-Delay-Interval' => 300}
+            }),
+            {ok, _} = emqtt:connect(Client),
+            %% Use reason code =/= `?RC_SUCCESS' to allow will message
+            {ok, {ok, _}} =
+                ?wait_async_action(
+                    emqtt:disconnect(Client, ?RC_UNSPECIFIED_ERROR),
+                    #{?snk_kind := emqx_cm_clean_down}
+                ),
+            ?assertNotReceive({deliver, WillTopic, _}),
+            %% Set fake `last_alive_at' to trigger immediate will message.
+            force_last_alive_at(ClientId, _Time = 0),
+            {ok, {ok, _}} =
+                ?wait_async_action(
+                    emqx_persistent_session_ds_gc_worker:check_session(ClientId),
+                    #{?snk_kind := session_gc_published_will_msg}
+                ),
+            ?assertReceive({deliver, WillTopic, _}),
+
+            ok
+        end,
+        [fun check_stream_state_transitions/1]
+    ),
+    ok.
+
 %% Verify that session handles restart of the shard (or the entire DB)
 %% smoothly:
 t_ds_resubscribe(init, Config) ->

@@ -39,6 +39,8 @@
 -export([get_last_alive_at/1, set_last_alive_at/2]).
 -export([get_node_epoch_id/1, set_node_epoch_id/2]).
 -export([get_expiry_interval/1, set_expiry_interval/2]).
+-export([get_clientinfo/1, set_clientinfo/2]).
+-export([get_will_message/1, set_will_message/2, clear_will_message/1, clear_will_message_now/1]).
 -export([set_offline_info/2]).
 -export([get_peername/1, set_peername/2]).
 -export([get_protocol/1, set_protocol/2]).
@@ -351,6 +353,67 @@ get_protocol(Rec) ->
 -spec set_protocol(protocol(), t()) -> t().
 set_protocol(Val, Rec) ->
     set_meta(?protocol, Val, Rec).
+
+-spec get_clientinfo(t()) -> emqx_maybe:t(emqx_types:clientinfo()).
+get_clientinfo(Rec) ->
+    get_meta(?clientinfo, Rec).
+
+-spec set_clientinfo(emqx_types:clientinfo(), t()) -> t().
+set_clientinfo(Val, Rec) ->
+    set_meta(?clientinfo, Val, Rec).
+
+-spec get_will_message(t()) -> emqx_maybe:t(emqx_types:message()).
+get_will_message(Rec) ->
+    get_meta(?will_message, Rec).
+
+-spec set_will_message(emqx_maybe:t(emqx_types:message()), t()) -> t().
+set_will_message(Val, Rec) ->
+    set_meta(?will_message, Val, Rec).
+
+-spec clear_will_message_now(emqx_persistent_session_ds:id()) -> ok.
+clear_will_message_now(SessionId) when is_binary(SessionId) ->
+    do_clear_will_message_now(SessionId, _AttemptsRemaining = 5).
+
+do_clear_will_message_now(_SessionId, _AttemptsRemaining) ->
+    ok.
+%% case session_restore(SessionId) of
+%%     #{?metadata_domain := [#{val := #{?metadata := Metadata0} = OldVal}]} ->
+%%         ExtK = IntK = ?metadata_domain_bin,
+%%         PreviousPayload = val_encode(?metadata_domain, ExtK, OldVal),
+%%         Metadata = Metadata0#{?will_message => undefined},
+%%         NewVal = OldVal#{?metadata := Metadata},
+%%         MetadataMsg = to_domain_msg(?metadata_domain, SessionId, IntK, ExtK, NewVal),
+%%         Preconditions = [
+%%             {if_exists, exact_matcher(SessionId, ?metadata_domain, IntK, PreviousPayload)}
+%%         ],
+%%         case store_batch([MetadataMsg], Preconditions) of
+%%             ok ->
+%%                 ok;
+%%             {error, recoverable, _Reason} when AttemptsRemaining > 0 ->
+%%                 %% Todo: smaller timeout?
+%%                 timer:sleep(?SESSION_REOPEN_RETRY_TIMEOUT),
+%%                 do_clear_will_message_now(SessionId, AttemptsRemaining - 1);
+%%             {error, unrecoverable, {precondition_failed, not_found}} ->
+%%                 %% Impossible?  Session metadata disappeared while this function,
+%%                 %% called by the Session GC worker, was running.  Nothing to clear
+%%                 %% anymore...
+%%                 ok;
+%%             {error, unrecoverable, {precondition_failed, _Message}} when
+%%                 AttemptsRemaining > 0
+%%             ->
+%%                 %% Metadata updated, which means the session has come back alive and
+%%                 %% taken over ownership of the session state..  Since this function is
+%%                 %% called from the Session GC Worker, we should give up trying to
+%%                 %% clear the will message.
+%%                 ok;
+%%             {error, _Class, _Reason} = Error ->
+%%                 Error
+%%         end
+%% end.
+
+-spec clear_will_message(t()) -> t().
+clear_will_message(Rec) ->
+    set_will_message(undefined, Rec).
 
 -spec set_offline_info(_Info :: map(), t()) -> t().
 set_offline_info(Info, #{?id := SessionId} = Rec) ->
