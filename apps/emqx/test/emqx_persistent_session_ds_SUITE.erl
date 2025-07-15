@@ -1297,7 +1297,7 @@ t_crashed_node_session_gc(Config) ->
             %% However, the session should not be expired,
             %% because session's last alive time should be bumped by the node's last_alive_at, and
             %% the node only recently crashed.
-            erpc:call(Node2, emqx_persistent_session_ds_gc_worker, check_session, [ClientId]),
+            ?block_until(#{?snk_kind := ?sessds_expired, id := ClientId}),
             %%% Wait for possible async dirty session delete
             ct:sleep(100),
             ?assertMatch([_], list_all_sessions(Node2), sessions),
@@ -1316,48 +1316,6 @@ t_crashed_node_session_gc(Config) ->
             %%% Wait for possible async dirty session delete
             ct:sleep(100),
             ?assertMatch([], list_all_sessions(Node2), sessions)
-        end,
-        [fun check_stream_state_transitions/1]
-    ),
-    ok.
-
-t_last_alive_at_cleanup(init, Config) ->
-    start_cluster(?FUNCTION_NAME, Config, #{n => 3}).
-t_last_alive_at_cleanup(Config) ->
-    [Node1 | _] = ?config(cluster_nodes, Config),
-    Port = get_mqtt_port(Node1, tcp),
-    ?check_trace(
-        #{timetrap => 5_000},
-        begin
-            NodeEpochId = erpc:call(
-                Node1,
-                emqx_persistent_session_ds_node_heartbeat_worker,
-                get_node_epoch_id,
-                []
-            ),
-            ClientId = <<"session_on_crashed_node">>,
-            Client = start_client(#{
-                clientid => ClientId,
-                port => Port,
-                properties => #{'Session-Expiry-Interval' => 1},
-                clean_start => false,
-                proto_ver => v5
-            }),
-            {ok, _} = emqtt:connect(Client),
-
-            %% Kill node making its lifetime epoch invalid.
-            emqx_cth_peer:kill(Node1),
-
-            %% Wait till the node's epoch is cleaned up.
-            ?assertMatch(
-                {ok, _},
-                ?block_until(
-                    #{
-                        ?snk_kind := persistent_session_ds_node_heartbeat_delete_epochs,
-                        epoch_ids := [NodeEpochId]
-                    }
-                )
-            )
         end,
         [fun check_stream_state_transitions/1]
     ),

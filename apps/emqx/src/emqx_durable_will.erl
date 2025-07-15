@@ -70,8 +70,8 @@ Side effects:
 -spec on_disconnect(
     emqx_types:clientid(), emqx_types:clientinfo(), emqx_types:message() | undefined
 ) -> ok.
-on_disconnect(ClientId, ClientInfo, MsybeWillMsg) ->
-    case check(ClientInfo, MsybeWillMsg) of
+on_disconnect(ClientId, ClientInfo, MaybeWillMsg) ->
+    case check(ClientInfo, MaybeWillMsg) of
         {ok, Delay, MsgBin} ->
             emqx_durable_timer:apply_after(durable_timer_type(), ClientId, MsgBin, Delay);
         undefined ->
@@ -88,10 +88,12 @@ clear(ClientId) ->
 
 durable_timer_type() -> 16#3ABE0000.
 
-timer_introduced_in() -> "6.0.0.".
+timer_introduced_in() -> "6.0.0".
 
-handle_durable_timeout(Key, Value) ->
-    ?tp(warning, fixme_durable_will, #{key => Key, value => Value}).
+handle_durable_timeout(_Key, MsgBin) ->
+    Msg = emqx_ds_msg_serializer:deserialize(asn1, MsgBin),
+    _ = emqx_broker:publish(Msg),
+    ok.
 
 %%================================================================================
 %% Internal functions

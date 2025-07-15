@@ -31,7 +31,7 @@ t_010_lazy_initialization({init, Config}) ->
     [{cluster, Cluster} | Config];
 t_010_lazy_initialization({stop, Config}) ->
     Cluster = proplists:get_value(cluster, Config),
-    emqx_cth_cluster:stop(Cluster);
+    cluster_stop(Cluster);
 t_010_lazy_initialization(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
@@ -238,7 +238,7 @@ t_020_normal_execution({init, Config}) ->
     [{cluster, Cluster} | Config];
 t_020_normal_execution({stop, Config}) ->
     Cluster = proplists:get_value(cluster, Config),
-    emqx_cth_cluster:stop(Cluster);
+    cluster_stop(Cluster);
 t_020_normal_execution(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     Type = emqx_durable_test_timer:durable_timer_type(),
@@ -349,7 +349,7 @@ t_030_cancellation({init, Config}) ->
     [{cluster, Cluster} | Config];
 t_030_cancellation({stop, Config}) ->
     Cluster = proplists:get_value(cluster, Config),
-    emqx_cth_cluster:stop(Cluster);
+    cluster_stop(Cluster);
 t_030_cancellation(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
@@ -425,7 +425,7 @@ t_040_dead_hand({init, Config}) ->
     [{cluster, Cluster} | Config];
 t_040_dead_hand({stop, Config}) ->
     Cluster = proplists:get_value(cluster, Config),
-    emqx_cth_cluster:stop(Cluster);
+    cluster_stop(Cluster);
 t_040_dead_hand(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
@@ -479,7 +479,7 @@ t_050_apply_after_postmortem_replay({init, Config}) ->
     [{cluster, Cluster} | Config];
 t_050_apply_after_postmortem_replay({stop, Config}) ->
     Cluster = proplists:get_value(cluster, Config),
-    emqx_cth_cluster:stop(Cluster);
+    cluster_stop(Cluster);
 t_050_apply_after_postmortem_replay(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
@@ -536,7 +536,7 @@ t_060_standby({init, Config}) ->
     [{cluster, Cluster} | Config];
 t_060_standby({stop, Config}) ->
     Cluster = proplists:get_value(cluster, Config),
-    emqx_cth_cluster:stop(Cluster);
+    cluster_stop(Cluster);
 t_060_standby(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
@@ -593,6 +593,50 @@ t_060_standby(Config) ->
                 )
             end}
         ]
+    ).
+
+%% This testcase verifies sharding
+t_070_multiple_shards({init, Config}) ->
+    Env = [
+        {n_sites, 5},
+        {replication_factor, 5},
+        {n_shards, 16},
+        {batch_size, 2}
+    ],
+    Cluster = cluster(?FUNCTION_NAME, Config, 5, Env),
+    [{cluster, Cluster} | Config];
+t_070_multiple_shards({stop, Config}) ->
+    timer:sleep(1000),
+    Cluster = proplists:get_value(cluster, Config),
+    cluster_stop(Cluster);
+t_070_multiple_shards(Config) ->
+    Cluster = proplists:get_value(cluster, Config),
+    ?check_trace(
+        #{timetrap => 30_000},
+        begin
+            %% Prepare system:
+            Nodes = emqx_cth_cluster:start(Cluster),
+            [?assertMatch(ok, ?ON(N, emqx_durable_test_timer:init())) || N <- Nodes],
+            %% Create data in multiple shards:
+            Keys = [
+                begin
+                    NodeBin = atom_to_binary(N),
+                    Key = <<NodeBin/binary, I:32>>,
+                    ?ON(N, emqx_durable_test_timer:apply_after(Key, <<>>, 3000 - I * 1000)),
+                    Key
+                end
+             || N <- Nodes,
+                I <- lists:seq(1, 3)
+            ],
+            ct:sleep(3_000),
+            Keys
+        end,
+        fun(Keys, Trace) ->
+            ?assertSameSet(
+                Keys,
+                ?projection(key, ?of_kind(?tp_fire, Trace))
+            )
+        end
     ).
 
 %%------------------------------------------------------------------------------
@@ -870,6 +914,11 @@ cluster(TC, Config, Nnodes, Env) ->
         NodeSpecs,
         #{work_dir => emqx_cth_suite:work_dir(TC, Config)}
     ).
+
+cluster_stop(Cluster) ->
+    %% Give it time to flush logs:
+    %% timer:sleep(1000),
+    emqx_cth_cluster:stop(Cluster).
 
 fix_logging() ->
     %% NOTE: cth_peer module often stops the node too abruptly before

@@ -25,10 +25,10 @@ A process responsible for execution of the timers.
 ```                                         pending add apply_after
      pending gc trans                         ..................
       ..............     wake up timers      :   ..........     :
-     :              v   v     v       v      :  :          v    v
+     :              v   v  v  v   v   v      :  :          v    v
 -----=----=---=--=--=---=--=--=---=-=-=------------------------------> t
-     |              |                 |                    |
- del_up_to  fully_replayed_ts   next_wake_up    active_safe_replay_pos
+     |              |                                      |
+ del_up_to  fully_replayed_ts                    active_safe_replay_pos
 ```
 
 - `del_up_to` tracks the last garbage collection.
@@ -39,8 +39,7 @@ A process responsible for execution of the timers.
 Invariants:
 
 - `del_up_to` =< `fully_replayed_ts`
-- `fully_replayed_ts` =< `next_wake_up`
-- `next_wake_up` < `safe_active_replay_pos`
+- `fully_replayed_ts` < `safe_active_replay_pos`
 - All pending transactions that add new timers insert entries with timestamp >= `active_safe_replay_pos`
 
 """.
@@ -145,8 +144,7 @@ apply_after(Type, Epoch, Key, Val, NotEarlierThan) when
     time_delta :: integer(),
     %% Timeline (Note: here times are NOT adjusted for delta):
     del_up_to = -1 :: integer(),
-    fully_replayed_ts = 0 :: integer(),
-    next_wakeup = -1 :: integer()
+    fully_replayed_ts = -1 :: integer()
 }).
 
 -type data() :: #s{}.
@@ -248,9 +246,9 @@ terminate(_Reason, _State, _D) ->
 %%================================================================================
 
 %% @doc Display all active workers:
--spec ls() -> [{emqx_durable_timer:type(), emqx_durable_timer:epoch(), emqx_ds:shard()}].
+-spec ls() -> [{emqx_durable_timer:type(), emqx_durable_timer:epoch(), emqx_ds:shard(), pid()}].
 ls() ->
-    MS = {{?name('$1', '$2', '$3', '$4'), '_', '_'}, [], [{{'$1', '$2', '$3', '$4'}}]},
+    MS = {{?name('$1', '$2', '$3', '$4'), '$5', '_'}, [], [{{'$1', '$2', '$3', '$4', '$5'}}]},
     gproc:select({local, names}, [MS]).
 
 %%================================================================================
@@ -313,6 +311,11 @@ init_leader(Kind, Data0) ->
 %% Replay
 %%--------------------------------------------------------------------------------
 
+handle_wake_up(
+    _State, #s{fully_replayed_ts = FullyReplayed}, Treached
+) when Treached =< FullyReplayed ->
+    %% Ignore duplicate timers:
+    keep_state_and_data;
 handle_wake_up(
     State, Data0 = #s{fully_replayed_ts = FullyReplayedTS0}, Treached
 ) ->
@@ -580,17 +583,9 @@ handle_ds_reply(Ref, DSReply, D = #s{pending_tab = Tab}) ->
             keep_state_and_data
     end.
 
-active_schedule_wake_up(Time, D0 = #s{next_wakeup = NextWakeUp}, Effects) ->
-    D =
-        case active_safe_replay_pos(D0, Time) of
-            TMax when TMax > NextWakeUp ->
-                %% New maximum wait time reached:
-                wake_up(D0, TMax),
-                D0#s{next_wakeup = TMax};
-            _ ->
-                %% Wake up timer already exists
-                D0
-        end,
+active_schedule_wake_up(Time, D, Effects) ->
+    Tsafe = active_safe_replay_pos(D, Time),
+    wake_up(D, Tsafe),
     {keep_state, D, Effects}.
 
 %%--------------------------------------------------------------------------------

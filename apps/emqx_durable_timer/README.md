@@ -51,7 +51,7 @@ Warning: heartbeat and health configuration must be consistent across the cluste
 
 - Durable storage settings
 
-  + `n_shards`: Default 16
+  + `n_shards`: Default 4
   + `n_sites`: Default 1
   + `replication_factor`: Default 5
   + `transactions`: Default `flush_interval => 10, idle_flush_interval => 1, conflict_window => 5000`

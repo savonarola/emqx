@@ -18,6 +18,7 @@
 -export_type([]).
 
 -include_lib("snabbkaffe/include/trace.hrl").
+-include("../emqx_tracepoints.hrl").
 
 %%================================================================================
 %% Type declarations
@@ -62,8 +63,9 @@ durable_timer_type() -> 16#DEAD5E55.
 
 timer_introduced_in() -> "6.0.0".
 
-handle_durable_timeout(SessionId, _ChannelCookie) ->
-    emqx_persistent_session_ds:kick_offline_session(SessionId).
+handle_durable_timeout(SessionId, ChannelCookie) ->
+    ?tp(debug, ?sessds_expired, #{id => SessionId, cookie => ChannelCookie}),
+    emqx_persistent_session_ds:destroy_session(SessionId).
 
 %%================================================================================
 %% Internal exports

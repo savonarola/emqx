@@ -48,4 +48,6 @@
 
 -define(sessds_takeover_conflict, sessds_takeover_conflict).
 
+-define(sessds_expired, sessds_expired).
+
 -endif.

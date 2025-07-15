@@ -460,7 +460,7 @@ cfg_transaction_timeout() ->
     application:get_env(?APP, transaction_timeout, 1000).
 
 cfg_n_shards() ->
-    application:get_env(?APP, n_shards, 16).
+    application:get_env(?APP, n_shards, 4).
 
 cfg_n_sites() ->
     application:get_env(?APP, n_sites, 1).
