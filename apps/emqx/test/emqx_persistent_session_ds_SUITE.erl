@@ -179,12 +179,6 @@ session_open(Node, ClientId) ->
     ),
     Sess.
 
-force_last_alive_at(ClientId, Time) ->
-    {ok, S0} = emqx_persistent_session_ds_state:open(ClientId),
-    S = emqx_persistent_session_ds_state:set_last_alive_at(Time, S0),
-    _ = emqx_persistent_session_ds_state:async_checkpoint(S),
-    ok.
-
 stop_and_commit(Client) ->
     {ok, {ok, _}} =
         ?wait_async_action(
@@ -1209,21 +1203,9 @@ t_session_gc(Config) ->
                 [Client1, Client2, Client3]
             ),
 
-            %% Clients are still alive; no session is garbage collected.
-            ?tp(notice, "waiting for gc", #{}),
-            ?assertMatch(
-                {ok, _},
-                ?block_until(
-                    #{
-                        ?snk_kind := ds_session_gc,
-                        ?snk_span := {complete, _},
-                        ?snk_meta := #{node := N}
-                    } when N =/= node()
-                )
-            ),
+            %% Clients are alive:
             ?assertMatch([_, _, _], list_all_sessions(Node1), sessions),
             ?assertMatch([_, _, _], list_all_subscriptions(Node1), subscriptions),
-            ?tp(notice, "gc ran", #{}),
 
             %% Now we disconnect 2 of them; only those should be GC'ed.
 
@@ -1248,8 +1230,8 @@ t_session_gc(Config) ->
                 {ok, _},
                 ?block_until(
                     #{
-                        ?snk_kind := ds_session_gc_cleaned,
-                        session_id := ClientId2
+                        ?snk_kind := ?sessds_expired,
+                        id := ClientId2
                     }
                 )
             ),
@@ -1257,8 +1239,8 @@ t_session_gc(Config) ->
                 {ok, _},
                 ?block_until(
                     #{
-                        ?snk_kind := ds_session_gc_cleaned,
-                        session_id := ClientId3
+                        ?snk_kind := ?sessds_expired,
+                        id := ClientId3
                     }
                 )
             ),
@@ -1298,21 +1280,6 @@ t_crashed_node_session_gc(Config) ->
             %% because session's last alive time should be bumped by the node's last_alive_at, and
             %% the node only recently crashed.
             ?block_until(#{?snk_kind := ?sessds_expired, id := ClientId}),
-            %%% Wait for possible async dirty session delete
-            ct:sleep(100),
-            ?assertMatch([_], list_all_sessions(Node2), sessions),
-
-            %% But finally the session has to expire since the connection
-            %% is not re-established.
-            ?assertMatch(
-                {ok, _},
-                ?block_until(
-                    #{
-                        ?snk_kind := ds_session_gc_cleaned,
-                        session_id := ClientId
-                    }
-                )
-            ),
             %%% Wait for possible async dirty session delete
             ct:sleep(100),
             ?assertMatch([], list_all_sessions(Node2), sessions)
@@ -1386,11 +1353,11 @@ t_session_replay_retry(_Config) ->
 
 %% Check that we send will messages when performing GC without relying on timers set by
 %% the channel process.
-t_session_gc_will_message(init, Config) ->
+t_delayed_will_message(init, Config) ->
     start_local(?FUNCTION_NAME, Config).
-t_session_gc_will_message(_Config) ->
+t_delayed_will_message(_Config) ->
     ?check_trace(
-        #{timetrap => 10_000},
+        #{timetrap => 15_000},
         begin
             WillTopic = <<"will/t">>,
             ok = emqx:subscribe(WillTopic, #{qos => 2}),
@@ -1400,7 +1367,7 @@ t_session_gc_will_message(_Config) ->
                 will_topic => WillTopic,
                 will_payload => <<"will payload">>,
                 will_qos => 0,
-                will_props => #{'Will-Delay-Interval' => 300}
+                will_props => #{'Will-Delay-Interval' => 5}
             }),
             {ok, _} = emqtt:connect(Client),
             %% Use reason code =/= `?RC_SUCCESS' to allow will message
@@ -1409,17 +1376,7 @@ t_session_gc_will_message(_Config) ->
                     emqtt:disconnect(Client, ?RC_UNSPECIFIED_ERROR),
                     #{?snk_kind := emqx_cm_clean_down}
                 ),
-            ?assertNotReceive({deliver, WillTopic, _}),
-            %% Set fake `last_alive_at' to trigger immediate will message.
-            force_last_alive_at(ClientId, _Time = 0),
-            {ok, {ok, _}} =
-                ?wait_async_action(
-                    emqx_persistent_session_ds_gc_worker:check_session(ClientId),
-                    #{?snk_kind := session_gc_published_will_msg}
-                ),
-            ?assertReceive({deliver, WillTopic, _}),
-
-            ok
+            ?assertReceive({deliver, WillTopic, _})
         end,
         [fun check_stream_state_transitions/1]
     ),

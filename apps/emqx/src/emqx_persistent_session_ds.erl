@@ -923,11 +923,11 @@ disconnect(Session = #{id := Id, s := S0, shared_sub_s := SharedSubS0}, ConnInfo
 
 -spec terminate(emqx_types:clientinfo(), Reason :: term(), session()) -> ok.
 terminate(ClientInfo, Reason, Session = #{s := S, id := Id, will_msg := MaybeWillMsg}) ->
-    _ = commit(Session#{s := S}, #{lifetime => terminate, sync => true}),
     emqx_persistent_session_ds_gc_timer:on_disconnect(
         Id, emqx_persistent_session_ds_state:get_expiry_interval(S)
     ),
     emqx_durable_will:on_disconnect(Id, ClientInfo, MaybeWillMsg),
+    _ = commit(Session#{s := S}, #{lifetime => terminate, sync => true}),
     ?tp(debug, ?sessds_terminate, #{id => Id, reason => Reason}),
     ok.
 

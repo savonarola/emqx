@@ -192,8 +192,10 @@ apply_after(Type, Key, Value, Delay) when ?is_valid_timer(Type, Key, Value, Dela
     ?tp(debug, ?tp_new_apply_after, #{type => Type, key => Key, val => Value, delay => Delay}),
     NotEarlierThan = now_ms() + Delay,
     Epoch = epoch(),
-    %% This function may crash. Add a retry mechanism?
-    emqx_durable_timer_worker:apply_after(Type, Epoch, Key, Value, NotEarlierThan).
+    retry(
+        fun() -> emqx_durable_timer_worker:apply_after(Type, Epoch, Key, Value, NotEarlierThan) end,
+        0
+    ).
 
 -spec cancel(type(), key()) -> ok | emqx_ds:error(_).
 cancel(Type, Key) when Type >= 0, Type =< ?max_type, is_binary(Key) ->
@@ -530,6 +532,15 @@ is_registered(Type) ->
             true;
         [] ->
             false
+    end.
+
+retry(Fun, N) ->
+    case Fun() of
+        ?err_rec(_) when N < 5 ->
+            timer:sleep(cfg_replay_retry_interval()),
+            retry(Fun, N + 1);
+        Other ->
+            Other
     end.
 
 -ifdef(TEST).

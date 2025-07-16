@@ -37,18 +37,18 @@ init() ->
     non_neg_integer()
 ) ->
     ok | emqx_ds:error(_).
-on_connect(ClientId, ExpiryInterval) ->
+on_connect(ClientId, ExpiryIntervalMS) ->
     emqx_durable_timer:dead_hand(
-        durable_timer_type(), ClientId, <<>>, timer:seconds(ExpiryInterval)
+        durable_timer_type(), ClientId, <<>>, ExpiryIntervalMS
     ).
 
 -spec on_disconnect(
     emqx_types:clientid(),
     non_neg_integer()
 ) -> ok.
-on_disconnect(ClientId, ExpiryInterval) ->
+on_disconnect(ClientId, ExpiryIntervalMS) ->
     emqx_durable_timer:apply_after(
-        durable_timer_type(), ClientId, <<>>, timer:seconds(ExpiryInterval)
+        durable_timer_type(), ClientId, <<>>, ExpiryIntervalMS
     ).
 
 -spec delete(emqx_types:clientid()) -> ok.

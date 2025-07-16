@@ -52,7 +52,7 @@ It takes care of forwarding calls to the underlying DBMS.
     %% General "high-level" transaction API
     trans/2,
     tx_commit_outcome/3,
-    reset_trans/0,
+    reset_trans/1,
 
     tx_fold_topic/3,
     tx_fold_topic/4,
@@ -1043,9 +1043,11 @@ The following is guaranteed, though:
 
   Default: 5s.
 
-- **`retries`**: Automatically retry the transaction if commit results
-  in a recoverable error. This option specifies number of retries.
-  This option has no effect when `sync = false`.
+- **`retries`**: Automatically retry the transaction if transaction
+  results in a recoverable error. This option specifies number of
+  retries. Restart behavior depends on the `sync` flag. Sync
+  transactions are always restarted, while async transactions are only
+  restarted for errors that happen before the commit stage.
 
   Default: 0.
 
@@ -1061,7 +1063,8 @@ The following is guaranteed, though:
 
 - When `sync` option is set to `false`, this function returns
   `{async, Ref, Ret}` tuple where `Ref` is a reference and `Ret`
-  is return value of the transaction fun.
+  is return value of the transaction fun or error tuple if the
+  transaction fails before the commit.
 
   Result of the commit is sent to the caller asynchronously as a
   message that should be matched using `?tx_commit_reply(Ref, Reply)`
@@ -1259,9 +1262,9 @@ binary_to_iterator(DB, Iterator) ->
 
 -doc "Restart the transaction.".
 -doc #{title => <<"Transactions">>, since => <<"5.10.0">>}.
--spec reset_trans() -> no_return().
-reset_trans() ->
-    throw(?tx_reset).
+-spec reset_trans(term()) -> no_return().
+reset_trans(Reason) ->
+    throw({?tx_reset, Reason}).
 
 -doc "Return _all_ messages matching the topic-filter as a list.".
 -doc #{title => <<"Utility functions">>, since => <<"5.10.0">>}.
@@ -1509,7 +1512,12 @@ tx_fold_topic(Fun, Acc, TopicFilter, UserOpts) ->
             EndTime = maps:get(end_time, UserOpts, infinity),
             Opts = UserOpts#{db => tx_ctx_db(), shard => Shard, generation => Generation},
             tx_push_op(?tx_ops_read, {TopicFilter, StartTime, EndTime}),
-            fold_topic(Fun, Acc, TopicFilter, Opts);
+            case fold_topic(Fun, Acc, TopicFilter, Opts#{errors => report}) of
+                {Result, []} ->
+                    Result;
+                {_, [_ | _] = Errors} ->
+                    reset_trans(Errors)
+            end;
         undefined ->
             error(not_a_transaction)
     end.
@@ -1643,8 +1651,8 @@ trans_inner(DB, Fun, Opts) ->
                 Err
         end
     catch
-        ?tx_reset ->
-            ?err_rec(?tx_reset)
+        {?tx_reset, Reason} ->
+            ?err_rec({?tx_reset, Reason})
     after
         _ = erase(?tx_ctx_db),
         _ = erase(?tx_ctx),

@@ -1900,7 +1900,7 @@ t_24_tx_side_effects(Config) ->
                                 ok;
                             N ->
                                 put(restart_count, N - 1),
-                                emqx_ds:reset_trans()
+                                emqx_ds:reset_trans(test)
                         end
                     end
                 )

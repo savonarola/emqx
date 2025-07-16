@@ -163,8 +163,8 @@ init(?WORKERS_SUP) ->
     ],
     SupFlags = #{
         strategy => simple_one_for_one,
-        intensity => 10,
-        period => 10
+        intensity => 100,
+        period => 1
     },
     {ok, {SupFlags, Children}}.
 
