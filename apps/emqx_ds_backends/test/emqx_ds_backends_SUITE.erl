@@ -995,7 +995,7 @@ t_13_smoke_ttv_tx(Config) ->
                 emqx_ds_open_db(DB, Opts)
             ),
             %% 1. Start a write-only transaction to create some data:
-            {ok, Tx1} = emqx_ds:new_kv_tx(DB, #{
+            {ok, Tx1} = emqx_ds:new_tx(DB, #{
                 generation => 1,
                 shard => emqx_ds:shard_of(DB, Owner),
                 timeout => infinity
@@ -1033,7 +1033,7 @@ t_13_smoke_ttv_tx(Config) ->
             ),
 
             %% 2. Create a transaction that deletes one of the topics:
-            {ok, Tx2} = emqx_ds:new_kv_tx(DB, #{
+            {ok, Tx2} = emqx_ds:new_tx(DB, #{
                 generation => 1,
                 shard => {auto, Owner},
                 timeout => infinity
@@ -1074,7 +1074,7 @@ t_14_ttv_wildcard_deletes(Config) ->
                 emqx_ds_open_db(DB, Opts)
             ),
             %% 1. Insert test data:
-            {ok, Tx1} = emqx_ds:new_kv_tx(DB, TXOpts),
+            {ok, Tx1} = emqx_ds:new_tx(DB, TXOpts),
             Msgs0 =
                 [{[<<"foo">>], 0, <<"payload">>}] ++
                     [
@@ -1095,7 +1095,7 @@ t_14_ttv_wildcard_deletes(Config) ->
                 )
             ),
             %% 2. Issue a new transaction that deletes t/10/+:
-            {ok, Tx2} = emqx_ds:new_kv_tx(DB, TXOpts),
+            {ok, Tx2} = emqx_ds:new_tx(DB, TXOpts),
             Ops2 = #{
                 ?ds_tx_delete_topic => [{[<<"t">>, <<10:16>>, '+'], 0, infinity}]
             },
@@ -1136,7 +1136,7 @@ t_15_ttv_write_serial(Config) ->
                 emqx_ds_open_db(DB, Opts)
             ),
             %% 1. Insert test data:
-            {ok, Tx1} = emqx_ds:new_kv_tx(DB, TXOpts),
+            {ok, Tx1} = emqx_ds:new_tx(DB, TXOpts),
             Ops = #{
                 ?ds_tx_write => [{Topic, 0, ?ds_tx_serial}]
             },
@@ -1147,7 +1147,7 @@ t_15_ttv_write_serial(Config) ->
                 emqx_ds:dirty_read(DB, Topic)
             ),
             %% Repeat the procedure and make sure serial increases
-            {ok, Tx2} = emqx_ds:new_kv_tx(DB, TXOpts),
+            {ok, Tx2} = emqx_ds:new_tx(DB, TXOpts),
             {ok, Serial2} = do_commit_tx(DB, Tx2, Ops),
             ?assertEqual(
                 [{Topic, 0, Serial2}],
@@ -1175,14 +1175,14 @@ t_16_ttv_preconditions(Config) ->
                 emqx_ds_open_db(DB, Opts)
             ),
             %% 1. Insert test data:
-            {ok, Tx1} = emqx_ds:new_kv_tx(DB, TXOpts),
+            {ok, Tx1} = emqx_ds:new_tx(DB, TXOpts),
             Ops1 = #{
                 ?ds_tx_write => [{Topic1, 0, <<"payload0">>}]
             },
             ?assertMatch({ok, _}, do_commit_tx(DB, Tx1, Ops1)),
 
             %% 2. Preconditions, successful.
-            {ok, Tx2} = emqx_ds:new_kv_tx(DB, TXOpts),
+            {ok, Tx2} = emqx_ds:new_tx(DB, TXOpts),
             Ops2 = #{
                 ?ds_tx_expected => [
                     {Topic1, 0, '_'},
@@ -1201,7 +1201,7 @@ t_16_ttv_preconditions(Config) ->
             ),
 
             %% 3. Precondiction fail, unexpected message:
-            {ok, Tx3} = emqx_ds:new_kv_tx(DB, TXOpts),
+            {ok, Tx3} = emqx_ds:new_tx(DB, TXOpts),
             Ops3 = #{
                 ?ds_tx_unexpected => [{Topic1, 0}],
                 ?ds_tx_write => [{Topic1, 0, <<"fail">>}]
@@ -1212,7 +1212,7 @@ t_16_ttv_preconditions(Config) ->
             ),
 
             %% 4 Preconditions, fail, expected message not found:
-            {ok, Tx4} = emqx_ds:new_kv_tx(DB, TXOpts),
+            {ok, Tx4} = emqx_ds:new_tx(DB, TXOpts),
             Ops4 = #{
                 ?ds_tx_expected => [{Topic2, 0, '_'}],
                 ?ds_tx_write => [{Topic2, 0, <<"fail">>}]
@@ -1223,7 +1223,7 @@ t_16_ttv_preconditions(Config) ->
             ),
 
             %% 5 Preconditions, fail, value is different:
-            {ok, Tx5} = emqx_ds:new_kv_tx(DB, TXOpts),
+            {ok, Tx5} = emqx_ds:new_tx(DB, TXOpts),
             Ops5 = #{
                 ?ds_tx_expected => [{Topic1, 0, <<"payload0">>}],
                 ?ds_tx_write => [{Topic1, 0, <<"fail">>}]
@@ -2080,8 +2080,8 @@ t_27_tx_read_conflicts(Config) ->
     %% commit the second one.
     Par = fun(Ops1, Ops2) ->
         %% 1. Create context for two transactions:
-        {ok, Tx1} = emqx_ds:new_kv_tx(DB, TXOpts),
-        {ok, Tx2} = emqx_ds:new_kv_tx(DB, TXOpts),
+        {ok, Tx1} = emqx_ds:new_tx(DB, TXOpts),
+        {ok, Tx2} = emqx_ds:new_tx(DB, TXOpts),
         %% 2. Commit the first one:
         ?assertMatch(
             {ok, _},

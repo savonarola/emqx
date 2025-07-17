@@ -36,7 +36,7 @@
     suback/3,
     subscription_info/2,
 
-    new_kv_tx/2,
+    new_tx/2,
     commit_tx/3,
     tx_commit_outcome/1,
 
@@ -265,9 +265,9 @@ store_batch(DB, Batch, Opts) ->
             store_batch_buffered(DB, Batch, Opts)
     end.
 
--spec new_kv_tx(emqx_ds:db(), emqx_ds:transaction_opts()) ->
+-spec new_tx(emqx_ds:db(), emqx_ds:transaction_opts()) ->
     {ok, tx_context()} | emqx_ds:error(_).
-new_kv_tx(DB, Options = #{shard := ShardOpt, generation := Generation}) ->
+new_tx(DB, Options = #{shard := ShardOpt, generation := Generation}) ->
     case emqx_ds_builtin_local_meta:db_config(DB) of
         #{atomic_batches := true, store_ttv := true} ->
             case ShardOpt of

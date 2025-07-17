@@ -33,7 +33,7 @@ It takes care of forwarding calls to the underlying DBMS.
 -export([store_batch/2, store_batch/3]).
 
 %% Transactional API (low-level):
--export([new_kv_tx/2, commit_tx/3]).
+-export([new_tx/2, commit_tx/3]).
 
 %% Message replay API:
 -export([get_streams/3, get_streams/4, make_iterator/4, next/3]).
@@ -141,7 +141,7 @@ It takes care of forwarding calls to the underlying DBMS.
     payload/0,
 
     tx_serial/0,
-    kv_tx_context/0,
+    tx_context/0,
     transaction_opts/0,
     tx_ops/0,
     commit_result/0,
@@ -404,8 +404,7 @@ Options for the `subscribe` API.
 
 %% TODO: currently all backends use the same definition of context.
 %% This may change in the future.
--opaque kv_tx_context() :: emqx_ds_optimistic_tx:ctx().
--type tx_context() :: term().
+-opaque tx_context() :: emqx_ds_optimistic_tx:ctx().
 
 -type tx_ops() :: #{
     %% Write operations:
@@ -576,12 +575,10 @@ must not assume the default values.
 -callback count(db()) -> non_neg_integer().
 
 %% Blob transaction API:
--callback new_kv_tx(db(), transaction_opts()) ->
-    {ok, kv_tx_context()} | error(_).
+-callback new_tx(db(), transaction_opts()) ->
+    {ok, tx_context()} | error(_).
 
--callback commit_tx
-    (db(), kv_tx_context(), tx_ops()) -> reference();
-    (db(), tx_context(), tx_ops()) -> reference().
+-callback commit_tx(db(), tx_context(), tx_ops()) -> reference().
 
 -callback tx_commit_outcome({'DOWN', reference(), _, _, _}) ->
     commit_result().
@@ -924,9 +921,9 @@ Low-level transaction API. Obtain context for an optimistic
 transaction.
 """.
 -doc #{title => <<"Low-level transactions">>, since => <<"5.10.0">>}.
--spec new_kv_tx(db(), transaction_opts()) -> {ok, kv_tx_context()} | error(_).
-new_kv_tx(DB, Opts) ->
-    ?module(DB):new_kv_tx(DB, Opts).
+-spec new_tx(db(), transaction_opts()) -> {ok, tx_context()} | error(_).
+new_tx(DB, Opts) ->
+    ?module(DB):new_tx(DB, Opts).
 
 -doc """
 
@@ -945,7 +942,7 @@ function.
 """.
 -doc #{title => <<"Low-level transactions">>, since => <<"5.10.0">>}.
 -spec commit_tx
-    (db(), kv_tx_context(), tx_ops()) -> reference();
+    (db(), tx_context(), tx_ops()) -> reference();
     (db(), tx_context(), tx_ops()) -> reference().
 commit_tx(DB, TxContext, TxOps) ->
     ?module(DB):commit_tx(DB, TxContext, TxOps).
@@ -1484,7 +1481,9 @@ create the iterator.
 ) ->
     {[payload()], multi_iterator() | '$end_of_table'}.
 multi_iterator_next(UserOpts, TF, It = #m_iter{}, N) ->
-    do_multi_iterator_next(multi_iter_opts(UserOpts), TF, It, N, []).
+    do_multi_iterator_next(multi_iter_opts(UserOpts), TF, It, N, []);
+multi_iterator_next(_, _, '$end_of_table', _) ->
+    {[], '$end_of_table'}.
 
 -doc """
 
@@ -1613,7 +1612,7 @@ trans_maybe_retry(DB, Fun, Opts = #{retry_interval := RetryInterval}, Retries) -
     transaction_result(Ret).
 trans_inner(DB, Fun, Opts) ->
     try
-        case new_kv_tx(DB, Opts) of
+        case new_tx(DB, Opts) of
             {ok, Ctx} ->
                 _ = put(?tx_ctx_db, DB),
                 _ = put(?tx_ctx, Ctx),

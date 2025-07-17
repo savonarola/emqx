@@ -33,7 +33,7 @@
 
     current_timestamp/2,
 
-    new_kv_tx/2,
+    new_tx/2,
     commit_tx/3,
     tx_commit_outcome/1,
 
@@ -628,9 +628,9 @@ foreach_shard(DB, Fun) ->
 current_timestamp(DB, Shard) ->
     emqx_ds_builtin_raft_sup:get_gvar(DB, ?gv_timestamp(Shard), 0).
 
--spec new_kv_tx(emqx_ds:db(), emqx_ds:transaction_opts()) ->
+-spec new_tx(emqx_ds:db(), emqx_ds:transaction_opts()) ->
     {ok, tx_context()} | emqx_ds:error(_).
-new_kv_tx(DB, Options = #{shard := ShardOpt, generation := Generation}) ->
+new_tx(DB, Options = #{shard := ShardOpt, generation := Generation}) ->
     case emqx_ds_builtin_raft_meta:db_config(DB) of
         #{store_ttv := true} ->
             case ShardOpt of
