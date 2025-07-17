@@ -257,7 +257,7 @@ on_commit_reply(
                     client => ClientId
                 }
             ),
-            {ok, S#{?checkpoint_ref := undefined}};
+            {ok, S#{?checkpoint_ref := undefined, ?set_dirty}};
         ?err_unrec(Reason) ->
             ?tp(
                 error,

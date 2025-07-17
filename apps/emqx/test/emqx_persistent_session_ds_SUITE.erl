@@ -964,6 +964,7 @@ t_fuzz(_Config) ->
                 Result =:= ok orelse error(Result)
             after
                 ok = emqx_persistent_session_ds_fuzzer:cleanup(),
+                timer:sleep(10),
                 ok = emqx_ds:drop_db(?PERSISTENT_MESSAGE_DB)
             end,
             [
@@ -1479,6 +1480,7 @@ check_stream_state_transitions(Trace) ->
     ct:pal("~p: Verified state transitions of ~p streams.", [?FUNCTION_NAME, maps:size(Groups)]),
     maps:foreach(
         fun(StreamId, Transitions) ->
+            ct:pal("Stream: ~p~n  ~p", [StreamId, Transitions]),
             check_stream_state_transitions(StreamId, Transitions, void)
         end,
         Groups

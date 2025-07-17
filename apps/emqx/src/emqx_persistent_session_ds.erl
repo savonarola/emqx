@@ -923,11 +923,11 @@ disconnect(Session = #{id := Id, s := S0, shared_sub_s := SharedSubS0}, ConnInfo
 
 -spec terminate(emqx_types:clientinfo(), Reason :: term(), session()) -> ok.
 terminate(ClientInfo, Reason, Session = #{s := S, id := Id, will_msg := MaybeWillMsg}) ->
-    emqx_persistent_session_ds_gc_timer:on_disconnect(
+    _ = commit(Session#{s := S}, #{lifetime => terminate, sync => true}),
+    ok = emqx_persistent_session_ds_gc_timer:on_disconnect(
         Id, emqx_persistent_session_ds_state:get_expiry_interval(S)
     ),
-    emqx_durable_will:on_disconnect(Id, ClientInfo, MaybeWillMsg),
-    _ = commit(Session#{s := S}, #{lifetime => terminate, sync => true}),
+    ok = emqx_durable_will:on_disconnect(Id, ClientInfo, MaybeWillMsg),
     ?tp(debug, ?sessds_terminate, #{id => Id, reason => Reason}),
     ok.
 
@@ -1067,7 +1067,9 @@ session_drop(SessionId, Reason) ->
         {ok, S0} ->
             ?tp(debug, ?sessds_drop, #{client_id => SessionId, reason => Reason}),
             ok = emqx_persistent_session_ds_subs:on_session_drop(SessionId, S0),
-            ok = emqx_persistent_session_ds_state:delete(SessionId);
+            ok = emqx_persistent_session_ds_state:delete(SessionId),
+            emqx_persistent_session_ds_gc_timer:delete(SessionId),
+            emqx_durable_will:clear(SessionId);
         undefined ->
             ok
     end.
@@ -1779,7 +1781,7 @@ post_enqueue_new(
 %% If needed, refresh reference to the subscription state in the SRS
 %% and return the updated records:
 -spec maybe_update_sub_state_id(SRS, emqx_persistent_session_ds_state:t()) ->
-    {SRS, emqx_persistent_session_ds_subs:subscription_state()} | undefined
+    {SRS, emqx_persistent_session_ds_subs:subscription_state()}
 when
     SRS :: emqx_persistent_session_ds_stream_scheduler:srs().
 maybe_update_sub_state_id(SRS = #srs{sub_state_id = SSID0}, S) ->
@@ -1795,7 +1797,7 @@ maybe_update_sub_state_id(SRS = #srs{sub_state_id = SSID0}, S) ->
         #{} = SubState ->
             {SRS, SubState};
         undefined ->
-            undefined
+            error({unknown_subscription, SRS})
     end.
 
 -spec ensure_timer(timer(), non_neg_integer(), session()) -> session().

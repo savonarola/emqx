@@ -133,20 +133,36 @@ open(Generation, ClientId, Verify) ->
     emqx_persistent_session_ds_state:commit_opts()
 ) ->
     emqx_persistent_session_ds_state:t().
-commit(Generation, Rec = #{?checkpoint_ref := Ref}, Opts) when is_reference(Ref) ->
+commit(Generation, Rec0 = #{?id := ClientId, ?checkpoint_ref := Ref}, Opts) when
+    is_reference(Ref)
+->
     %% Attempt to commit while previous async checkpoint is still in
     %% progress.
     case Opts of
         #{sync := false} ->
             %% This is another async checkpoint. Just ignore it.
-            Rec;
+            Rec0;
         #{sync := true} ->
             %% Wait for the checkpoint to conclude, then commit again:
             receive
                 ?ds_tx_commit_reply(Ref, Reply) ->
-                    %% FIXME: match result
-                    _ = emqx_ds:tx_commit_outcome(?DB, Ref, Reply),
-                    commit(Generation, Rec#{?checkpoint_ref => undefined}, Opts)
+                    Rec =
+                        case emqx_ds:tx_commit_outcome(?DB, Ref, Reply) of
+                            {ok, _} ->
+                                Rec0;
+                            ?err_rec(Reason) ->
+                                ?tp(
+                                    warning,
+                                    ?sessds_commit_failure,
+                                    #{
+                                        recoverable => true,
+                                        reason => Reason,
+                                        client => ClientId
+                                    }
+                                ),
+                                Rec0#{?set_dirty}
+                        end,
+                    commit(Generation, Rec#{?checkpoint_ref := undefined}, Opts)
             end
     end;
 commit(_Generation, Rec = #{?dirty := false}, #{lifetime := L}) when L =/= takeover, L =/= new ->
