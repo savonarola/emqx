@@ -137,17 +137,9 @@ dirty_ls_epochs(Node) ->
 
 -spec shards() -> [emqx_ds:shard()].
 shards() ->
-    Gen = generation(),
-    maps:fold(
-        fun({Shard, G}, _Info, Acc) ->
-            case G of
-                Gen -> [Shard | Acc];
-                _ -> Acc
-            end
-        end,
-        [],
-        emqx_ds:list_generations_with_lifetimes(?DB_GLOB)
-    ).
+    %% TODO: it's not the nicest way to get shards. Add an API to DS?
+    NShards = emqx_config:get([durable_storage, timers, n_shards]),
+    [integer_to_binary(I) || I <- lists:seq(0, NShards - 1)].
 
 -spec last_heartbeat(emqx_durable_timer:epoch()) -> {ok, integer()} | undefined.
 last_heartbeat(Epoch) ->

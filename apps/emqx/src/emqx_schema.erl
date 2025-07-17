@@ -1811,15 +1811,6 @@ fields("durable_sessions") ->
                     importance => ?IMPORTANCE_HIDDEN
                 }
             )},
-        {"renew_streams_interval",
-            sc(
-                timeout_duration(),
-                #{
-                    default => <<"1s">>,
-                    importance => ?IMPORTANCE_HIDDEN,
-                    deprecated => {since, "5.9"}
-                }
-            )},
         {"subscription_count_refresh_interval",
             sc(
                 timeout_duration(),

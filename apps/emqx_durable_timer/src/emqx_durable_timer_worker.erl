@@ -157,7 +157,9 @@ init([WorkerKind, Type, Epoch, Shard]) ->
         #{kind => WorkerKind, type => Type, epoch => Epoch, shard => Shard}
     ),
     CBM = emqx_durable_timer:get_cbm(Type),
-    ?tp(?tp_worker_started, #{}),
+    ?tp(debug, ?tp_worker_started, #{
+        type => Type, epoch => Epoch, shard => Shard, kind => WorkerKind
+    }),
     case WorkerKind of
         active ->
             emqx_durable_timer_dl:insert_epoch_marker(Shard, Epoch),
@@ -238,7 +240,7 @@ handle_event(ET, Event, State, Data) ->
     keep_state_and_data.
 
 terminate(_Reason, _State, _D) ->
-    ?tp(?tp_terminate, #{m => ?MODULE, reason => _Reason, s => _State}),
+    ?tp(debug, ?tp_terminate, #{m => ?MODULE, reason => _Reason, s => _State}),
     ok.
 
 %%================================================================================

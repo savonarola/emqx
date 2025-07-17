@@ -1469,8 +1469,7 @@ stop_apps_ds(Config) ->
 durable_sessions_config(Opts) ->
     emqx_utils_maps:deep_merge(
         #{
-            <<"enable">> => true,
-            <<"renew_streams_interval">> => <<"100ms">>
+            <<"enable">> => true
         },
         Opts
     ).

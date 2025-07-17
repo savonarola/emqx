@@ -1565,8 +1565,7 @@ start_cluster(TestCase, Config0, ClusterOpts) ->
 
 start_local(TestCase, Config0) ->
     DurableSessionsOpts = #{
-        <<"enable">> => true,
-        <<"renew_streams_interval">> => <<"1s">>
+        <<"enable">> => true
     },
     Opts = #{
         durable_storage_opts =>
