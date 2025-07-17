@@ -107,7 +107,7 @@ close() ->
     emqx_ds:close_db(?DS_DB).
 
 db_config() ->
-    Config = emqx_ds_schema:db_config([durable_storage, queues]),
+    Config = emqx_ds_schema:db_config_shared_subs(),
     tune_db_config(Config).
 
 tune_db_config(Config0 = #{backend := Backend}) ->

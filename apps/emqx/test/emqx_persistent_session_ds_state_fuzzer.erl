@@ -93,11 +93,6 @@ put_metadata() ->
             Val,
             range(0, 16#FFFFFFFF),
             {expiry_interval, set_expiry_interval, Val}
-        ),
-        ?LET(
-            Val,
-            binary(),
-            {node_epoch_id, set_node_epoch_id, Val}
         )
     ]).
 
@@ -105,8 +100,7 @@ get_metadata() ->
     oneof([
         {last_alive_at, get_last_alive_at},
         {created_at, get_created_at},
-        {expiry_interval, get_expiry_interval},
-        {node_epoch_id, get_node_epoch_id}
+        {expiry_interval, get_expiry_interval}
     ]).
 
 seqno() ->
@@ -603,7 +597,7 @@ sut_state() ->
 
 init(Heir) ->
     _ = ets:new(?tab, [named_table, public, {keypos, 1}, {heir, Heir, sut_state_tab}]),
-    ok = emqx_persistent_session_ds_state:open_db(#{n_sites => 1, n_shards => 1}).
+    ok = emqx_persistent_session_ds_state:open_db().
 
 clean() ->
     ets:delete(?tab),

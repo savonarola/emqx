@@ -301,7 +301,8 @@ open_db(DB, CreateOpts0) ->
                 idle_flush_interval => 1,
                 conflict_window => 5_000
             },
-            replication_options => #{}
+            replication_options => #{},
+            n_sites => application:get_env(emqx_ds_builtin_raft, n_sites, 1)
         },
         CreateOpts1
     ),

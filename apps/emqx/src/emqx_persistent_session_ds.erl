@@ -982,7 +982,7 @@ get_client_subscription(ClientID, TopicFilter) ->
 %%--------------------------------------------------------------------
 
 create_tables() ->
-    emqx_persistent_session_ds_state:open_db(emqx_ds_schema:session_config()).
+    emqx_persistent_session_ds_state:open_db().
 
 %% @doc Force commit of the transient state to persistent storage
 sync(ClientID) ->
@@ -1448,14 +1448,8 @@ receive_maximum(ConnInfo) ->
 expiry_interval(ConnInfo) ->
     maps:get(expiry_interval, ConnInfo, 0).
 
-%% Note: we don't allow overriding `heartbeat_interval' per
-%% zone, since the GC process is responsible for all sessions
-%% regardless of the zone.
-bump_interval() ->
-    emqx_config:get([durable_sessions, heartbeat_interval]).
-
 commit_interval() ->
-    bump_interval().
+    emqx_config:get([durable_sessions, checkpoint_interval]).
 
 %% get_config(#{zone := Zone}, Key) ->
 %%     emqx_config:get_zone_conf(Zone, [durable_sessions | Key]).

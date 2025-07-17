@@ -72,8 +72,7 @@ init_per_testcase(t_message_gc_too_young = TestCase, Config) ->
 init_per_testcase(TestCase, Config) ->
     DurableSessonsOpts = #{
         <<"enable">> => true,
-        <<"heartbeat_interval">> => <<"100ms">>,
-        <<"session_gc_interval">> => <<"2s">>
+        <<"checkpoint_interval">> => <<"100ms">>
     },
     Opts = #{
         durable_sessions_opts => DurableSessonsOpts

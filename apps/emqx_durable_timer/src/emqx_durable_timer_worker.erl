@@ -110,7 +110,7 @@ start_link(WorkerKind, Type, Epoch, Shard) ->
     emqx_durable_timer:key(),
     emqx_durable_timer:value(),
     emqx_durable_timer:delay()
-) -> ok.
+) -> ok | emqx_ds:error(_).
 apply_after(Type, Epoch, Key, Val, NotEarlierThan) when
     ?is_valid_timer(Type, Key, Val, NotEarlierThan) andalso is_binary(Epoch)
 ->

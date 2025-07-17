@@ -45,9 +45,7 @@ do_init(_Opts) ->
         %% worker(session_gc_worker, emqx_persistent_session_ds_gc_worker, []),
         worker(message_gc_worker, emqx_persistent_message_ds_gc_worker, [])
     ],
-    AnyNodeChildren = [
-        worker(node_heartbeat, emqx_persistent_session_ds_node_heartbeat_worker, [])
-    ],
+    AnyNodeChildren = [],
     Children =
         case mria_rlog:role() of
             core -> CoreNodeChildren ++ AnyNodeChildren;

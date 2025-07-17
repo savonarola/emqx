@@ -6,7 +6,7 @@
 
 -include_lib("snabbkaffe/include/trace.hrl").
 
--define(DB_GLOB, global_timers).
+-define(DB_GLOB, timers).
 -define(regs_tab, emqx_durable_timer_registry).
 
 %% Topics:

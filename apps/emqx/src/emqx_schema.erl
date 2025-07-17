@@ -1775,7 +1775,6 @@ fields("durable_sessions") ->
             sc(
                 boolean(), #{
                     desc => ?DESC(durable_sessions_enable),
-                    %% importance => ?IMPORTANCE_NO_DOC,
                     default => false
                 }
             )},
@@ -1794,35 +1793,22 @@ fields("durable_sessions") ->
                     mapping => "emqx_durable_session.poll_batch_size"
                 }
             )},
-        {"idle_poll_interval",
-            sc(
-                timeout_duration(),
-                #{
-                    default => <<"10s">>,
-                    desc => ?DESC(session_ds_idle_poll_interval),
-                    deprecated => {since, "5.9"}
-                }
-            )},
         {"checkpoint_interval",
             sc(
                 timeout_duration(),
                 #{
-                    default => <<"5000ms">>
+                    default => <<"5s">>,
+                    desc => ?DESC(session_ds_checkpoint_interval),
+                    importance => ?IMPORTANCE_MEDIUM
                 }
             )},
         {"commit_timeout",
             sc(
                 timeout_duration(),
                 #{
-                    default => <<"5000ms">>
-                }
-            )},
-        {"heartbeat_interval",
-            sc(
-                timeout_duration(),
-                #{
-                    default => <<"5000ms">>,
-                    desc => ?DESC(session_ds_heartbeat_interval)
+                    default => <<"5s">>,
+                    desc => ?DESC(session_ds_commit_timeout),
+                    importance => ?IMPORTANCE_HIDDEN
                 }
             )},
         {"renew_streams_interval",
@@ -1832,23 +1818,6 @@ fields("durable_sessions") ->
                     default => <<"1s">>,
                     importance => ?IMPORTANCE_HIDDEN,
                     deprecated => {since, "5.9"}
-                }
-            )},
-        {"session_gc_interval",
-            sc(
-                timeout_duration(),
-                #{
-                    default => <<"10m">>,
-                    desc => ?DESC(session_ds_session_gc_interval)
-                }
-            )},
-        {"session_gc_batch_size",
-            sc(
-                pos_integer(),
-                #{
-                    default => 100,
-                    importance => ?IMPORTANCE_LOW,
-                    desc => ?DESC(session_ds_session_gc_batch_size)
                 }
             )},
         {"subscription_count_refresh_interval",

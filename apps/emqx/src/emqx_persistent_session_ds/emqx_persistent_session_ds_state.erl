@@ -22,7 +22,7 @@
 -include_lib("emqx_durable_storage/include/emqx_ds.hrl").
 -include("session_internals.hrl").
 
--export([open_db/1]).
+-export([open_db/0]).
 
 -export([
     open/1,
@@ -37,7 +37,6 @@
 -export([is_dirty/1, checkpoint_ref/1]).
 -export([get_created_at/1, set_created_at/2]).
 -export([get_last_alive_at/1, set_last_alive_at/2]).
--export([get_node_epoch_id/1, set_node_epoch_id/2]).
 -export([get_expiry_interval/1, set_expiry_interval/2]).
 -export([get_clientinfo/1, set_clientinfo/2]).
 -export([set_offline_info/2]).
@@ -116,7 +115,6 @@
     #{
         ?created_at => emqx_persistent_session_ds:timestamp(),
         ?last_alive_at => emqx_persistent_session_ds:timestamp(),
-        ?node_epoch_id => emqx_persistent_session_ds_node_heartbeat_worker:epoch_id() | undefined,
         ?expiry_interval => non_neg_integer(),
         ?peername => emqx_types:peername(),
         ?protocol => protocol()
@@ -174,22 +172,19 @@
 %% API functions
 %%================================================================================
 
--spec open_db(map()) -> ok.
-open_db(Config) ->
-    %% FIXME: don't hardcode
+-spec open_db() -> ok.
+open_db() ->
+    Config = emqx_ds_schema:db_config_sessions(),
     Storage =
         {emqx_ds_storage_skipstream_lts_v2, #{
             timestamp_bytes => 0,
             lts_threshold_spec => {mf, emqx_persistent_session_ds_state_v2, lts_threshold_cb}
         }},
     emqx_ds:open_db(?DB, Config#{
-        backend => builtin_raft,
         atomic_batches => true,
         append_only => false,
         store_ttv => true,
-        replication_options => #{},
-        storage => Storage,
-        transaction => #{flush_interval => 1000, idle_flush_interval => 1, conflict_window => 5000}
+        storage => Storage
     }).
 
 -spec open(emqx_persistent_session_ds:id()) -> {ok, t()} | emqx_ds:error(_) | undefined.
@@ -317,17 +312,6 @@ get_last_alive_at(Rec) ->
 -spec set_last_alive_at(emqx_persistent_session_ds:timestamp(), t()) -> t().
 set_last_alive_at(Val, Rec) ->
     set_meta(?last_alive_at, Val, Rec).
-
--spec get_node_epoch_id(t()) ->
-    emqx_persistent_session_ds_node_heartbeat_worker:epoch_id() | undefined.
-get_node_epoch_id(Rec) ->
-    get_meta(?node_epoch_id, Rec).
-
--spec set_node_epoch_id(
-    emqx_persistent_session_ds_node_heartbeat_worker:epoch_id() | undefined, t()
-) -> t().
-set_node_epoch_id(Val, Rec) ->
-    set_meta(?node_epoch_id, Val, Rec).
 
 -spec get_expiry_interval(t()) -> non_neg_integer() | undefined.
 get_expiry_interval(Rec) ->

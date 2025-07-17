@@ -85,8 +85,7 @@ init_per_group(persistence_enabled, Config) ->
     DurableSessionsOpts = #{
         <<"enable">> => true,
         <<"heartbeat_interval">> => <<"100ms">>,
-        <<"renew_streams_interval">> => <<"100ms">>,
-        <<"session_gc_interval">> => <<"2s">>
+        <<"renew_streams_interval">> => <<"100ms">>
     },
     EMQXOpts = #{
         <<"sys_topics">> => #{

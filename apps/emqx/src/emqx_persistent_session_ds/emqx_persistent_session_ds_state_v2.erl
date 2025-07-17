@@ -756,4 +756,4 @@ unwrap_subopts(Misc) ->
     ).
 
 trans_timeout() ->
-    emqx_config:get([durable_sessions, heartbeat_interval]).
+    emqx_config:get([durable_sessions, commit_timeout]).

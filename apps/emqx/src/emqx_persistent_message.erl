@@ -50,7 +50,7 @@ is_persistence_enabled(Zone) ->
 
 -spec get_db_config() -> emqx_ds:create_db_opts().
 get_db_config() ->
-    emqx_ds_schema:db_config([durable_storage, messages]).
+    emqx_ds_schema:db_config_messages().
 
 %% Dev-only option: force all messages to go through
 %% `emqx_persistent_session_ds':

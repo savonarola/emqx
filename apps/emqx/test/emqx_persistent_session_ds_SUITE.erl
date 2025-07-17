@@ -65,13 +65,13 @@ init_mock_transient_failure() ->
 mock_transient_failure() ->
     ok = emqx_ds_test_helpers:mock_rpc_result(
         fun
-            (_Node, emqx_ds_replication_layer, _Function, [?DURABLE_SESSION_STATE, _Shard | _]) ->
-                passthrough;
-            (_Node, emqx_ds_replication_layer, _Function, [_DB, Shard | _]) ->
+            (_Node, emqx_ds_replication_layer, _Function, [messages, Shard | _]) ->
                 case erlang:phash2(Shard) rem 2 of
                     0 -> unavailable;
                     1 -> passthrough
-                end
+                end;
+            (_Node, _Module, _Function, _Args) ->
+                passthrough
         end
     ).
 
@@ -1547,9 +1547,7 @@ start_cluster(TestCase, Config0, ClusterOpts) ->
     %% N.B.: some of the tests start a single-node cluster, so it's fine to test them with the
     %% `builtin_local' backend.
     DurableSessionsOpts = #{
-        <<"heartbeat_interval">> => <<"500ms">>,
-        <<"session_gc_interval">> => <<"1s">>,
-        <<"session_gc_batch_size">> => 2
+        <<"checkpoint_interval">> => <<"500ms">>
     },
     Opts = emqx_utils_maps:deep_merge(ClusterOpts, #{
         durable_sessions_opts => DurableSessionsOpts,
@@ -1569,6 +1567,15 @@ start_local(TestCase, Config0) ->
         <<"renew_streams_interval">> => <<"1s">>
     },
     Opts = #{
+        durable_storage_opts =>
+            #{
+                <<"sessions">> =>
+                    #{
+                        <<"backend">> => builtin_local,
+                        <<"transaction">> => #{<<"idle_flush_interval">> => 0}
+                    },
+                <<"timers">> => #{<<"backend">> => builtin_local}
+            },
         durable_sessions_opts => DurableSessionsOpts,
         start_emqx_conf => false,
         work_dir => emqx_cth_suite:work_dir(TestCase, Config0)

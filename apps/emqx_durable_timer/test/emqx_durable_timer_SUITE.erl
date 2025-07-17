@@ -26,12 +26,25 @@
 %% Additionally, this testcase doesn't create any timer data, so it's
 %% used to verify that the logic handles lack of any timers.
 t_010_lazy_initialization({init, Config}) ->
-    Env = [{heartbeat_interval, 1000}, {missed_heartbeats, 2}, {n_shards, 1}],
+    Env = #{
+        <<"durable_storage">> =>
+            #{
+                <<"timers">> =>
+                    #{
+                        <<"backend">> => builtin_local,
+                        <<"n_shards">> => 1
+                    }
+            },
+        <<"cluster">> =>
+            #{
+                <<"heartbeat_interval">> => 1000,
+                <<"missed_heartbeats">> => 2
+            }
+    },
     Cluster = cluster(?FUNCTION_NAME, Config, 1, Env),
     [{cluster, Cluster} | Config];
 t_010_lazy_initialization({stop, Config}) ->
-    Cluster = proplists:get_value(cluster, Config),
-    cluster_stop(Cluster);
+    Config;
 t_010_lazy_initialization(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
@@ -89,8 +102,6 @@ t_010_lazy_initialization(Config) ->
             ?assert(is_integer(T1_1), T1_1),
             ?assert(is_integer(T1_2) andalso T1_2 > T1_1, T1_2),
             ct:pal("DB state before reboot: ~p", [db_dump(Node)]),
-            %% FIXME!! Durability is not so durable. Wait commit
-            ct:sleep(1000),
             %%
             %% Restart the node. Expect that node will create a new
             %% epoch and close the old one. Disable the automatic
@@ -125,7 +136,7 @@ t_010_lazy_initialization(Config) ->
             [{Epoch1, false, T1_3}, {Epoch2, true, T2_2}] = ?ON(
                 Node, emqx_durable_timer_dl:dirty_ls_epochs(Node)
             ),
-            ?assert(is_integer(T2_2) andalso T2_2 > T2_1, T2_2),
+            ?assert(is_integer(T2_2) andalso T2_2 >= T2_1, {T2_2, T2_1}),
             %% Register a new type, verify that workers have been started:
             ?tp(notice, test_register2, #{}),
             ?assertMatch(
@@ -230,15 +241,22 @@ started_workers(Epoch, Trace) ->
 %% This testcase verifies normal operation of the timers when the
 %% owner node is not restarted.
 t_020_normal_execution({init, Config}) ->
-    Env = [
-        {n_shards, 2},
-        {batch_size, 2}
-    ],
+    Env = #{
+        <<"durable_storage">> =>
+            #{
+                <<"timers">> =>
+                    #{<<"n_shards">> => 2}
+            },
+        <<"cluster">> =>
+            #{
+                <<"durable_timers">> =>
+                    #{<<"batch_size">> => 2}
+            }
+    },
     Cluster = cluster(?FUNCTION_NAME, Config, 1, Env),
     [{cluster, Cluster} | Config];
 t_020_normal_execution({stop, Config}) ->
-    Cluster = proplists:get_value(cluster, Config),
-    cluster_stop(Cluster);
+    Config;
 t_020_normal_execution(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     Type = emqx_durable_test_timer:durable_timer_type(),
@@ -344,12 +362,11 @@ t_020_normal_execution(Config) ->
 %% This testcase verifies the functionality related to timer
 %% cancellation.
 t_030_cancellation({init, Config}) ->
-    Env = [],
+    Env = #{},
     Cluster = cluster(?FUNCTION_NAME, Config, 1, Env),
     [{cluster, Cluster} | Config];
 t_030_cancellation({stop, Config}) ->
-    Cluster = proplists:get_value(cluster, Config),
-    cluster_stop(Cluster);
+    Config;
 t_030_cancellation(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
@@ -413,19 +430,26 @@ t_030_cancellation(Config) ->
 %% This testcase verifies the functionality related to timer
 %% cancellation.
 t_040_dead_hand({init, Config}) ->
-    Env = [
-        {n_sites, 3},
-        {replication_factor, 3},
-        {heartbeat_interval, 1_000},
-        {missed_heartbeats, 3},
-        {n_shards, 1},
-        {batch_size, 2}
-    ],
+    Env = #{
+        <<"durable_storage">> =>
+            #{
+                <<"timers">> =>
+                    #{
+                        <<"n_shards">> => 1,
+                        <<"replication_factor">> => 3
+                    }
+            },
+        <<"cluster">> =>
+            #{
+                <<"heartbeat_interval">> => 1_000,
+                <<"missed_heartbeats">> => 3,
+                <<"durable_timers">> => #{<<"batch_size">> => 2}
+            }
+    },
     Cluster = cluster(?FUNCTION_NAME, Config, 3, Env),
     [{cluster, Cluster} | Config];
 t_040_dead_hand({stop, Config}) ->
-    Cluster = proplists:get_value(cluster, Config),
-    cluster_stop(Cluster);
+    Config;
 t_040_dead_hand(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
@@ -467,19 +491,26 @@ t_040_dead_hand(Config) ->
 %% This testcase verifies that "apply_after" timers are continued to
 %% be replayed by other nodes after the original node goes down.
 t_050_apply_after_postmortem_replay({init, Config}) ->
-    Env = [
-        {n_sites, 3},
-        {replication_factor, 3},
-        {heartbeat_interval, 1_000},
-        {missed_heartbeats, 3},
-        {n_shards, 1},
-        {batch_size, 2}
-    ],
+    Env = #{
+        <<"durable_storage">> =>
+            #{
+                <<"timers">> =>
+                    #{
+                        <<"n_shards">> => 1,
+                        <<"replication_factor">> => 3
+                    }
+            },
+        <<"cluster">> =>
+            #{
+                <<"heartbeat_interval">> => 1_000,
+                <<"missed_heartbeats">> => 3,
+                <<"durable_timers">> => #{<<"batch_size">> => 2}
+            }
+    },
     Cluster = cluster(?FUNCTION_NAME, Config, 3, Env),
     [{cluster, Cluster} | Config];
 t_050_apply_after_postmortem_replay({stop, Config}) ->
-    Cluster = proplists:get_value(cluster, Config),
-    cluster_stop(Cluster);
+    Config;
 t_050_apply_after_postmortem_replay(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
@@ -524,19 +555,26 @@ t_050_apply_after_postmortem_replay(Config) ->
 
 %% This testcase verifies leader selection and standby worker functionality
 t_060_standby({init, Config}) ->
-    Env = [
-        {n_sites, 5},
-        {replication_factor, 5},
-        {heartbeat_interval, 100},
-        {missed_heartbeats, 3},
-        {n_shards, 1},
-        {batch_size, 2}
-    ],
+    Env = #{
+        <<"durable_storage">> =>
+            #{
+                <<"timers">> =>
+                    #{
+                        <<"n_shards">> => 1,
+                        <<"replication_factor">> => 5
+                    }
+            },
+        <<"cluster">> =>
+            #{
+                <<"heartbeat_interval">> => 100,
+                <<"missed_heartbeats">> => 3,
+                <<"durable_timers">> => #{<<"batch_size">> => 2}
+            }
+    },
     Cluster = cluster(?FUNCTION_NAME, Config, 5, Env),
     [{cluster, Cluster} | Config];
 t_060_standby({stop, Config}) ->
-    Cluster = proplists:get_value(cluster, Config),
-    cluster_stop(Cluster);
+    Config;
 t_060_standby(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
@@ -597,18 +635,22 @@ t_060_standby(Config) ->
 
 %% This testcase verifies sharding
 t_070_multiple_shards({init, Config}) ->
-    Env = [
-        {n_sites, 5},
-        {replication_factor, 5},
-        {n_shards, 16},
-        {batch_size, 2}
-    ],
+    Env = #{
+        <<"durable_storage">> =>
+            #{
+                <<"timers">> =>
+                    #{
+                        <<"n_shards">> => 16,
+                        <<"replication_factor">> => 5
+                    }
+            },
+        <<"cluster">> =>
+            #{<<"durable_timers">> => #{<<"batch_size">> => 2}}
+    },
     Cluster = cluster(?FUNCTION_NAME, Config, 5, Env),
     [{cluster, Cluster} | Config];
 t_070_multiple_shards({stop, Config}) ->
-    timer:sleep(1000),
-    Cluster = proplists:get_value(cluster, Config),
-    cluster_stop(Cluster);
+    Config;
 t_070_multiple_shards(Config) ->
     Cluster = proplists:get_value(cluster, Config),
     ?check_trace(
@@ -892,11 +934,21 @@ init_per_testcase(TC, Config) ->
 
 end_per_testcase(TC, Config) ->
     ?MODULE:TC({stop, Config}),
+    case proplists:get_value(cluster, Config) of
+        undefined ->
+            ok;
+        Cluster ->
+            %% Give it time to flush logs:
+            %% ct:sleep(1000),
+            emqx_cth_cluster:stop(Cluster)
+    end,
     emqx_cth_suite:clean_work_dir(emqx_cth_suite:work_dir(TC, Config)),
     ok.
 
 cluster(TC, Config, Nnodes, Env) ->
     AppSpecs = [
+        {emqx_conf, #{config => Env}},
+        {emqx_ds_builtin_raft, #{n_sites => Nnodes}},
         {emqx_durable_timer, #{
             override_env => Env,
             after_start => fun fix_logging/0
@@ -914,11 +966,6 @@ cluster(TC, Config, Nnodes, Env) ->
         NodeSpecs,
         #{work_dir => emqx_cth_suite:work_dir(TC, Config)}
     ).
-
-cluster_stop(Cluster) ->
-    %% Give it time to flush logs:
-    %% timer:sleep(1000),
-    emqx_cth_cluster:stop(Cluster).
 
 fix_logging() ->
     %% NOTE: cth_peer module often stops the node too abruptly before

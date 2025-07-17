@@ -360,17 +360,12 @@ ensure_tables() ->
             lts_threshold_spec => {mf, emqx_durable_timer_dl, lts_threshold_cb},
             timestamp_bytes => 8
         }},
+    DBConf = emqx_ds_schema:db_config_timers(),
     ok = emqx_ds:open_db(
         ?DB_GLOB,
-        #{
-            backend => builtin_raft,
+        DBConf#{
             store_ttv => true,
-            transaction => cfg_transactions(),
             storage => Storage,
-            replication => cfg_replication(),
-            n_shards => cfg_n_shards(),
-            n_sites => cfg_n_sites(),
-            replication_factor => cfg_replication_factor(),
             atomic_batches => true,
             append_only => false,
             reads => leader_preferred
@@ -460,27 +455,6 @@ cfg_replay_retry_interval() ->
 
 cfg_transaction_timeout() ->
     application:get_env(?APP, transaction_timeout, 1000).
-
-cfg_n_shards() ->
-    application:get_env(?APP, n_shards, 4).
-
-cfg_n_sites() ->
-    application:get_env(?APP, n_sites, 1).
-
-cfg_replication_factor() ->
-    application:get_env(?APP, replication_factor, 5).
-
-cfg_replication() ->
-    application:get_env(?APP, replication, #{}).
-
-cfg_transactions() ->
-    application:get_env(
-        ?APP,
-        transactions,
-        #{
-            flush_interval => 10, idle_flush_interval => 1, conflict_window => 5000
-        }
-    ).
 
 cfg_batch_size() ->
     application:get_env(?APP, batch_size, 1000).
