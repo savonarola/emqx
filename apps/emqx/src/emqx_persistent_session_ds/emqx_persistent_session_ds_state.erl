@@ -39,7 +39,7 @@
 -export([get_last_alive_at/1, set_last_alive_at/2]).
 -export([get_expiry_interval/1, set_expiry_interval/2]).
 -export([get_clientinfo/1, set_clientinfo/2]).
--export([set_offline_info/2]).
+-export([set_offline_info/2, get_offline_info/1]).
 -export([get_peername/1, set_peername/2]).
 -export([get_protocol/1, set_protocol/2]).
 -export([new_id/1]).
@@ -214,7 +214,7 @@ format(Rec = #{?id := Id}) ->
         maps:without([?id, ?dirty, ?guard, ?checkpoint_ref, ?last_id], Rec)
     ),
     maps:merge(
-        Pmaps,
+        Pmaps#{?offline_info => get_offline_info(Pmaps)},
         maps:with([?dirty, ?guard, ?checkpoint_ref], Rec)
     ).
 
@@ -349,6 +349,10 @@ set_clientinfo(Val, Rec) ->
 set_offline_info(Info, #{?id := SessionId} = Rec) ->
     emqx_persistent_session_ds_state_v2:set_offline_info(generation(), SessionId, Info),
     Rec.
+
+-spec get_offline_info(t()) -> map().
+get_offline_info(Rec) ->
+    emqx_persistent_session_ds_state_v2:get_offline_info(generation(), Rec).
 
 -spec new_id(t()) -> {emqx_persistent_session_ds:subscription_id(), t()}.
 new_id(Rec) ->

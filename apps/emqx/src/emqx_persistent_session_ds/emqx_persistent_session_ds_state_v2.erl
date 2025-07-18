@@ -35,6 +35,7 @@
     list_sessions/1,
 
     set_offline_info/3,
+    get_offline_info/2,
 
     lts_threshold_cb/2,
     pmap_dirty_read/3,
@@ -276,10 +277,37 @@ set_offline_info(Generation, ClientId, Data) ->
     _ = emqx_ds:trans(
         Opts,
         fun() ->
-            emqx_ds:tx_write({[?top_offline_info, ClientId], 0, term_to_binary(Data)})
+            emqx_ds:tx_write({
+                [?top_offline_info, ClientId],
+                0,
+                emqx_persistent_session_ds_channel_info:encode(Data)
+            })
         end
     ),
     ok.
+
+-spec get_offline_info(
+    emqx_ds:generation(),
+    emqx_persistent_session_ds_state:t()
+) ->
+    map().
+get_offline_info(Generation, S = #{?id := ClientId}) ->
+    Opts = #{
+        db => ?DB,
+        shard => emqx_ds:shard_of(?DB, ClientId),
+        generation => Generation,
+        errors => ignore
+    },
+    Result = emqx_ds:dirty_read(
+        Opts,
+        [?top_offline_info, ClientId]
+    ),
+    case Result of
+        [{_, _, Bin}] ->
+            emqx_persistent_session_ds_channel_info:decode(Bin, S);
+        [] ->
+            #{}
+    end.
 
 -spec delete(emqx_ds:generation(), emqx_persistent_session_ds_state:t()) -> ok.
 delete(
