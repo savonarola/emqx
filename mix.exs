@@ -1021,7 +1021,8 @@ defmodule EMQXUmbrella.MixProject do
       :DSBuiltinSLSkipstreamV2,
       :DSMetadataCommon,
       :DurableSession,
-      :ChannelInfo
+      :ChannelInfo,
+      :MQMessage
     ]
   end
 
