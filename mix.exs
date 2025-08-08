@@ -130,7 +130,8 @@ defmodule EMQXUmbrella.MixProject do
       common_dep(:crc32cer),
       # transitive dependency of pulsar-client-erl, and direct dep in s3tables bridge
       common_dep(:murmerl3),
-      common_dep(:unicode_util_compat)
+      common_dep(:unicode_util_compat),
+      {:clean_mixer, "~> 0.12.0"}
     ]
   end
 
