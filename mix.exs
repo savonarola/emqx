@@ -315,7 +315,7 @@ defmodule EMQXUmbrella.MixProject do
       {:d, :snk_kind, :msg}
     ] ++
       singleton(not test_env?(), :compressed) ++
-      singleton(not test_env?(), :deterministic) ++
+      # singleton(not test_env?(), :deterministic) ++
       singleton(test_env?(), {:d, :TEST}) ++
       singleton(test_env?(), {:parse_transform, :cth_readable_transform}) ++
       singleton(enable_broker_instr?(), {:d, :EMQX_BROKER_INSTR}) ++
