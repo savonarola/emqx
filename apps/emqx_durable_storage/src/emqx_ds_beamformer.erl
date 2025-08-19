@@ -618,7 +618,7 @@ is_sub_active(SeqNo, Acked, Window) ->
 %% Dynamic config (currently it's global for all DBs):
 
 cfg_batch_size() ->
-    application:get_env(emqx_durable_storage, poll_batch_size, 100).
+    application:get_env(emqx_durable_storage, poll_batch_size, 1000).
 
 cfg_housekeeping_interval() ->
     application:get_env(emqx_durable_storage, beamformer_housekeeping_interval, 1000).
