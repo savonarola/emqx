@@ -2,7 +2,7 @@
 %% Copyright (c) 2025 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
 
--module(emqx_mq_message_db_pg).
+-module(emqx_mq_message_db_redis).
 
 -include("emqx_mq_internal.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
@@ -15,8 +15,9 @@
 ]).
 
 -export([
-    epgsql_opts/1,
+    redis_opts/1,
     channel/1,
+    key/1,
     insert/2
 ]).
 
@@ -32,64 +33,57 @@
     handle_info/2
 ]).
 
--define(PG_HOST, "127.0.0.1").
--define(PG_PORT, 5432).
--define(PG_USER, "av").
--define(PG_PASSWORD, "public").
--define(PG_DATABASE, "av").
+-define(REDIS_HOST, "127.0.0.1").
+-define(REDIS_PORT, 6379).
+-define(REDIS_DATABASE, 1).
 
--define(PG_POOL_NAME, ?MODULE).
--define(PG_POOL_SIZE, 8).
+-define(REDIS_POOL_NAME, ?MODULE).
+-define(REDIS_POOL_SIZE, 8).
 
 -define(MAX_BUFFER_SIZE, 100).
--define(FLUSH_INTERVAL, 100).
+-define(FLUSH_INTERVAL, 10).
 
 -define(AUTO_RECONNECT_INTERVAL, 2).
 
--define(PG_INSERT_SQL, "INSERT INTO messages (topic, created_at, message) VALUES ($1, now(), $2)").
--define(PG_INSERT_PREPARE_NAME, "insert_message").
+-define(REDIS_STORE_LIMIT_BIN, <<"10000000">>).
 
 -record(insert, {
-    topic_filter :: binary(),
+    key :: binary(),
     message :: binary(),
     from :: reference(),
     channel :: string()
 }).
 -record(flush, {}).
 
-epgsql_opts(Overrides) ->
-    Default = #{
-        host => ?PG_HOST,
-        port => ?PG_PORT,
-        username => ?PG_USER,
-        password => ?PG_PASSWORD,
-        database => ?PG_DATABASE
-    },
-    maps:merge(Default, Overrides).
+redis_opts(Overrides) ->
+    Default = [
+        {host, ?REDIS_HOST},
+        {port, ?REDIS_PORT},
+        {database, ?REDIS_DATABASE}
+    ],
+    Default ++ Overrides.
 
 start() ->
     Options = [
         {auto_reconnect, ?AUTO_RECONNECT_INTERVAL},
-        {pool_size, ?PG_POOL_SIZE},
-
-        {epgsql_opts, epgsql_opts(#{})}
+        {pool_size, ?REDIS_POOL_SIZE},
+        {redis_opts, redis_opts([])}
     ],
-    {ok, _} = ecpool:start_sup_pool(?MODULE, ?PG_POOL_NAME, Options),
+    {ok, _} = ecpool:start_sup_pool(?MODULE, ?REDIS_POOL_NAME, Options),
     ok.
 
 stop() ->
-    ecpool:stop_sup_pool(?PG_POOL_NAME).
+    ecpool:stop_sup_pool(?REDIS_POOL_NAME).
 
 connect(Opts) ->
-    EpgsqlOpts = proplists:get_value(epgsql_opts, Opts),
-    start_link(EpgsqlOpts).
+    EredisOpts = proplists:get_value(redis_opts, Opts),
+    start_link(EredisOpts).
 
-start_link(EpgsqlOpts) ->
-    gen_server:start_link(?MODULE, [EpgsqlOpts], []).
+start_link(EredisOpts) ->
+    gen_server:start_link(?MODULE, [EredisOpts], []).
 
-init([EpgsqlOpts]) ->
-    {ok, Conn} = epgsql:connect(EpgsqlOpts),
-    {ok, _Stmt} = epgsql:parse(Conn, ?PG_INSERT_PREPARE_NAME, ?PG_INSERT_SQL, []),
+init([EredisOpts]) ->
+    {ok, Conn} = eredis:start_link(EredisOpts),
     {ok, #{conn => Conn, buffer => [], flush_tref => undefined}}.
 
 handle_info(#insert{} = Insert, State0 = #{buffer := Buffer0}) ->
@@ -103,15 +97,15 @@ handle_info(#flush{}, State0) ->
     State = ensure_flush_timer(State1),
     {noreply, State};
 handle_info(Info, State) ->
-    ?tp(warning, mq_message_db_pg_info, #{info => Info}),
+    ?tp(warning, mq_message_db_redis_info, #{info => Info}),
     {noreply, State}.
 
 handle_cast(Info, State) ->
-    ?tp(warning, mq_message_db_pg_cast, #{info => Info}),
+    ?tp(warning, mq_message_db_redis_cast, #{info => Info}),
     {noreply, State}.
 
 handle_call(Info, _From, State) ->
-    ?tp(warning, mq_message_db_pg_call, #{info => Info}),
+    ?tp(warning, mq_message_db_redis_call, #{info => Info}),
     {reply, {error, {unknown_call, Info}}, State}.
 
 maybe_flush(State = #{buffer := Buffer}) when length(Buffer) >= ?MAX_BUFFER_SIZE ->
@@ -130,23 +124,39 @@ ensure_flush_timer(State = #{flush_tref := TRef, buffer := []}) ->
 ensure_flush_timer(State) ->
     State.
 
+flush(State = #{buffer := []}) ->
+    State;
 flush(#{conn := Connection, buffer := Buffer0} = State) ->
     Buffer = lists:reverse(Buffer0),
-    TxResult = epgsql:with_transaction(
-        Connection,
-        fun(Conn) ->
-            do_insert_tx(Conn, Buffer)
+    CommandsXADD = lists:map(
+        fun(#insert{key = Key, message = MessageBin}) ->
+            [<<"XADD">>, Key, <<"MAXLEN">>, ?REDIS_STORE_LIMIT_BIN, <<"*">>, <<"m">>, MessageBin]
         end,
-        []
+        Buffer
     ),
-    Result =
-        case TxResult of
-            {rollback, Reason} ->
-                {error, Reason};
-            ok ->
-                ok
+    Channels0 = lists:map(
+        fun(#insert{channel = Channel}) ->
+            Channel
         end,
-    send_replies(Result, Buffer),
+        Buffer
+    ),
+    Channels = lists:usort(Channels0),
+    CommandsNOTIFY = lists:map(
+        fun(Channel) ->
+            [<<"PUBLISH">>, Channel, <<"1">>]
+        end,
+        Channels
+    ),
+    Commands = [[<<"MULTI">>] | CommandsXADD ++ CommandsNOTIFY ++ [[<<"EXEC">>]]],
+    Results = eredis:qp(Connection, Commands),
+    %% TODO
+    %% Ignore errors for now
+    EXECResult = lists:last(Results),
+    ?tp(debug, mq_message_db_redis_flush, #{
+        results => EXECResult,
+        commands => Commands
+    }),
+    send_replies(ok, Buffer),
     State#{buffer := []}.
 
 send_replies(Result, Buffer) ->
@@ -157,14 +167,13 @@ send_replies(Result, Buffer) ->
         Buffer
     ).
 
-insert(#{topic_filter := TopicFilter} = MQ, Message) ->
+insert(MQ, Message) ->
     MessageBin = emqx_mq_message_db:encode_message(Message),
-    Channel = binary_to_list(channel(MQ)),
     From = alias([reply]),
     Insert = #insert{
-        topic_filter = TopicFilter, message = MessageBin, from = From, channel = Channel
+        key = key(MQ), message = MessageBin, from = From, channel = channel(MQ)
     },
-    ok = ecpool:pick_and_do(?PG_POOL_NAME, {?MODULE, do_insert, [Insert]}, no_handover),
+    ok = ecpool:pick_and_do(?REDIS_POOL_NAME, {?MODULE, do_insert, [Insert]}, no_handover),
     receive
         {From, Result} ->
             Result
@@ -180,7 +189,10 @@ insert(#{topic_filter := TopicFilter} = MQ, Message) ->
     end.
 
 channel(#{topic_filter := TopicFilter} = _MQ) ->
-    <<"t_", (emqx_utils:bin_to_hexstr(crypto:hash(sha, TopicFilter), lower))/binary>>.
+    <<"l_", TopicFilter/binary>>.
+
+key(#{topic_filter := TopicFilter} = _MQ) ->
+    <<"d_", TopicFilter/binary>>.
 
 %%--------------------------------------------------------------------
 %% Internal functions
@@ -189,21 +201,3 @@ channel(#{topic_filter := TopicFilter} = _MQ) ->
 do_insert(BufferPid, Insert) ->
     _ = erlang:send(BufferPid, Insert),
     ok.
-
-do_insert_tx(Conn, Buffer) ->
-    ok = lists:foreach(
-        fun(#insert{topic_filter = TopicFilter, message = MessageBin}) ->
-            {ok, _} = epgsql:prepared_query(Conn, ?PG_INSERT_PREPARE_NAME, [
-                TopicFilter, MessageBin
-            ])
-        end,
-        Buffer
-    ),
-    Channels0 = lists:map(fun(#insert{channel = Channel}) -> Channel end, Buffer),
-    Channels = lists:usort(Channels0),
-    ok = lists:foreach(
-        fun(Channel) ->
-            {ok, [], []} = epgsql:squery(Conn, "NOTIFY " ++ Channel)
-        end,
-        Channels
-    ).

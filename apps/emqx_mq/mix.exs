@@ -39,6 +39,7 @@ defmodule EMQXMQ.MixProject do
       :gproc,
       :optvar,
       :epgsql,
+      {:eredis_cluster, github: "emqx/eredis_cluster", tag: "0.8.8"},
       :ecpool
     ])
   end
