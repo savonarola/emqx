@@ -37,7 +37,9 @@ defmodule EMQXMQ.MixProject do
       {:emqx_durable_storage, in_umbrella: true},
       :minirest,
       :gproc,
-      :optvar
+      :optvar,
+      :epgsql,
+      :ecpool
     ])
   end
 end

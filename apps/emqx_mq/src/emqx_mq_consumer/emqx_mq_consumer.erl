@@ -60,7 +60,7 @@ Consumer's responsibilities:
 
 -record(state, {
     mq :: emqx_mq_types:mq(),
-    streams :: emqx_mq_consumer_streams:t(),
+    streams :: ?MQ_STREAM_MODULE:t(),
     server :: emqx_mq_consumer_server:t(),
     consumer_state :: emqx_mq_state_storage:consumer_state()
 }).
@@ -204,8 +204,9 @@ init([#{topic_filter := _MQTopicFilter, consumer_persistence_interval := Persist
                     erlang:send_after(
                         PersistenceInterval, self(), #persist_consumer_data{}
                     ),
-                    Progress = emqx_mq_state_storage:get_shards_progress(ConsumerState),
-                    Streams = emqx_mq_consumer_streams:new(MQ, Progress),
+                    % Progress = emqx_mq_state_storage:get_shards_progress(ConsumerState),
+                    Progress = undefined,
+                    Streams = ?MQ_STREAM_MODULE:new(MQ, Progress),
                     Server = emqx_mq_consumer_server:new(MQ),
                     {ok, #state{
                         mq = MQ,
@@ -259,7 +260,7 @@ handle_inspect(#state{
 }) ->
     #{
         mq_topic_filter => TopicFilter,
-        streams => emqx_mq_consumer_streams:inspect(Streams),
+        streams => ?MQ_STREAM_MODULE:inspect(Streams),
         server => emqx_mq_consumer_server:inspect(Server)
     }.
 
@@ -273,9 +274,10 @@ handle_events(
     [{ds_ack, MessageId} | Rest],
     #state{streams = Streams0, consumer_state = ConsumerState0} = State
 ) ->
-    Streams1 = emqx_mq_consumer_streams:handle_ack(Streams0, MessageId),
-    {ProgressUpdates, Streams} = emqx_mq_consumer_streams:fetch_progress_updates(Streams1),
-    ConsumerState = put_progress_updates(ConsumerState0, ProgressUpdates),
+    Streams1 = ?MQ_STREAM_MODULE:handle_ack(Streams0, MessageId),
+    {_ProgressUpdates, Streams} = ?MQ_STREAM_MODULE:fetch_progress_updates(Streams1),
+    % ConsumerState = put_progress_updates(ConsumerState0, ProgressUpdates),
+    ConsumerState = ConsumerState0,
     handle_events(Rest, State#state{streams = Streams, consumer_state = ConsumerState});
 handle_events([shutdown | _Rest], State) ->
     {stop, normal, State}.
@@ -283,10 +285,13 @@ handle_events([shutdown | _Rest], State) ->
 handle_ds_info(
     Request, #state{streams = Streams0, server = Server0, consumer_state = ConsumerState0} = State
 ) ->
-    case emqx_mq_consumer_streams:handle_ds_info(Streams0, Request) of
+    case ?MQ_STREAM_MODULE:handle_ds_info(Streams0, Request) of
         {ok, Messages, Streams1} ->
-            {ProgressUpdates, Streams} = emqx_mq_consumer_streams:fetch_progress_updates(Streams1),
-            ConsumerState = put_progress_updates(ConsumerState0, ProgressUpdates),
+            {_ProgressUpdates, Streams} = ?MQ_STREAM_MODULE:fetch_progress_updates(
+                Streams1
+            ),
+            % ConsumerState = put_progress_updates(ConsumerState0, ProgressUpdates),
+            ConsumerState = ConsumerState0,
             Server = emqx_mq_consumer_server:handle_messages(Server0, Messages),
             {ok, State#state{streams = Streams, server = Server, consumer_state = ConsumerState}};
         ignore ->
@@ -334,14 +339,14 @@ handle_shutdown(#state{mq = #{topic_filter := _MQTopicFilter} = _MQ} = State) ->
 %% Helper functions
 %%--------------------------------------------------------------------
 
-put_progress_updates(ConsumerState, ProgressUpdates) ->
-    maps:fold(
-        fun(Shard, Progress, ConsumerStateAcc) ->
-            emqx_mq_state_storage:put_shard_progress(Shard, Progress, ConsumerStateAcc)
-        end,
-        ConsumerState,
-        ProgressUpdates
-    ).
+% put_progress_updates(ConsumerState, ProgressUpdates) ->
+%     maps:fold(
+%         fun(Shard, Progress, ConsumerStateAcc) ->
+%             emqx_mq_state_storage:put_shard_progress(Shard, Progress, ConsumerStateAcc)
+%         end,
+%         ConsumerState,
+%         ProgressUpdates
+%     ).
 
 do_connect(ConsumerRef, SubscriberRef, ClientId) when node(ConsumerRef) =:= node() ->
     connect_v1(ConsumerRef, SubscriberRef, ClientId);

@@ -60,4 +60,7 @@
 -define(MQ_GC_REGULAR, gc_regular).
 -define(MQ_GC_LASTVALUE, gc_lastvalue).
 
+-define(MQ_STREAM_MODULE, emqx_mq_consumer_streams_pg).
+-define(MQ_WRITER_MODULE, emqx_mq_message_db_pg).
+
 -endif.
