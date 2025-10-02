@@ -48,7 +48,7 @@
 
 new(MQ, _Progress) ->
     {ok, ReaderPid} = gen_server:start_link(?MODULE, [MQ, self()], []),
-    #{reader_pid => ReaderPid, unacked => #{}}.
+    #{reader_pid => ReaderPid, unacked => #{}, mq => MQ}.
 
 handle_ds_info(#{unacked := Unacked0} = State, #redis_messages{messages = MessagesWithIds}) ->
     Unacked = lists:foldl(
@@ -194,8 +194,11 @@ parse_message(_State, [IdBin, [<<"m">>, MessageBin]]) ->
     Id = bin_to_id(IdBin),
     {{?MESSAGE_ID({Id}), Message}, Id}.
 
-maybe_unblock(#{unacked := Unacked, reader_pid := ReaderPid} = State) ->
-    case maps:size(Unacked) < ?REDIS_MAX_UNACKED of
+maybe_unblock(
+    #{unacked := Unacked, reader_pid := ReaderPid, mq := #{stream_max_buffer_size := MaxUnacked}} =
+        State
+) ->
+    case maps:size(Unacked) < MaxUnacked of
         true ->
             erlang:send(ReaderPid, #unblock{});
         false ->

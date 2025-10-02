@@ -84,7 +84,11 @@ on_delivery_completed(Msg, Info) ->
             ok;
         SubscriberRef ->
             ReasonCode = maps:get(reason_code, Info, ?RC_SUCCESS),
-            ok = with_sub(SubscriberRef, handle_ack, [Msg, ack_from_rc(ReasonCode)])
+            %% Ignore errors
+            %% Only may get not_found here in case
+            %% consumer was lost while delivering the message
+            %% and the sub was recreated
+            _ = with_sub(SubscriberRef, handle_ack, [Msg, ack_from_rc(ReasonCode)])
     end.
 
 on_session_subscribed(ClientInfo, <<"$q/", Topic/binary>> = _FullTopic, _SubOpts) ->

@@ -47,9 +47,8 @@
     ORDER BY transaction_id, id ASC
     LIMIT $3
 """).
--define(PG_SELECT_LIMIT, 1000).
+-define(PG_SELECT_LIMIT, 100).
 
--define(PG_MAX_UNACKED, 5000).
 -define(SLAB, {<<"0">>, 1}).
 -define(MESSAGE_ID(I), {?SLAB, I}).
 
@@ -68,7 +67,7 @@
 
 new(MQ, _Progress) ->
     {ok, ReaderPid} = gen_server:start_link(?MODULE, [MQ, self()], []),
-    #{reader_pid => ReaderPid, unacked => #{}}.
+    #{reader_pid => ReaderPid, unacked => #{}, mq => MQ}.
 
 handle_ds_info(#{unacked := Unacked0} = State, #pg_messages{messages = MessagesWithIds}) ->
     Unacked = lists:foldl(
@@ -201,8 +200,11 @@ parse_message(_State, _Cols, {Id, MessageBin, TransactionId}) ->
     IntTransactionId = binary_to_integer(TransactionId),
     {{?MESSAGE_ID({IntTransactionId, Id}), Message}, IntTransactionId}.
 
-maybe_unblock(#{unacked := Unacked, reader_pid := ReaderPid} = State) ->
-    case maps:size(Unacked) < ?PG_MAX_UNACKED of
+maybe_unblock(
+    #{unacked := Unacked, reader_pid := ReaderPid, mq := #{stream_max_buffer_size := MaxUnacked}} =
+        State
+) ->
+    case maps:size(Unacked) < MaxUnacked of
         true ->
             erlang:send(ReaderPid, #unblock{});
         false ->
