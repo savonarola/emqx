@@ -36,6 +36,8 @@ start(_StartType, _StartArgs) ->
     ok = mria:wait_for_tables(emqx_mq_registry:create_tables()),
     ok = emqx_mq_message_db:open(),
     ok = emqx_mq_state_storage:open_db(),
+    ok = emqx_mq_message_db_pg:start(),
+    ok = emqx_mq_message_db_redis:start(),
     {ok, Sup} = emqx_mq_sup:start_link(),
     {ok, _} = emqx_mq_sup:start_post_starter({?MODULE, start_link_post_start, []}),
     {ok, Sup}.
@@ -45,6 +47,8 @@ stop(_State) ->
     ok = emqx_mq:unregister_hooks(),
     ok = emqx_mq_message_db:close(),
     ok = emqx_mq_state_storage:close_db(),
+    ok = emqx_mq_message_db_redis:stop(),
+    ok = emqx_mq_message_db_pg:stop(),
     ok.
 
 %% Readiness

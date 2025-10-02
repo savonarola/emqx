@@ -84,7 +84,11 @@ on_delivery_completed(Msg, Info) ->
             ok;
         SubscriberRef ->
             ReasonCode = maps:get(reason_code, Info, ?RC_SUCCESS),
-            ok = with_sub(SubscriberRef, handle_ack, [Msg, ack_from_rc(ReasonCode)])
+            %% Ignore errors
+            %% Only may get not_found here in case
+            %% consumer was lost while delivering the message
+            %% and the sub was recreated
+            _ = with_sub(SubscriberRef, handle_ack, [Msg, ack_from_rc(ReasonCode)])
     end.
 
 on_session_subscribed(ClientInfo, <<"$q/", Topic/binary>> = _FullTopic, _SubOpts) ->
@@ -266,7 +270,8 @@ ack_from_rc(?RC_SUCCESS) -> ?MQ_ACK;
 ack_from_rc(_) -> ?MQ_REJECTED.
 
 publish_to_queue(MQ, #message{} = Message) ->
-    emqx_mq_message_db:insert(MQ, [Message]).
+    % emqx_mq_message_db:insert(MQ, [Message]).
+    ?MQ_WRITER_MODULE:insert(MQ, Message).
 
 delivers(SubscriberRef, Messages) ->
     lists:map(
