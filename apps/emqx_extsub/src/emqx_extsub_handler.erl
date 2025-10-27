@@ -1,0 +1,177 @@
+%%--------------------------------------------------------------------
+%% Copyright (c) 2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%%--------------------------------------------------------------------
+
+-module(emqx_extsub_handler).
+
+-include("emqx_extsub_internal.hrl").
+
+-export([
+    init/0,
+    register/1,
+    unregister/1
+]).
+
+-export([
+    handle_allow_subscribe/2,
+    handle_init/3,
+    handle_terminate/2,
+    handle_ack/3,
+    handle_need_data/2,
+    handle_info/2
+]).
+
+-type state() :: term().
+
+-type init_type() :: subscribe | resume.
+-type terminate_type() :: unsubscribe | disconnect.
+
+-type handler_ctx() :: #{
+    clientinfo := emqx_types:clientinfo(),
+    send_after := fun((emqx_extsub_types:interval_ms(), term()) -> reference())
+}.
+
+-record(handler, {
+    st :: state(),
+    cbm :: module(),
+    ctx :: handler_ctx(),
+    subscriber_ref :: emqx_extsub_types:subscriber_ref()
+}).
+
+-type t() :: #handler{}.
+
+-export_type([t/0, init_type/0, terminate_type/0]).
+
+-define(TAB, ?MODULE).
+
+%% ExtSub Handler behaviour
+-type desired_message_count() :: pos_integer().
+
+-callback handle_allow_subscribe(emqx_types:clientinfo(), emqx_extsub_types:topic_filter()) ->
+    boolean().
+-callback handle_init(init_type(), handler_ctx(), emqx_extsub_types:topic_filter()) ->
+    {ok, state()} | ignore.
+-callback handle_terminate(terminate_type(), state()) -> ok.
+-callback handle_ack(state(), emqx_types:message(), emqx_extsub_types:ack()) -> state().
+-callback handle_need_data(state(), desired_message_count()) ->
+    {ok, state()} | {ok, state(), [emqx_types:message()]}.
+-callback handle_info(state(), term()) ->
+    {ok, state()} | {ok, state(), [emqx_types:message()]} | recreate.
+
+%%--------------------------------------------------------------------
+%% API
+%%--------------------------------------------------------------------
+
+%% Register and unregister the ExtSub Handlers
+
+-spec init() -> ok.
+init() ->
+    emqx_utils_ets:new(?TAB, [set, public, named_table, {read_concurrency, true}]).
+
+-spec register(module()) -> ok.
+register(CBM) ->
+    case ets:insert_new(?TAB, {CBM, true}) of
+        true -> ok;
+        false -> error({extsub_handler_already_registered, CBM})
+    end.
+
+-spec unregister(module()) -> ok.
+unregister(CBM) ->
+    _ = ets:delete(?TAB, CBM),
+    ok.
+
+%% Working with ExtSub Handler implementations
+
+-spec handle_allow_subscribe(emqx_types:clientinfo(), emqx_extsub_types:topic_filter()) ->
+    boolean().
+handle_allow_subscribe(ClientInfo, TopicFilter) ->
+    lists:all(
+        fun(CBM) ->
+            CBM:handle_allow_subscribe(ClientInfo, TopicFilter)
+        end,
+        cbms()
+    ).
+
+-spec handle_init(init_type(), emqx_types:clientinfo(), emqx_extsub_types:topic_filter()) ->
+    {ok, emqx_extsub_types:subscriber_ref(), t()} | ignore.
+handle_init(InitType, ClientInfo, TopicFilter) ->
+    SubscriberRef = make_ref(),
+    Ctx = create_ctx(SubscriberRef, ClientInfo),
+    try handle_init(InitType, Ctx, TopicFilter, cbms()) of
+        ignore ->
+            ignore;
+        {CBM, State} ->
+            {ok, SubscriberRef, #handler{
+                cbm = CBM,
+                st = State,
+                ctx = Ctx,
+                subscriber_ref = SubscriberRef
+            }}
+    catch
+        Class:Reason:StackTrace ->
+            ?tp(error, handle_subscribe_error, #{
+                class => Class,
+                reason => Reason,
+                topic_filter => TopicFilter,
+                stacktrace => StackTrace
+            }),
+            ignore
+    end.
+
+-spec handle_terminate(terminate_type(), t()) -> ok.
+handle_terminate(TerminateType, #handler{cbm = CBM, st = State}) ->
+    _ = CBM:handle_terminate(TerminateType, State),
+    ok.
+
+-spec handle_ack(t(), emqx_types:message(), emqx_extsub_types:ack()) -> t().
+handle_ack(#handler{cbm = CBM, st = State} = Handler, Msg, Ack) ->
+    Handler#handler{st = CBM:handle_ack(State, Msg, Ack)}.
+
+-spec handle_need_data(t(), pos_integer()) ->
+    {ok, t()} | {ok, t(), [{emqx_extsub_types:message_id(), emqx_types:message()}]}.
+handle_need_data(#handler{cbm = CBM, st = State0} = Handler, DesiredCount) ->
+    case CBM:handle_need_data(State0, DesiredCount) of
+        {ok, State} ->
+            {ok, Handler#handler{st = State}};
+        {ok, State, Messages} ->
+            {ok, Handler#handler{st = State}, Messages}
+    end.
+
+-spec handle_info(t(), term()) ->
+    {ok, t()} | {ok, t(), [{emqx_extsub_types:message_id(), emqx_types:message()}]}.
+handle_info(#handler{cbm = CBM, st = State0} = Handler, Info) ->
+    case CBM:handle_info(State0, Info) of
+        {ok, State} ->
+            {ok, Handler#handler{st = State}};
+        {ok, State, Messages} ->
+            {ok, Handler#handler{st = State}, Messages}
+    end.
+
+%%--------------------------------------------------------------------
+%% Internal functions
+%%--------------------------------------------------------------------
+
+handle_init(_InitType, _Ctx, _TopicFilter, []) ->
+    ignore;
+handle_init(InitType, Ctx, TopicFilter, [CBM | CBMs]) ->
+    case CBM:handle_init(InitType, Ctx, TopicFilter) of
+        {ok, State} ->
+            {CBM, State};
+        ignore ->
+            handle_init(InitType, Ctx, TopicFilter, CBMs)
+    end.
+
+create_ctx(SubscriberRef, ClientInfo) ->
+    SendAfter = fun(Interval, Info) ->
+        erlang:send_after(Interval, self(), #info_to_extsub{
+            subscriber_ref = SubscriberRef, info = Info
+        })
+    end,
+    #{
+        clientinfo => ClientInfo,
+        send_after => SendAfter
+    }.
+
+cbms() ->
+    {CBMs, _} = lists:unzip(ets:tab2list(?TAB)),
+    CBMs.

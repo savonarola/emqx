@@ -1,0 +1,149 @@
+%%--------------------------------------------------------------------
+%% Copyright (c) 2025 EMQ Technologies Co., Ltd. All Rights Reserved.
+%%--------------------------------------------------------------------
+
+-module(emqx_extsub_test_handler).
+
+-behaviour(emqx_extsub_handler).
+
+-include_lib("emqx/include/emqx_mqtt.hrl").
+
+-export([
+    handle_allow_subscribe/2,
+    handle_init/3,
+    handle_terminate/2,
+    handle_ack/3,
+    handle_need_data/2,
+    handle_info/2
+]).
+
+-record(fake_msg, {
+    n :: integer()
+}).
+
+handle_allow_subscribe(_ClientInfo, _TopicFilter) ->
+    true.
+
+handle_init(
+    _InitType, #{send_after := SendAfterFn} = _Ctx, <<"extsub_test/", Rest/binary>> = TopicFilter
+) ->
+    try
+        [BatchCountBin, BatchSizeBin, IntervalMsBin] = binary:split(Rest, <<"/">>, [global]),
+        BatchCount = binary_to_integer(BatchCountBin),
+        BatchSize = binary_to_integer(BatchSizeBin),
+        IntervalMs = binary_to_integer(IntervalMsBin),
+        ok = lists:foreach(
+            fun(I) ->
+                SendAfterFn(IntervalMs * I, #fake_msg{n = I})
+            end,
+            lists:seq(0, BatchCount - 1)
+        ),
+        {ok, #{
+            batch_count => BatchCount,
+            interval_ms => IntervalMs,
+            buffer => queue:new(),
+            wants_data => true,
+            topic_filter => TopicFilter,
+            batch_size => BatchSize
+        }}
+    catch
+        Class:Reason:Stacktrace ->
+            ct:print("handle_init: error ~p,~nreason=~p,~nstacktrace=~p~n", [
+                Class, Reason, Stacktrace
+            ]),
+            ignore
+    end;
+handle_init(_InitType, _Ctx, TopicFilter) ->
+    ct:print("handle_init: ignore ~p~n", [TopicFilter]),
+    ignore.
+
+handle_terminate(_TerminateType, _State) ->
+    ct:print("handle_terminate: state=~p~n", [_State]),
+    ok.
+
+handle_ack(State, MessageId, Ack) ->
+    ct:print("handle_ack: message_id=~p, ack=~p~n", [MessageId, Ack]),
+    State.
+
+handle_need_data(#{buffer := Buffer0} = State, DesiredCount) ->
+    case is_buffer_empty(Buffer0) of
+        true ->
+            ct:print("handle_next: buffer is empty, wants_data -> true~n", []),
+            {ok, State#{wants_data => true}};
+        false ->
+            ct:print("handle_next: buffer is not empty, wants_data -> false, buffer=~p~n", [
+                buffer_length(Buffer0)
+            ]),
+            {MessageEntries, Buffer1} = buffer_out(Buffer0, DesiredCount),
+            {ok, State#{wants_data => false, buffer => Buffer1}, MessageEntries}
+    end.
+
+handle_info(#{wants_data := true, buffer := Buffer0} = State, #fake_msg{} = Msg) ->
+    ct:print("handle_info: wants_data=true, buffer=~p~nmsg=~p", [buffer_length(Buffer0), Msg]),
+    Buffer = buffer_in(Buffer0, make_messages(State, Msg)),
+    {ok, State#{wants_data => false, buffer => buffer_new()}, buffer_all(Buffer)};
+handle_info(#{wants_data := false, buffer := Buffer0} = State, #fake_msg{} = Msg) ->
+    ct:print("handle_info: wants_data=false, buffer=~p~nmsg=~p", [buffer_length(Buffer0), Msg]),
+    Buffer = buffer_in(Buffer0, make_messages(State, Msg)),
+    {ok, State#{buffer => Buffer}};
+handle_info(State, Info) ->
+    ct:print("handle_info: unknown info ~pState=~p", [Info, State]),
+    {ok, State}.
+
+%% Fake message generation functions
+
+make_messages(#{batch_size := BatchSize} = State, #fake_msg{n = BatchN}) ->
+    lists:reverse(
+        lists:map(
+            fun(I) ->
+                make_message(State, BatchN, I, BatchSize)
+            end,
+            lists:seq(0, BatchSize - 1)
+        )
+    ).
+
+make_message(#{topic_filter := TopicFilter} = _State, BatchN, I, _BatchSize) ->
+    Body = iolist_to_binary(io_lib:format("fake msg batch_n=~p, n in batch=~p", [BatchN, I])),
+    Msg = emqx_message:make(<<"from">>, ?QOS_1, TopicFilter, Body),
+    {{BatchN, I}, Msg}.
+
+%% Toy buffer functions
+
+buffer_new() ->
+    queue:new().
+
+buffer_in(Q, MessageEntries) ->
+    lists:foldl(
+        fun({MessageId, Msg}, QAcc) ->
+            queue:in({MessageId, Msg}, QAcc)
+        end,
+        Q,
+        MessageEntries
+    ).
+
+buffer_all(Q) ->
+    case queue:out(Q) of
+        {{value, MessageEntry}, Q1} ->
+            [MessageEntry | buffer_all(Q1)];
+        {empty, _} ->
+            []
+    end.
+
+buffer_out(Q, N) ->
+    buffer_out(Q, N, []).
+
+buffer_out(Q, 0, Acc) ->
+    {lists:reverse(Acc), Q};
+buffer_out(Q, N, Acc) ->
+    case queue:out(Q) of
+        {{value, MessageEntry}, Q1} ->
+            buffer_out(Q1, N - 1, [MessageEntry | Acc]);
+        {empty, Q1} ->
+            {lists:reverse(Acc), Q1}
+    end.
+
+is_buffer_empty(Q) ->
+    queue:is_empty(Q).
+
+buffer_length(Q) ->
+    queue:len(Q).
