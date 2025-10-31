@@ -25,7 +25,5 @@ init(?ROOT_SUP) ->
         intensity => 10,
         period => 10
     },
-    ChildSpecs = [
-        emqx_extsub_metrics:child_spec()
-    ],
+    ChildSpecs = [],
     {ok, {SupFlags, ChildSpecs}}.

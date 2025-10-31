@@ -11,7 +11,6 @@
 %% Behaviour callbacks
 
 start(_StartType, _StartArgs) ->
-    ct:print("emqx_extsub_app: start~n"),
     {ok, Sup} = emqx_extsub_redis_sup:start_link(),
     ok = emqx_extsub_redis:register_hooks(),
     ok = emqx_extsub_handler:register(emqx_extsub_redis_handler),
