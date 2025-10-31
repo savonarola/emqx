@@ -7,6 +7,7 @@
 -behaviour(emqx_extsub_handler).
 
 -include_lib("emqx/include/emqx_mqtt.hrl").
+-include_lib("snabbkaffe/include/snabbkaffe.hrl").
 
 -export([
     handle_allow_subscribe/2,
@@ -48,46 +49,46 @@ handle_init(
         }}
     catch
         Class:Reason:Stacktrace ->
-            ct:print("handle_init: error ~p,~nreason=~p,~nstacktrace=~p~n", [
-                Class, Reason, Stacktrace
-            ]),
+            ?tp(warning, handle_init_error, #{
+                class => Class,
+                reason => Reason,
+                stacktrace => Stacktrace
+            }),
             ignore
     end;
 handle_init(_InitType, _Ctx, TopicFilter) ->
-    ct:print("handle_init: ignore ~p~n", [TopicFilter]),
+    ?tp(warning, handle_init_ignore, #{topic_filter => TopicFilter}),
     ignore.
 
 handle_terminate(_TerminateType, _State) ->
-    ct:print("handle_terminate: state=~p~n", [_State]),
+    ?tp(warning, handle_terminate, #{state => _State}),
     ok.
 
 handle_ack(State, MessageId, Ack) ->
-    ct:print("handle_ack: message_id=~p, ack=~p~n", [MessageId, Ack]),
+    ?tp(warning, handle_ack, #{message_id => MessageId, ack => Ack}),
     State.
 
 handle_need_data(#{buffer := Buffer0} = State, DesiredCount) ->
     case is_buffer_empty(Buffer0) of
         true ->
-            ct:print("handle_next: buffer is empty, wants_data -> true~n", []),
+            ?tp(warning, handle_next_buffer_empty, #{}),
             {ok, State#{wants_data => true}};
         false ->
-            ct:print("handle_next: buffer is not empty, wants_data -> false, buffer=~p~n", [
-                buffer_length(Buffer0)
-            ]),
+            ?tp(warning, handle_next_buffer_not_empty, #{buffer_length => buffer_length(Buffer0)}),
             {MessageEntries, Buffer1} = buffer_out(Buffer0, DesiredCount),
             {ok, State#{wants_data => false, buffer => Buffer1}, MessageEntries}
     end.
 
 handle_info(#{wants_data := true, buffer := Buffer0} = State, #fake_msg{} = Msg) ->
-    ct:print("handle_info: wants_data=true, buffer=~p~nmsg=~p", [buffer_length(Buffer0), Msg]),
+    ?tp(warning, handle_info_wants_data_true, #{buffer_length => buffer_length(Buffer0), msg => Msg}),
     Buffer = buffer_in(Buffer0, make_messages(State, Msg)),
     {ok, State#{wants_data => false, buffer => buffer_new()}, buffer_all(Buffer)};
 handle_info(#{wants_data := false, buffer := Buffer0} = State, #fake_msg{} = Msg) ->
-    ct:print("handle_info: wants_data=false, buffer=~p~nmsg=~p", [buffer_length(Buffer0), Msg]),
+    ?tp(warning, handle_info_wants_data_false, #{buffer_length => buffer_length(Buffer0), msg => Msg}),
     Buffer = buffer_in(Buffer0, make_messages(State, Msg)),
     {ok, State#{buffer => Buffer}};
 handle_info(State, Info) ->
-    ct:print("handle_info: unknown info ~pState=~p", [Info, State]),
+    ?tp(warning, handle_info_unknown, #{info => Info, state => State}),
     {ok, State}.
 
 %% Fake message generation functions
