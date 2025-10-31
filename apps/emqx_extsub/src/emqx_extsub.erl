@@ -80,9 +80,12 @@ on_delivery_completed(Msg, Info) ->
             Buffer1 = emqx_extsub_buffer:set_delivered(Buffer0, SubscriberRef, MessageId),
             NewDeliveringCount = emqx_extsub_buffer:delivering_count(Buffer1, SubscriberRef),
             BufferSize = emqx_extsub_buffer:size(Buffer1),
-            ct:print("on_delivery_completed[~p]: delivering_count: ~p -> ~p~nBufferSize: ~p", [
-                SubscriberRef, OldDeliveringCount, NewDeliveringCount, BufferSize
-            ]),
+            ?tp_extsub(on_delivery_completed, #{
+                subscriber_ref => SubscriberRef,
+                old_delivering_count => OldDeliveringCount,
+                new_delivering_count => NewDeliveringCount,
+                buffer_size => BufferSize
+            }),
             %% Request more data if buffer size for the subscriber is now below the threshold
             case NewDeliveringCount of
                 N when N < ?MIN_SUB_DELIVERING ->
@@ -107,9 +110,11 @@ on_delivery_completed(Msg, Info) ->
                     ReasonCode = maps:get(reason_code, Info, ?RC_SUCCESS),
                     Handler = emqx_extsub_handler:handle_ack(Handler1, MessageId, ReasonCode),
                     Unacked = maps:remove(MessageId, Unacked0),
-                    ct:print("on_delivery_completed[~p]: unacked: ~p -> ~p", [
-                        SubscriberRef, map_size(Unacked0), map_size(Unacked)
-                    ]),
+                    ?tp_extsub(on_delivery_completed_unacked, #{
+                        subscriber_ref => SubscriberRef,
+                        old_unacked_count => map_size(Unacked0),
+                        new_unacked_count => map_size(Unacked)
+                    }),
                     {ok, ensure_deliver_retry_timer(0, St#st{unacked = Unacked}), Handler}
             end
         end
@@ -414,17 +419,17 @@ ensure_deliver_retry_timer(St) ->
 ensure_deliver_retry_timer(Interval, #st{deliver_retry_tref = undefined, buffer = Buffer} = St) ->
     case emqx_extsub_buffer:size(Buffer) > 0 of
         true ->
-            ct:print("ensure_deliver_retry_timer: schedule try_deliver with interval ~p", [Interval]),
+            ?tp_extsub(ensure_deliver_retry_timer_schedule, #{interval => Interval}),
             TRef = erlang:send_after(Interval, self(), #info_extsub_try_deliver{}),
             St#st{deliver_retry_tref = TRef};
         false ->
-            ct:print("ensure_deliver_retry_timer: no buffer", []),
+            ?tp_extsub(ensure_deliver_retry_timer_no_buffer, #{}),
             St
     end;
 ensure_deliver_retry_timer(_Interval, #st{deliver_retry_tref = TRef} = St) when
     is_reference(TRef)
 ->
-    ct:print("ensure_deliver_retry_timer: already scheduled", []),
+    ?tp_extsub(ensure_deliver_retry_timer_already_scheduled, #{}),
     St.
 
 cancel_deliver_retry_timer(#st{deliver_retry_tref = TRef} = St) ->

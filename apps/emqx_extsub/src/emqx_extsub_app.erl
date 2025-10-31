@@ -6,12 +6,14 @@
 
 -behaviour(application).
 
+-include_lib("snabbkaffe/include/snabbkaffe.hrl").
+
 -export([start/2, stop/1]).
 
 %% Behaviour callbacks
 
 start(_StartType, _StartArgs) ->
-    ct:print("emqx_extsub_app: start~n"),
+    ?tp(warning, emqx_extsub_app_start, #{}),
     ok = emqx_extsub_handler:init(),
     {ok, Sup} = emqx_extsub_sup:start_link(),
     ok = emqx_extsub:register_hooks(),
