@@ -5,6 +5,7 @@
 -module(emqx_extsub_redis_persist).
 
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+-include("emqx_extsub_redis_internal.hrl").
 
 -behaviour(gen_server).
 
@@ -15,6 +16,7 @@
 
 -export([
     redis_opts/1,
+    messages_key/1,
     insert/2
 ]).
 
@@ -118,7 +120,7 @@ start_link(EredisOpts) ->
 init([EredisOpts]) ->
     {ok, Conn} = eredis:start_link(EredisOpts),
     {ok, SHA} = eredis:q(Conn, [<<"SCRIPT">>, <<"LOAD">>, ?STORE_LUA]),
-    ?tp(warning, extsub_redis_persist_init, #{sha => SHA}),
+    ?tp_debug(extsub_redis_persist_init, #{sha => SHA}),
     {ok, #{conn => Conn, buffer => [], flush_tref => undefined, store_sha => SHA}}.
 
 handle_info(#insert{} = Insert, State0 = #{buffer := Buffer0}) ->
@@ -132,15 +134,15 @@ handle_info(#flush{}, State0) ->
     State = ensure_flush_timer(State1),
     {noreply, State};
 handle_info(Info, State) ->
-    ?tp(warning, mq_message_db_redis_info, #{info => Info}),
+    ?tp_debug(mq_message_db_redis_info, #{info => Info}),
     {noreply, State}.
 
 handle_cast(Info, State) ->
-    ?tp(warning, mq_message_db_redis_cast, #{info => Info}),
+    ?tp_debug(mq_message_db_redis_cast, #{info => Info}),
     {noreply, State}.
 
 handle_call(Info, _From, State) ->
-    ?tp(warning, mq_message_db_redis_call, #{info => Info}),
+    ?tp_debug(mq_message_db_redis_call, #{info => Info}),
     {reply, {error, {unknown_call, Info}}, State}.
 
 %%--------------------------------------------------------------------

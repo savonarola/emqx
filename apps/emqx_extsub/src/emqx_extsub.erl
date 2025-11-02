@@ -170,7 +170,6 @@ on_terminate(TerminateType, _ClientInfo, TopicFilter) ->
     end).
 
 on_session_disconnected(ClientInfo, #{subscriptions := Subs} = _SessionInfo) ->
-    ?tp_extsub(extsub_on_session_disconnected, #{subscriptions => Subs}),
     ok = maps:foreach(
         fun(TopicFilter, _SubOpts) ->
             on_terminate(disconnect, ClientInfo, TopicFilter)

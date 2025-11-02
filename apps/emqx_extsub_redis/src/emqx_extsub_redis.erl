@@ -27,6 +27,6 @@ unregister_hooks() ->
 
 on_message_publish(#message{topic = <<"$redis/", _/binary>> = Topic} = Message) ->
     ok = emqx_extsub_redis_persist:insert(#{topic => Topic}, Message),
-    {ok, Message};
+    {ok, emqx_message:set_header(allow_publish, false, Message)};
 on_message_publish(Message) ->
     {ok, Message}.

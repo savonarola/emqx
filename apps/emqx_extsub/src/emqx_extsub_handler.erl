@@ -162,14 +162,21 @@ handle_init(InitType, Ctx, TopicFilter, [CBM | CBMs]) ->
     end.
 
 create_ctx(SubscriberRef, ClientInfo) ->
+    Pid = self(),
     SendAfter = fun(Interval, Info) ->
-        erlang:send_after(Interval, self(), #info_to_extsub{
+        erlang:send_after(Interval, Pid, #info_to_extsub{
+            subscriber_ref = SubscriberRef, info = Info
+        })
+    end,
+    Send = fun(Info) ->
+        erlang:send(Pid, #info_to_extsub{
             subscriber_ref = SubscriberRef, info = Info
         })
     end,
     #{
         clientinfo => ClientInfo,
-        send_after => SendAfter
+        send_after => SendAfter,
+        send => Send
     }.
 
 cbms() ->
