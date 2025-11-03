@@ -146,7 +146,6 @@ handle_ack(#handler{cbm = CBM, st = State} = Handler, AckCtx, Msg, Ack) ->
 -spec handle_info(t(), info_ctx(), term()) ->
     {ok, t()} | {ok, t(), [emqx_types:message()]}.
 handle_info(#handler{cbm = CBM, st = State0} = Handler, InfoCtx, Info) ->
-    ?tp(warning, handle_info, #{info_ctx => InfoCtx, info => Info, state => State0}),
     case CBM:handle_info(State0, InfoCtx, Info) of
         {ok, State} ->
             {ok, Handler#handler{st = State}};

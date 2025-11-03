@@ -334,9 +334,6 @@ delivers(MessageEntries) ->
                 },
                 Msg0
             ),
-            ?tp(warning, deliver, #{
-                seq_id => SeqId, topic => Topic, deliver_qos => emqx_message:qos(Msg)
-            }),
             {deliver, Topic, Msg}
         end,
         MessageEntries
