@@ -16,7 +16,7 @@
     handle_allow_subscribe/2,
     handle_init/3,
     handle_terminate/2,
-    handle_ack/5,
+    handle_ack/4,
     handle_info/3
 ]).
 
@@ -52,6 +52,7 @@
 -export_type([t/0, init_type/0, terminate_type/0]).
 
 -define(TAB, ?MODULE).
+-define(EXTSUB_INTERNAL_MESSAGE_ID, extsub_int_msg_id).
 
 %% ExtSub Handler behaviour
 
@@ -137,21 +138,20 @@ handle_terminate(TerminateType, #handler{cbm = CBM, st = State}) ->
     _ = CBM:handle_terminate(TerminateType, State),
     ok.
 
--spec handle_ack(
-    t(), ack_ctx(), emqx_extsub_types:message_id(), emqx_types:message(), emqx_extsub_types:ack()
-) -> t().
-handle_ack(#handler{cbm = CBM, st = State} = Handler, AckCtx, MessageId, Msg, Ack) ->
+-spec handle_ack(t(), ack_ctx(), emqx_types:message(), emqx_extsub_types:ack()) -> t().
+handle_ack(#handler{cbm = CBM, st = State} = Handler, AckCtx, Msg, Ack) ->
+    MessageId = emqx_message:get_header(?EXTSUB_INTERNAL_MESSAGE_ID, Msg),
     Handler#handler{st = CBM:handle_ack(State, AckCtx, MessageId, Msg, Ack)}.
 
 -spec handle_info(t(), info_ctx(), term()) ->
-    {ok, t()} | {ok, t(), [{emqx_extsub_types:message_id(), emqx_types:message()}]}.
+    {ok, t()} | {ok, t(), [emqx_types:message()]}.
 handle_info(#handler{cbm = CBM, st = State0} = Handler, InfoCtx, Info) ->
     ?tp(warning, handle_info, #{info_ctx => InfoCtx, info => Info, state => State0}),
     case CBM:handle_info(State0, InfoCtx, Info) of
         {ok, State} ->
             {ok, Handler#handler{st = State}};
-        {ok, State, Messages} ->
-            {ok, Handler#handler{st = State}, Messages}
+        {ok, State, MessagesWithInternalIds} ->
+            {ok, Handler#handler{st = State}, to_messages(MessagesWithInternalIds)}
     end.
 
 %%--------------------------------------------------------------------
@@ -191,3 +191,11 @@ create_ctx(SubscriberRef, ClientInfo) ->
 cbms() ->
     {CBMs, _} = lists:unzip(ets:tab2list(?TAB)),
     CBMs.
+
+to_messages(MessagesWithIds) ->
+    lists:map(
+        fun({MessageId, Message}) ->
+            emqx_message:set_header(?EXTSUB_INTERNAL_MESSAGE_ID, MessageId, Message)
+        end,
+        MessagesWithIds
+    ).

@@ -86,7 +86,7 @@ handle_info(
     case Id of
         N when N =:= LastId + 1 ->
             %% New next message, send it
-            {ok, State#{has_data => true, last_id => Id}, [{Id, Message}]};
+            {ok, State#{last_id => Id}, [{Id, Message}]};
         N when N =< LastId ->
             %% Stale message, ignore
             {ok, State};

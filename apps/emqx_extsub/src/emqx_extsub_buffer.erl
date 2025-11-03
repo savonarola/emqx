@@ -26,17 +26,20 @@ Buffer of message_buffer received from the ExtSub handlers
     set_delivered/3
 ]).
 
+-type seq_id() :: non_neg_integer().
+
 -record(buffer, {
-    message_buffer :: gb_trees:tree(
-        emqx_extsub_types:message_id(),
+    seq = 0 :: seq_id(),
+    message_buffer = gb_trees:empty() :: gb_trees:tree(
+        seq_id(),
         {emqx_extsub_types:subscriber_ref(), emqx_types:message()}
     ),
-    delivering :: #{emqx_extsub_types:subscriber_ref() => non_neg_integer()}
+    delivering = #{} :: #{emqx_extsub_types:subscriber_ref() => non_neg_integer()}
 }).
 
 -type t() :: #buffer{}.
 
--export_type([t/0]).
+-export_type([t/0, seq_id/0]).
 
 %%--------------------------------------------------------------------
 %% API
@@ -44,34 +47,32 @@ Buffer of message_buffer received from the ExtSub handlers
 
 -spec new() -> t().
 new() ->
-    #buffer{message_buffer = gb_trees:empty(), delivering = #{}}.
+    #buffer{}.
 
--spec add_new(t(), emqx_extsub_types:subscriber_ref(), [
-    {emqx_extsub_types:message_id(), emqx_types:message()}
-]) ->
+-spec add_new(t(), emqx_extsub_types:subscriber_ref(), [emqx_types:message()]) ->
     t().
 add_new(
-    #buffer{message_buffer = MessageBuffer0, delivering = Delivering0} = Buffer,
+    #buffer{seq = SeqId0, message_buffer = MessageBuffer0, delivering = Delivering0} = Buffer,
     SubscriberRef,
     Messages
 ) ->
-    MessageBuffer = lists:foldl(
-        fun({MessageId, Msg}, MessageBufferAcc) ->
-            gb_trees:insert(MessageId, {SubscriberRef, Msg}, MessageBufferAcc)
+    {SeqId, MessageBuffer} = lists:foldl(
+        fun(Msg, {SeqIdAcc, MessageBufferAcc}) ->
+            {SeqIdAcc + 1, gb_trees:insert(SeqIdAcc, {SubscriberRef, Msg}, MessageBufferAcc)}
         end,
-        MessageBuffer0,
+        {SeqId0, MessageBuffer0},
         Messages
     ),
     SubRefDelivering0 = maps:get(SubscriberRef, Delivering0, 0),
     SubRefDelivering1 = SubRefDelivering0 + length(Messages),
     Delivering = Delivering0#{SubscriberRef => SubRefDelivering1},
-    Buffer#buffer{message_buffer = MessageBuffer, delivering = Delivering}.
+    Buffer#buffer{message_buffer = MessageBuffer, delivering = Delivering, seq = SeqId}.
 
 -spec add_back(
-    t(), emqx_extsub_types:subscriber_ref(), emqx_extsub_types:message_id(), emqx_types:message()
+    t(), emqx_extsub_types:subscriber_ref(), seq_id(), emqx_types:message()
 ) -> t().
-add_back(#buffer{message_buffer = MessageBuffer0} = Buffer, SubscriberRef, MessageId, Msg) ->
-    MessageBuffer = gb_trees:insert(MessageId, {SubscriberRef, Msg}, MessageBuffer0),
+add_back(#buffer{message_buffer = MessageBuffer0} = Buffer, SubscriberRef, SeqId, Msg) ->
+    MessageBuffer = gb_trees:insert(SeqId, {SubscriberRef, Msg}, MessageBuffer0),
     Buffer#buffer{message_buffer = MessageBuffer}.
 
 -spec take(t(), non_neg_integer()) ->
@@ -79,7 +80,7 @@ add_back(#buffer{message_buffer = MessageBuffer0} = Buffer, SubscriberRef, Messa
         [
             {
                 emqx_extsub_types:subscriber_ref(),
-                emqx_extsub_types:message_id(),
+                seq_id(),
                 emqx_types:message()
             }
         ],
@@ -88,8 +89,8 @@ add_back(#buffer{message_buffer = MessageBuffer0} = Buffer, SubscriberRef, Messa
 take(Buffer, N) when (is_integer(N) andalso N >= 0) orelse N == infinity ->
     do_take(Buffer, 0, N, []).
 
--spec set_delivered(t(), emqx_extsub_types:subscriber_ref(), emqx_extsub_types:message_id()) -> t().
-set_delivered(#buffer{delivering = Delivering0} = Buffer, SubscriberRef, _MessageId) ->
+-spec set_delivered(t(), emqx_extsub_types:subscriber_ref(), seq_id()) -> t().
+set_delivered(#buffer{delivering = Delivering0} = Buffer, SubscriberRef, _SeqId) ->
     SubRefDelivering0 = maps:get(SubscriberRef, Delivering0),
     SubRefDelivering = SubRefDelivering0 - 1,
     Buffer#buffer{delivering = Delivering0#{SubscriberRef => SubRefDelivering}}.
@@ -114,10 +115,10 @@ do_take(#buffer{message_buffer = MessageBuffer0} = Buffer, Taken, Total, Acc) ->
         true ->
             {lists:reverse(Acc), Buffer};
         false ->
-            {MessageId, {SubscriberRef, Msg}, MessageBuffer} = gb_trees:take_smallest(
+            {SeqId, {SubscriberRef, Msg}, MessageBuffer} = gb_trees:take_smallest(
                 MessageBuffer0
             ),
             do_take(Buffer#buffer{message_buffer = MessageBuffer}, Taken + 1, Total, [
-                {SubscriberRef, MessageId, Msg} | Acc
+                {SubscriberRef, SeqId, Msg} | Acc
             ])
     end.

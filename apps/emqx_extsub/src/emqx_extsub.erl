@@ -35,12 +35,12 @@
     registry :: emqx_extsub_handler_registry:t(),
     buffer :: emqx_extsub_buffer:t(),
     deliver_retry_tref :: reference() | undefined,
-    unacked :: #{emqx_extsub_types:message_id() => true}
+    unacked :: #{emqx_extsub_buffer:seq_id() => true}
 }).
 
 -record(extsub_info, {
     subscriber_ref :: emqx_extsub_types:subscriber_ref(),
-    message_id :: emqx_extsub_types:message_id(),
+    seq_id :: emqx_extsub_buffer:seq_id(),
     original_qos :: emqx_types:qos()
 }).
 
@@ -93,15 +93,15 @@ on_delivered(Msg, ReasonCode) ->
             #st{unacked = Unacked0, buffer = Buffer0} = St0,
             Handler0,
             #extsub_info{
-                message_id = MessageId, subscriber_ref = SubscriberRef, original_qos = OriginalQos
+                seq_id = SeqId, subscriber_ref = SubscriberRef, original_qos = OriginalQos
             }
         ) ->
-            Buffer = emqx_extsub_buffer:set_delivered(Buffer0, SubscriberRef, MessageId),
+            Buffer = emqx_extsub_buffer:set_delivered(Buffer0, SubscriberRef, SeqId),
             St = St0#st{buffer = Buffer},
             AckCtx = ack_ctx(St, SubscriberRef, OriginalQos),
-            Handler = emqx_extsub_handler:handle_ack(Handler0, AckCtx, MessageId, Msg, ReasonCode),
+            Handler = emqx_extsub_handler:handle_ack(Handler0, AckCtx, Msg, ReasonCode),
             %% Update the unacked window
-            Unacked = maps:remove(MessageId, Unacked0),
+            Unacked = maps:remove(SeqId, Unacked0),
             {ok, ensure_deliver_retry_timer(0, St#st{unacked = Unacked}), Handler}
         end
     ).
@@ -112,11 +112,11 @@ on_message_nack(Msg, false) ->
         fun(
             #st{unacked = Unacked0, buffer = Buffer0} = St0,
             Handler,
-            #extsub_info{message_id = MessageId, subscriber_ref = SubscriberRef}
+            #extsub_info{seq_id = SeqId, subscriber_ref = SubscriberRef}
         ) ->
-            Unacked = maps:remove(MessageId, Unacked0),
+            Unacked = maps:remove(SeqId, Unacked0),
             UnackedCnt = map_size(Unacked),
-            Buffer = emqx_extsub_buffer:add_back(Buffer0, SubscriberRef, MessageId, Msg),
+            Buffer = emqx_extsub_buffer:add_back(Buffer0, SubscriberRef, SeqId, Msg),
             St = St0#st{unacked = Unacked, buffer = Buffer},
             case UnackedCnt of
                 0 ->
@@ -313,8 +313,8 @@ try_deliver(SessionInfoFn) ->
 
 add_unacked(Unacked, MessageEntries) ->
     lists:foldl(
-        fun({_SubscriberRef, MessageId, _Msg}, UnackedAcc) ->
-            UnackedAcc#{MessageId => true}
+        fun({_SubscriberRef, SeqId, _Msg}, UnackedAcc) ->
+            UnackedAcc#{SeqId => true}
         end,
         Unacked,
         MessageEntries
@@ -322,20 +322,20 @@ add_unacked(Unacked, MessageEntries) ->
 
 delivers(MessageEntries) ->
     lists:map(
-        fun({SubscriberRef, MessageId, Msg0}) ->
+        fun({SubscriberRef, SeqId, Msg0}) ->
             Topic = emqx_message:topic(Msg0),
             Msg = emqx_message:set_headers(
                 #{
                     ?EXTSUB_HEADER_INFO => #extsub_info{
                         subscriber_ref = SubscriberRef,
-                        message_id = MessageId,
+                        seq_id = SeqId,
                         original_qos = emqx_message:qos(Msg0)
                     }
                 },
                 Msg0
             ),
             ?tp(warning, deliver, #{
-                message_id => MessageId, topic => Topic, deliver_qos => emqx_message:qos(Msg)
+                seq_id => SeqId, topic => Topic, deliver_qos => emqx_message:qos(Msg)
             }),
             {deliver, Topic, Msg}
         end,
@@ -410,10 +410,6 @@ ack_ctx(State, SubscriberRef, OriginalQos) ->
     #{desired_message_count => desired_message_count(State, SubscriberRef), qos => OriginalQos}.
 
 desired_message_count(#st{buffer = Buffer}, SubscriberRef) ->
-    ?tp(warning, desired_message_count, #{
-        subscriber_ref => SubscriberRef,
-        delivering_count => emqx_extsub_buffer:delivering_count(Buffer, SubscriberRef)
-    }),
     case emqx_extsub_buffer:delivering_count(Buffer, SubscriberRef) of
         N when N < ?MIN_SUB_DELIVERING ->
             ?MIN_SUB_DELIVERING;
