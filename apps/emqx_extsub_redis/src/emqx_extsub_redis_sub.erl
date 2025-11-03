@@ -113,10 +113,10 @@ handle_info(
     ByTopic =
         case ByTopic0 of
             #{Topic := Pids} ->
-                #{Topic => Pids#{Pid => PubFn}};
+                ByTopic0#{Topic => Pids#{Pid => PubFn}};
             _ ->
                 ok = eredis_sub:subscribe(Conn, [channel(Topic)]),
-                #{Topic => #{Pid => PubFn}}
+                ByTopic0#{Topic => #{Pid => PubFn}}
         end,
     erlang:send(From, {From, ok}),
     {noreply, State#{by_pid => ByPid, by_topic => ByTopic}};
@@ -151,12 +151,13 @@ handle_info(
     #{conn := Conn, by_topic := ByTopic} = State0
 ) ->
     ?tp_debug(message, #{topic => Topic, notification => Notification, pid => _Pid}),
+    {Id, Message} = parse_pub_message(State0, Notification),
     ok = eredis_sub:ack_message(Conn),
     case ByTopic of
         #{Topic := Pids} ->
             lists:foreach(
                 fun(PubFn) ->
-                    PubFn({redis_pub, Topic, Notification})
+                    PubFn({redis_pub, Topic, Id, Message})
                 end,
                 maps:values(Pids)
             );
@@ -233,3 +234,9 @@ wait_resp(From) ->
         end,
         {error, timeout}
     end.
+
+parse_pub_message(_State, Bin) ->
+    [IdBin, MessageBin] = binary:split(Bin, <<":">>),
+    Message = emqx_mq_message_db:decode_message(MessageBin),
+    Id = binary_to_integer(IdBin),
+    {Id, Message}.

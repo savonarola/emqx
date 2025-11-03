@@ -69,29 +69,31 @@ handle_info(
         _ ->
             {ok, State, Messages}
     end;
-handle_info(#{has_data := true} = State, _InfoCtx, {redis_pub, _Topic, _Notification}) ->
+handle_info(#{has_data := true} = State, _InfoCtx, {redis_pub, _Topic, _Id, _Message}) ->
     {ok, State};
 handle_info(
     #{has_data := false} = State,
     #{desired_message_count := 0} = _InfoCtx,
-    {redis_pub, _Topic, _Notification}
+    {redis_pub, _Topic, _Id, _Message}
 ) ->
     {ok, State#{has_data => true}};
 handle_info(
     #{has_data := false, last_id := LastId, send := SendFn} = State,
     _InfoCtx,
-    {redis_pub, _Topic, Notification}
+    {redis_pub, _Topic, Id, Message}
 ) ->
-    {Id, Message} = parse_pub_message(State, Notification),
     case Id of
         N when N =:= LastId + 1 ->
             %% New next message, send it
+            ok = emqx_extsub_redis_metrics:inc(via_pubsub_ok),
             {ok, State#{last_id => Id}, [{Id, Message}]};
         N when N =< LastId ->
             %% Stale message, ignore
+            ok = emqx_extsub_redis_metrics:inc(via_pubsub_behind),
             {ok, State};
         _ ->
             %% Next notification from the future, we missed something and have to read.
+            ok = emqx_extsub_redis_metrics:inc(via_pubsub_ahead),
             ok = SendFn(#fetch_data{}),
             {ok, State#{has_data => true}}
     end;
@@ -113,7 +115,8 @@ maybe_schedule_fetch(#{has_data := true, send := SendFn} = _State, DesiredCount)
     ok = SendFn(#fetch_data{}).
 
 fetch_data(#{last_id := LastId, topic_filter := TopicFilter} = State, Limit) ->
-    Results = emqx_extsub_redis_read:query(
+    ok = emqx_extsub_redis_metrics:inc(fetch),
+    {TimeUs, Results} = timer:tc(emqx_extsub_redis_read, query, [
         q,
         [
             [
@@ -127,7 +130,9 @@ fetch_data(#{last_id := LastId, topic_filter := TopicFilter} = State, Limit) ->
                 integer_to_binary(Limit)
             ]
         ]
-    ),
+    ]),
+    TimeMs = erlang:convert_time_unit(TimeUs, microsecond, millisecond),
+    ok = emqx_extsub_redis_metrics:observe_hist(fetch_latency_ms, TimeMs),
     case Results of
         {ok, []} ->
             {[], State#{has_data => false}};
@@ -148,9 +153,3 @@ to_messages(State, [MessageBin, IdBin | Rest], Acc, MaxId) ->
     to_messages(State, Rest, [{Id, Message} | Acc], max(MaxId, Id));
 to_messages(_State, [], Acc, MaxId) ->
     {lists:reverse(Acc), MaxId}.
-
-parse_pub_message(_State, Bin) ->
-    [IdBin, MessageBin] = binary:split(Bin, <<":">>),
-    Message = emqx_mq_message_db:decode_message(MessageBin),
-    Id = binary_to_integer(IdBin),
-    {Id, Message}.

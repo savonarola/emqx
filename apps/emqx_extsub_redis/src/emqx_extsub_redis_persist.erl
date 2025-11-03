@@ -44,7 +44,6 @@
 
 -define(AUTO_RECONNECT_INTERVAL, 2).
 
-
 %% EVALSHA SHA 3 id:TOPIC m:TOPIC ch:TOPIC MESSAGE_BIN
 -define(STORE_LUA, """
     local new_weight = redis.call('INCR', KEYS[1]);
@@ -171,11 +170,21 @@ flush(#{conn := Connection, buffer := Buffer0, store_sha := SHA} = State) ->
     Buffer = lists:reverse(Buffer0),
     Commands = lists:map(
         fun(#insert{topic = Topic, message = MessageBin}) ->
-            [<<"EVALSHA">>, SHA, <<"3">>, id_key(Topic), messages_key(Topic), channel(Topic), MessageBin]
+            [
+                <<"EVALSHA">>,
+                SHA,
+                <<"3">>,
+                id_key(Topic),
+                messages_key(Topic),
+                channel(Topic),
+                MessageBin
+            ]
         end,
         Buffer
     ),
-    Results = eredis:qp(Connection, Commands),
+    {TimeUs, Results} = timer:tc(eredis, qp, [Connection, Commands]),
+    TimeMs = erlang:convert_time_unit(TimeUs, microsecond, millisecond),
+    ok = emqx_extsub_redis_metrics:observe_hist(flush_latency_ms, TimeMs),
     %% TODO
     %% Ignore errors for now
     ?tp(debug, mq_message_db_redis_flush, #{
