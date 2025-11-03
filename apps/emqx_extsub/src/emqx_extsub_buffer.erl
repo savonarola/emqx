@@ -31,7 +31,7 @@ Buffer of message_buffer received from the ExtSub handlers
         emqx_extsub_types:message_id(),
         {emqx_extsub_types:subscriber_ref(), emqx_types:message()}
     ),
-    delivering :: #{emqx_extsub_types:subscriber_ref() => #{emqx_extsub_types:message_id() => true}}
+    delivering :: #{emqx_extsub_types:subscriber_ref() => non_neg_integer()}
 }).
 
 -type t() :: #buffer{}.
@@ -55,18 +55,15 @@ add_new(
     SubscriberRef,
     Messages
 ) ->
-    {MessageIds, MessageBuffer} = lists:foldl(
-        fun({MessageId, Msg}, {MessageIdsAcc, MessageBufferAcc}) ->
-            {
-                MessageIdsAcc#{MessageId => true},
-                gb_trees:insert(MessageId, {SubscriberRef, Msg}, MessageBufferAcc)
-            }
+    MessageBuffer = lists:foldl(
+        fun({MessageId, Msg}, MessageBufferAcc) ->
+            gb_trees:insert(MessageId, {SubscriberRef, Msg}, MessageBufferAcc)
         end,
-        {#{}, MessageBuffer0},
+        MessageBuffer0,
         Messages
     ),
-    SubRefDelivering0 = maps:get(SubscriberRef, Delivering0, #{}),
-    SubRefDelivering1 = maps:merge(SubRefDelivering0, MessageIds),
+    SubRefDelivering0 = maps:get(SubscriberRef, Delivering0, 0),
+    SubRefDelivering1 = SubRefDelivering0 + length(Messages),
     Delivering = Delivering0#{SubscriberRef => SubRefDelivering1},
     Buffer#buffer{message_buffer = MessageBuffer, delivering = Delivering}.
 
@@ -92,14 +89,14 @@ take(Buffer, N) when (is_integer(N) andalso N >= 0) orelse N == infinity ->
     do_take(Buffer, 0, N, []).
 
 -spec set_delivered(t(), emqx_extsub_types:subscriber_ref(), emqx_extsub_types:message_id()) -> t().
-set_delivered(#buffer{delivering = Delivering0} = Buffer, SubscriberRef, MessageId) ->
-    #{MessageId := true} = SubRefDelivering0 = maps:get(SubscriberRef, Delivering0),
-    SubRefDelivering = maps:remove(MessageId, SubRefDelivering0),
+set_delivered(#buffer{delivering = Delivering0} = Buffer, SubscriberRef, _MessageId) ->
+    SubRefDelivering0 = maps:get(SubscriberRef, Delivering0),
+    SubRefDelivering = SubRefDelivering0 - 1,
     Buffer#buffer{delivering = Delivering0#{SubscriberRef => SubRefDelivering}}.
 
 -spec delivering_count(t(), emqx_extsub_types:subscriber_ref()) -> non_neg_integer().
 delivering_count(#buffer{delivering = Delivering}, SubscriberRef) ->
-    maps:size(maps:get(SubscriberRef, Delivering, #{})).
+    maps:get(SubscriberRef, Delivering, 0).
 
 -spec size(t()) -> non_neg_integer().
 size(#buffer{message_buffer = MessageBuffer}) ->
