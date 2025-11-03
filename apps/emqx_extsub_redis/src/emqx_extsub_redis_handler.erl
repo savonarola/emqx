@@ -14,8 +14,7 @@
     handle_allow_subscribe/2,
     handle_init/3,
     handle_terminate/2,
-    handle_need_data/2,
-    handle_ack/3,
+    handle_ack/5,
     handle_info/3
 ]).
 
@@ -45,28 +44,23 @@ handle_terminate(_TerminateType, #{topic_filter := TopicFilter} = _State) ->
     ok = emqx_extsub_redis_sub:unsubscribe(#{topic => TopicFilter}),
     ok.
 
-handle_ack(State, MessageId, Ack) ->
+handle_ack(State, #{desired_message_count := DesiredCount} = _AckCtx, MessageId, _Message, Ack) ->
     ?tp_debug(handle_ack, #{message_id => MessageId, ack => Ack}),
+    ok = maybe_schedule_fetch(State, DesiredCount),
     State.
 
-handle_need_data(State, #{desired_message_count := 0}) ->
-    State;
-handle_need_data(#{has_data := false} = State, _CallbackCtx) ->
-    State;
-handle_need_data(#{has_data := true, send := SendFn} = State, #{desired_message_count := Count}) when
-    Count > 0
-->
-    ok = SendFn(#fetch_data{}),
-    State.
-
-handle_info(State, #{desired_message_count := 0}, #fetch_data{}) ->
+handle_info(State, #{desired_message_count := 0} = _InfoCtx, #fetch_data{}) ->
     {ok, State};
 handle_info(
-    #{has_data := false} = State, #{desired_message_count := _DesiredMessageCount}, #fetch_data{}
+    #{has_data := false} = State,
+    #{desired_message_count := _DesiredMessageCount} = _InfoCtx,
+    #fetch_data{}
 ) ->
     {ok, State};
 handle_info(
-    #{has_data := true} = State0, #{desired_message_count := DesiredMessageCount}, #fetch_data{}
+    #{has_data := true} = State0,
+    #{desired_message_count := DesiredMessageCount} = _InfoCtx,
+    #fetch_data{}
 ) ->
     {Messages, State} = fetch_data(State0, DesiredMessageCount),
     case Messages of
@@ -75,15 +69,17 @@ handle_info(
         _ ->
             {ok, State, Messages}
     end;
-handle_info(#{has_data := true} = State, _CallbackCtx, {redis_pub, _Topic, _Notification}) ->
+handle_info(#{has_data := true} = State, _InfoCtx, {redis_pub, _Topic, _Notification}) ->
     {ok, State};
 handle_info(
-    #{has_data := false} = State, #{desired_message_count := 0}, {redis_pub, _Topic, _Notification}
+    #{has_data := false} = State,
+    #{desired_message_count := 0} = _InfoCtx,
+    {redis_pub, _Topic, _Notification}
 ) ->
     {ok, State#{has_data => true}};
 handle_info(
     #{has_data := false, last_id := LastId, send := SendFn} = State,
-    _CallbackCtx,
+    _InfoCtx,
     {redis_pub, _Topic, Notification}
 ) ->
     {Id, Message} = parse_pub_message(State, Notification),
@@ -106,6 +102,15 @@ handle_info(State, _CallbackCtx, _Info) ->
 %%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
+
+maybe_schedule_fetch(_State, 0) ->
+    ok;
+maybe_schedule_fetch(#{has_data := false} = _State, _DesiredCount) ->
+    ok;
+maybe_schedule_fetch(#{has_data := true, send := SendFn} = _State, DesiredCount) when
+    DesiredCount > 0
+->
+    ok = SendFn(#fetch_data{}).
 
 fetch_data(#{last_id := LastId, topic_filter := TopicFilter} = State, Limit) ->
     Results = emqx_extsub_redis_read:query(

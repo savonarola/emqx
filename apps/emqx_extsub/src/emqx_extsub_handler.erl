@@ -16,8 +16,7 @@
     handle_allow_subscribe/2,
     handle_init/3,
     handle_terminate/2,
-    handle_ack/3,
-    handle_need_data/2,
+    handle_ack/5,
     handle_info/3
 ]).
 
@@ -32,8 +31,13 @@
     send := fun((term()) -> ok)
 }.
 
--type callback_ctx() :: #{
+-type info_ctx() :: #{
     desired_message_count := non_neg_integer()
+}.
+
+-type ack_ctx() :: #{
+    desired_message_count := non_neg_integer(),
+    qos := emqx_types:qos()
 }.
 
 -record(handler, {
@@ -56,9 +60,14 @@
 -callback handle_init(init_type(), init_ctx(), emqx_extsub_types:topic_filter()) ->
     {ok, state()} | ignore.
 -callback handle_terminate(terminate_type(), state()) -> ok.
--callback handle_ack(state(), emqx_types:message(), emqx_extsub_types:ack()) -> state().
--callback handle_need_data(state(), callback_ctx()) -> state().
--callback handle_info(state(), callback_ctx(), term()) ->
+-callback handle_ack(
+    state(),
+    ack_ctx(),
+    emqx_extsub_types:message_id(),
+    emqx_types:message(),
+    emqx_extsub_types:ack()
+) -> state().
+-callback handle_info(state(), info_ctx(), term()) ->
     {ok, state()}
     | {ok, state(), [{emqx_extsub_types:message_id(), emqx_types:message()}]}
     | recreate.
@@ -128,17 +137,13 @@ handle_terminate(TerminateType, #handler{cbm = CBM, st = State}) ->
     _ = CBM:handle_terminate(TerminateType, State),
     ok.
 
--spec handle_ack(t(), emqx_types:message(), emqx_extsub_types:ack()) -> t().
-handle_ack(#handler{cbm = CBM, st = State} = Handler, Msg, Ack) ->
-    Handler#handler{st = CBM:handle_ack(State, Msg, Ack)}.
+-spec handle_ack(
+    t(), ack_ctx(), emqx_extsub_types:message_id(), emqx_types:message(), emqx_extsub_types:ack()
+) -> t().
+handle_ack(#handler{cbm = CBM, st = State} = Handler, AckCtx, MessageId, Msg, Ack) ->
+    Handler#handler{st = CBM:handle_ack(State, AckCtx, MessageId, Msg, Ack)}.
 
--spec handle_need_data(t(), non_neg_integer()) -> t().
-handle_need_data(#handler{cbm = CBM, st = State0} = Handler, DesiredCount) ->
-    ?tp(warning, handle_need_data, #{desired_count => DesiredCount, state => State0}),
-    State = CBM:handle_need_data(State0, DesiredCount),
-    Handler#handler{st = State}.
-
--spec handle_info(t(), callback_ctx(), term()) ->
+-spec handle_info(t(), info_ctx(), term()) ->
     {ok, t()} | {ok, t(), [{emqx_extsub_types:message_id(), emqx_types:message()}]}.
 handle_info(#handler{cbm = CBM, st = State0} = Handler, InfoCtx, Info) ->
     ?tp(warning, handle_info, #{info_ctx => InfoCtx, info => Info, state => State0}),

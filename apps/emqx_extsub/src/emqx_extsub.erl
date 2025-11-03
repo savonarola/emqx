@@ -40,7 +40,8 @@
 
 -record(extsub_info, {
     subscriber_ref :: emqx_extsub_types:subscriber_ref(),
-    message_id :: emqx_extsub_types:message_id()
+    message_id :: emqx_extsub_types:message_id(),
+    original_qos :: emqx_types:qos()
 }).
 
 -spec register_hooks() -> ok.
@@ -74,7 +75,7 @@ unregister_hooks() ->
 on_message_delivered(_ClientInfo, Msg) ->
     case emqx_message:qos(Msg) of
         ?QOS_0 ->
-            ok = on_delivered(Msg, ?RC_SUCCESS);
+            ok = on_delivered(Msg, undefined);
         _ ->
             ok
     end,
@@ -91,32 +92,16 @@ on_delivered(Msg, ReasonCode) ->
         fun(
             #st{unacked = Unacked0, buffer = Buffer0} = St0,
             Handler0,
-            #extsub_info{message_id = MessageId, subscriber_ref = SubscriberRef}
+            #extsub_info{
+                message_id = MessageId, subscriber_ref = SubscriberRef, original_qos = OriginalQos
+            }
         ) ->
-            OldDeliveringCount = emqx_extsub_buffer:delivering_count(Buffer0, SubscriberRef),
             Buffer = emqx_extsub_buffer:set_delivered(Buffer0, SubscriberRef, MessageId),
-            NewDeliveringCount = emqx_extsub_buffer:delivering_count(Buffer, SubscriberRef),
-            BufferSize = emqx_extsub_buffer:size(Buffer),
-            ?tp(warning, on_delivery_completed, #{
-                subscriber_ref => SubscriberRef,
-                old_delivering_count => OldDeliveringCount,
-                new_delivering_count => NewDeliveringCount,
-                buffer_size => BufferSize,
-                message_id => MessageId,
-                qos => emqx_message:qos(Msg)
-            }),
             St = St0#st{buffer = Buffer},
-            Handler1 = emqx_extsub_handler:handle_need_data(
-                Handler0, callback_ctx(St, SubscriberRef)
-            ),
+            AckCtx = ack_ctx(St, SubscriberRef, OriginalQos),
+            Handler = emqx_extsub_handler:handle_ack(Handler0, AckCtx, MessageId, Msg, ReasonCode),
             %% Update the unacked window
-            Handler = emqx_extsub_handler:handle_ack(Handler1, MessageId, ReasonCode),
             Unacked = maps:remove(MessageId, Unacked0),
-            ?tp_extsub(on_delivery_completed_unacked, #{
-                subscriber_ref => SubscriberRef,
-                old_unacked_count => map_size(Unacked0),
-                new_unacked_count => map_size(Unacked)
-            }),
             {ok, ensure_deliver_retry_timer(0, St#st{unacked = Unacked}), Handler}
         end
     ).
@@ -193,9 +178,7 @@ on_client_handle_info(
     InfoHandleResult = with_sub_handler(
         SubscriberRef,
         fun(#st{buffer = Buffer0} = St, Handler0) ->
-            case
-                emqx_extsub_handler:handle_info(Handler0, callback_ctx(St, SubscriberRef), InfoMsg)
-            of
+            case emqx_extsub_handler:handle_info(Handler0, info_ctx(St, SubscriberRef), InfoMsg) of
                 {ok, Handler} ->
                     {ok, St, Handler, ok};
                 {ok, Handler, Messages} ->
@@ -344,7 +327,9 @@ delivers(MessageEntries) ->
             Msg = emqx_message:set_headers(
                 #{
                     ?EXTSUB_HEADER_INFO => #extsub_info{
-                        subscriber_ref = SubscriberRef, message_id = MessageId
+                        subscriber_ref = SubscriberRef,
+                        message_id = MessageId,
+                        original_qos = emqx_message:qos(Msg0)
                     }
                 },
                 Msg0
@@ -418,8 +403,11 @@ deliver_count(SessionInfoFn, UnackedCnt) ->
         _ -> max(?EXTSUB_MAX_UNACKED - UnackedCnt, InflightMax - InflightCnt)
     end.
 
-callback_ctx(State, SubscriberRef) ->
+info_ctx(State, SubscriberRef) ->
     #{desired_message_count => desired_message_count(State, SubscriberRef)}.
+
+ack_ctx(State, SubscriberRef, OriginalQos) ->
+    #{desired_message_count => desired_message_count(State, SubscriberRef), qos => OriginalQos}.
 
 desired_message_count(#st{buffer = Buffer}, SubscriberRef) ->
     ?tp(warning, desired_message_count, #{
