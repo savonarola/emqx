@@ -117,12 +117,7 @@ do_take(#buffer{message_buffer = MessageBuffer0} = Buffer, Taken, Total, Acc) ->
             {MessageId, {SubscriberRef, Msg}, MessageBuffer} = gb_trees:take_smallest(
                 MessageBuffer0
             ),
-            Increment =
-                case Msg of
-                    #message{qos = ?QOS_0} -> 0;
-                    _ -> 1
-                end,
-            do_take(Buffer#buffer{message_buffer = MessageBuffer}, Taken + Increment, Total, [
+            do_take(Buffer#buffer{message_buffer = MessageBuffer}, Taken + 1, Total, [
                 {SubscriberRef, MessageId, Msg} | Acc
             ])
     end.

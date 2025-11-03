@@ -14,112 +14,138 @@
     handle_allow_subscribe/2,
     handle_init/3,
     handle_terminate/2,
-    handle_ack/3,
     handle_need_data/2,
-    handle_info/2
+    handle_ack/3,
+    handle_info/3
 ]).
 
--define(BUFFER_MAX_LENGTH, 5000).
+-record(fetch_data, {}).
 
 handle_allow_subscribe(_ClientInfo, _TopicFilter) ->
     true.
 
 handle_init(
-    _InitType, #{send_after := SendAfterFn, send := SendFn} = _Ctx, <<"$redis/", _/binary>> = TopicFilter
+    _InitType,
+    #{send_after := SendAfterFn, send := SendFn} = _Ctx,
+    <<"$redis/", _/binary>> = TopicFilter
 ) ->
-    {ok, ReaderPid} = gen_server:start_link(emqx_extsub_redis_reader, [TopicFilter, SendFn], []),
+    ok = emqx_extsub_redis_sub:subscribe(#{topic => TopicFilter, pub_fn => SendFn}),
+    ok = SendFn(#fetch_data{}),
     {ok, #{
-        buffer => buffer_new(),
-        blocked => false,
-        wants_data => true,
+        topic_filter => TopicFilter,
         send_after => SendAfterFn,
         send => SendFn,
-        reader_pid => ReaderPid
+        last_id => 0,
+        has_data => true
     }};
 handle_init(_InitType, _Ctx, _TopicFilter) ->
     ignore.
 
-handle_terminate(_TerminateType, #{reader_pid := ReaderPid} = _State) ->
-    ok = emqx_extsub_redis_reader:stop(ReaderPid),
+handle_terminate(_TerminateType, #{topic_filter := TopicFilter} = _State) ->
+    ok = emqx_extsub_redis_sub:unsubscribe(#{topic => TopicFilter}),
     ok.
 
 handle_ack(State, MessageId, Ack) ->
     ?tp_debug(handle_ack, #{message_id => MessageId, ack => Ack}),
     State.
 
-handle_need_data(#{buffer := Buffer0, blocked := Blocked, reader_pid := ReaderPid} = State, DesiredCount) ->
-    case Blocked of
-        false -> ok;
-        true -> emqx_extsub_redis_reader:unblock(ReaderPid)
-    end,
-    case is_buffer_empty(Buffer0) of
-        true ->
-            ?tp_debug(handle_next_buffer_empty, #{}),
-            {ok, State#{blocked => false, wants_data => true}};
-        false ->
-            ?tp_debug(handle_next_buffer_not_empty, #{buffer_length => buffer_length(Buffer0)}),
-            {MessageEntries, Buffer1} = buffer_out(Buffer0, DesiredCount),
-            {ok, State#{blocked => false, wants_data => false, buffer => Buffer1}, MessageEntries}
-    end.
+handle_need_data(State, #{desired_message_count := 0}) ->
+    State;
+handle_need_data(#{has_data := false} = State, _CallbackCtx) ->
+    State;
+handle_need_data(#{has_data := true, send := SendFn} = State, #{desired_message_count := Count}) when
+    Count > 0
+->
+    ok = SendFn(#fetch_data{}),
+    State.
 
-handle_info(#{wants_data := true, buffer := Buffer0, reader_pid := ReaderPid} = State, {redis_data, Messages} = _Info) ->
-    % ?tp_debug(handle_info_wants_data_true, #{buffer => Buffer0}),
-    Buffer = buffer_in(Buffer0, Messages),
-    ok = emqx_extsub_redis_reader:next(ReaderPid),
-    {ok, State#{wants_data => false, buffer => buffer_new()}, buffer_all(Buffer)};
-handle_info(#{wants_data := false, buffer := Buffer0, reader_pid := ReaderPid} = State, {redis_data, Messages} = _Info) ->
-    % ?tp_debug(handle_info_wants_data_false, #{buffer => Buffer0}),
-    Buffer = buffer_in(Buffer0, Messages),
-    case buffer_length(Buffer) > ?BUFFER_MAX_LENGTH of
-        true ->
-            emqx_extsub_redis_reader:block(ReaderPid),
-            {ok, State#{blocked => true, buffer => Buffer}};
-        false ->
-            emqx_extsub_redis_reader:next(ReaderPid),
-            {ok, State#{buffer => Buffer}}
+handle_info(State, #{desired_message_count := 0}, #fetch_data{}) ->
+    {ok, State};
+handle_info(
+    #{has_data := false} = State, #{desired_message_count := _DesiredMessageCount}, #fetch_data{}
+) ->
+    {ok, State};
+handle_info(
+    #{has_data := true} = State0, #{desired_message_count := DesiredMessageCount}, #fetch_data{}
+) ->
+    {Messages, State} = fetch_data(State0, DesiredMessageCount),
+    case Messages of
+        [] ->
+            {ok, State};
+        _ ->
+            {ok, State, Messages}
     end;
-handle_info(State, Info) ->
-    ?tp_debug(handle_info_unknown, #{info => Info, state => State}),
+handle_info(#{has_data := true} = State, _CallbackCtx, {redis_pub, _Topic, _Notification}) ->
+    {ok, State};
+handle_info(
+    #{has_data := false} = State, #{desired_message_count := 0}, {redis_pub, _Topic, _Notification}
+) ->
+    {ok, State#{has_data => true}};
+handle_info(
+    #{has_data := false, last_id := LastId, send := SendFn} = State,
+    _CallbackCtx,
+    {redis_pub, _Topic, Notification}
+) ->
+    {Id, Message} = parse_pub_message(State, Notification),
+    case Id of
+        N when N =:= LastId + 1 ->
+            %% New next message, send it
+            {ok, State#{has_data => true, last_id => Id}, [{Id, Message}]};
+        N when N =< LastId ->
+            %% Stale message, ignore
+            {ok, State};
+        _ ->
+            %% Next notification from the future, we missed something and have to read.
+            ok = SendFn(#fetch_data{}),
+            {ok, State#{has_data => true}}
+    end;
+handle_info(State, _CallbackCtx, _Info) ->
+    ?tp(warning, unknown_extsub_redis_handler_info, #{info => _Info, state => State}),
     {ok, State}.
 
-%% Toy buffer functions
+%%--------------------------------------------------------------------
+%% Internal functions
+%%--------------------------------------------------------------------
 
-buffer_new() ->
-    {0, queue:new()}.
-
-buffer_in({BufferSize, Q0}, MessageEntries) ->
-    Q = lists:foldl(
-        fun({MessageId, Msg}, QAcc) ->
-            queue:in({MessageId, Msg}, QAcc)
-        end,
-        Q0,
-        MessageEntries
+fetch_data(#{last_id := LastId, topic_filter := TopicFilter} = State, Limit) ->
+    Results = emqx_extsub_redis_read:query(
+        q,
+        [
+            [
+                <<"ZRANGEBYSCORE">>,
+                emqx_extsub_redis_persist:messages_key(TopicFilter),
+                integer_to_binary(LastId + 1),
+                <<"+inf">>,
+                <<"WITHSCORES">>,
+                <<"LIMIT">>,
+                <<"0">>,
+                integer_to_binary(Limit)
+            ]
+        ]
     ),
-    {BufferSize + length(MessageEntries), Q}.
-
-buffer_all({BufferSize, Q0}) ->
-    case queue:out(Q0) of
-        {{value, MessageEntry}, Q} ->
-            [MessageEntry | buffer_all({BufferSize - 1, Q})];
-        {empty, _} ->
-            []
+    case Results of
+        {ok, []} ->
+            {[], State#{has_data => false}};
+        {ok, MessagesRaw} when length(MessagesRaw) < Limit ->
+            {Messages, NewLastId} = to_messages(State, MessagesRaw),
+            {Messages, State#{has_data => false, last_id => NewLastId}};
+        {ok, MessagesRaw} ->
+            {Messages, NewLastId} = to_messages(State, MessagesRaw),
+            {Messages, State#{has_data => true, last_id => NewLastId}}
     end.
 
-buffer_out(Buf, N) ->
-    buffer_out(Buf, N, []).
+to_messages(State, MessageRows) ->
+    to_messages(State, MessageRows, [], 0).
 
-buffer_out(Buf, 0, Acc) ->
-    {lists:reverse(Acc), Buf};
-buffer_out({BufferSize, Q}, N, Acc) ->
-    case queue:out(Q) of
-        {{value, MessageEntry}, Q1} ->
-            buffer_out({BufferSize - 1, Q1}, N - 1, [MessageEntry | Acc]);
-        {empty, Q1} ->
-            {lists:reverse(Acc), {BufferSize, Q1}}
-    end.
+to_messages(State, [MessageBin, IdBin | Rest], Acc, MaxId) ->
+    Message = emqx_mq_message_db:decode_message(MessageBin),
+    Id = binary_to_integer(IdBin),
+    to_messages(State, Rest, [{Id, Message} | Acc], max(MaxId, Id));
+to_messages(_State, [], Acc, MaxId) ->
+    {lists:reverse(Acc), MaxId}.
 
-is_buffer_empty({BufferSize, _Q}) ->
-    BufferSize =:= 0.
-
-buffer_length({BufferSize, _Q}) ->
-    BufferSize.
+parse_pub_message(_State, Bin) ->
+    [IdBin, MessageBin] = binary:split(Bin, <<":">>),
+    Message = emqx_mq_message_db:decode_message(MessageBin),
+    Id = binary_to_integer(IdBin),
+    {Id, Message}.

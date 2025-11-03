@@ -18,7 +18,7 @@
     handle_terminate/2,
     handle_ack/3,
     handle_need_data/2,
-    handle_info/2
+    handle_info/3
 ]).
 
 -type state() :: term().
@@ -26,15 +26,20 @@
 -type init_type() :: subscribe | resume.
 -type terminate_type() :: unsubscribe | disconnect.
 
--type handler_ctx() :: #{
+-type init_ctx() :: #{
     clientinfo := emqx_types:clientinfo(),
-    send_after := fun((emqx_extsub_types:interval_ms(), term()) -> reference())
+    send_after := fun((emqx_extsub_types:interval_ms(), term()) -> reference()),
+    send := fun((term()) -> ok)
+}.
+
+-type callback_ctx() :: #{
+    desired_message_count := non_neg_integer()
 }.
 
 -record(handler, {
     st :: state(),
     cbm :: module(),
-    ctx :: handler_ctx(),
+    ctx :: init_ctx(),
     subscriber_ref :: emqx_extsub_types:subscriber_ref()
 }).
 
@@ -45,18 +50,18 @@
 -define(TAB, ?MODULE).
 
 %% ExtSub Handler behaviour
--type desired_message_count() :: pos_integer().
 
 -callback handle_allow_subscribe(emqx_types:clientinfo(), emqx_extsub_types:topic_filter()) ->
     boolean().
--callback handle_init(init_type(), handler_ctx(), emqx_extsub_types:topic_filter()) ->
+-callback handle_init(init_type(), init_ctx(), emqx_extsub_types:topic_filter()) ->
     {ok, state()} | ignore.
 -callback handle_terminate(terminate_type(), state()) -> ok.
 -callback handle_ack(state(), emqx_types:message(), emqx_extsub_types:ack()) -> state().
--callback handle_need_data(state(), desired_message_count()) ->
-    {ok, state()} | {ok, state(), [emqx_types:message()]}.
--callback handle_info(state(), term()) ->
-    {ok, state()} | {ok, state(), [emqx_types:message()]} | recreate.
+-callback handle_need_data(state(), callback_ctx()) -> state().
+-callback handle_info(state(), callback_ctx(), term()) ->
+    {ok, state()}
+    | {ok, state(), [{emqx_extsub_types:message_id(), emqx_types:message()}]}
+    | recreate.
 
 %%--------------------------------------------------------------------
 %% API
@@ -127,20 +132,17 @@ handle_terminate(TerminateType, #handler{cbm = CBM, st = State}) ->
 handle_ack(#handler{cbm = CBM, st = State} = Handler, Msg, Ack) ->
     Handler#handler{st = CBM:handle_ack(State, Msg, Ack)}.
 
--spec handle_need_data(t(), pos_integer()) ->
-    {ok, t()} | {ok, t(), [{emqx_extsub_types:message_id(), emqx_types:message()}]}.
+-spec handle_need_data(t(), non_neg_integer()) -> t().
 handle_need_data(#handler{cbm = CBM, st = State0} = Handler, DesiredCount) ->
-    case CBM:handle_need_data(State0, DesiredCount) of
-        {ok, State} ->
-            {ok, Handler#handler{st = State}};
-        {ok, State, Messages} ->
-            {ok, Handler#handler{st = State}, Messages}
-    end.
+    ?tp(warning, handle_need_data, #{desired_count => DesiredCount, state => State0}),
+    State = CBM:handle_need_data(State0, DesiredCount),
+    Handler#handler{st = State}.
 
--spec handle_info(t(), term()) ->
+-spec handle_info(t(), callback_ctx(), term()) ->
     {ok, t()} | {ok, t(), [{emqx_extsub_types:message_id(), emqx_types:message()}]}.
-handle_info(#handler{cbm = CBM, st = State0} = Handler, Info) ->
-    case CBM:handle_info(State0, Info) of
+handle_info(#handler{cbm = CBM, st = State0} = Handler, InfoCtx, Info) ->
+    ?tp(warning, handle_info, #{info_ctx => InfoCtx, info => Info, state => State0}),
+    case CBM:handle_info(State0, InfoCtx, Info) of
         {ok, State} ->
             {ok, Handler#handler{st = State}};
         {ok, State, Messages} ->
@@ -164,14 +166,16 @@ handle_init(InitType, Ctx, TopicFilter, [CBM | CBMs]) ->
 create_ctx(SubscriberRef, ClientInfo) ->
     Pid = self(),
     SendAfter = fun(Interval, Info) ->
-        erlang:send_after(Interval, Pid, #info_to_extsub{
+        _ = erlang:send_after(Interval, Pid, #info_to_extsub{
             subscriber_ref = SubscriberRef, info = Info
-        })
+        }),
+        ok
     end,
     Send = fun(Info) ->
-        erlang:send(Pid, #info_to_extsub{
+        _ = erlang:send(Pid, #info_to_extsub{
             subscriber_ref = SubscriberRef, info = Info
-        })
+        }),
+        ok
     end,
     #{
         clientinfo => ClientInfo,

@@ -19,6 +19,7 @@
     on_session_resumed/2,
     on_session_disconnected/2,
     on_delivery_completed/2,
+    on_message_delivered/2,
     on_message_nack/2,
     on_client_handle_info/3
 ]).
@@ -46,6 +47,7 @@
 register_hooks() ->
     ok = emqx_hooks:add('client.authorize', {?MODULE, on_client_authorize, []}, ?HP_AUTHZ + 1),
     ok = emqx_hooks:add('delivery.completed', {?MODULE, on_delivery_completed, []}, ?HP_LOWEST),
+    ok = emqx_hooks:add('message.delivered', {?MODULE, on_message_delivered, []}, ?HP_LOWEST),
     ok = emqx_hooks:add('session.subscribed', {?MODULE, on_session_subscribed, []}, ?HP_LOWEST),
     ok = emqx_hooks:add('session.unsubscribed', {?MODULE, on_session_unsubscribed, []}, ?HP_LOWEST),
     ok = emqx_hooks:add('session.resumed', {?MODULE, on_session_resumed, []}, ?HP_LOWEST),
@@ -56,6 +58,7 @@ register_hooks() ->
 -spec unregister_hooks() -> ok.
 unregister_hooks() ->
     emqx_hooks:del('client.authorize', {?MODULE, on_client_authorize}),
+    emqx_hooks:del('delivery.completed', {?MODULE, on_delivery_completed}),
     emqx_hooks:del('message.delivered', {?MODULE, on_message_delivered}),
     emqx_hooks:del('session.subscribed', {?MODULE, on_session_subscribed}),
     emqx_hooks:del('session.unsubscribed', {?MODULE, on_session_unsubscribed}),
@@ -68,7 +71,21 @@ unregister_hooks() ->
 %% Hooks callbacks
 %%--------------------------------------------------------------------
 
+on_message_delivered(_ClientInfo, Msg) ->
+    case emqx_message:qos(Msg) of
+        ?QOS_0 ->
+            ok = on_delivered(Msg, ?RC_SUCCESS);
+        _ ->
+            ok
+    end,
+    {ok, Msg}.
+
 on_delivery_completed(Msg, Info) ->
+    ReasonCode = maps:get(reason_code, Info, ?RC_SUCCESS),
+    ok = on_delivered(Msg, ReasonCode),
+    ok.
+
+on_delivered(Msg, ReasonCode) ->
     with_sub_handler(
         Msg,
         fun(
@@ -77,46 +94,30 @@ on_delivery_completed(Msg, Info) ->
             #extsub_info{message_id = MessageId, subscriber_ref = SubscriberRef}
         ) ->
             OldDeliveringCount = emqx_extsub_buffer:delivering_count(Buffer0, SubscriberRef),
-            Buffer1 = emqx_extsub_buffer:set_delivered(Buffer0, SubscriberRef, MessageId),
-            NewDeliveringCount = emqx_extsub_buffer:delivering_count(Buffer1, SubscriberRef),
-            BufferSize = emqx_extsub_buffer:size(Buffer1),
-            ?tp_extsub(on_delivery_completed, #{
+            Buffer = emqx_extsub_buffer:set_delivered(Buffer0, SubscriberRef, MessageId),
+            NewDeliveringCount = emqx_extsub_buffer:delivering_count(Buffer, SubscriberRef),
+            BufferSize = emqx_extsub_buffer:size(Buffer),
+            ?tp(warning, on_delivery_completed, #{
                 subscriber_ref => SubscriberRef,
                 old_delivering_count => OldDeliveringCount,
                 new_delivering_count => NewDeliveringCount,
-                buffer_size => BufferSize
+                buffer_size => BufferSize,
+                message_id => MessageId,
+                qos => emqx_message:qos(Msg)
             }),
-            %% Request more data if buffer size for the subscriber is now below the threshold
-            case NewDeliveringCount of
-                N when N < ?MIN_SUB_DELIVERING ->
-                    case emqx_extsub_handler:handle_need_data(Handler0, ?MIN_SUB_DELIVERING) of
-                        {ok, Handler1} ->
-                            Buffer2 = Buffer1;
-                        {ok, Handler1, Messages} ->
-                            Buffer2 = emqx_extsub_buffer:add_new(Buffer1, SubscriberRef, Messages)
-                    end;
-                _ ->
-                    Handler1 = Handler0,
-                    Buffer2 = Buffer1
-            end,
-            St = St0#st{buffer = Buffer2},
-
+            St = St0#st{buffer = Buffer},
+            Handler1 = emqx_extsub_handler:handle_need_data(
+                Handler0, callback_ctx(St, SubscriberRef)
+            ),
             %% Update the unacked window
-            case emqx_message:qos(Msg) of
-                ?QOS_0 ->
-                    Handler = emqx_extsub_handler:handle_ack(Handler1, MessageId, undefined),
-                    {ok, St, Handler};
-                _ ->
-                    ReasonCode = maps:get(reason_code, Info, ?RC_SUCCESS),
-                    Handler = emqx_extsub_handler:handle_ack(Handler1, MessageId, ReasonCode),
-                    Unacked = maps:remove(MessageId, Unacked0),
-                    ?tp_extsub(on_delivery_completed_unacked, #{
-                        subscriber_ref => SubscriberRef,
-                        old_unacked_count => map_size(Unacked0),
-                        new_unacked_count => map_size(Unacked)
-                    }),
-                    {ok, ensure_deliver_retry_timer(0, St#st{unacked = Unacked}), Handler}
-            end
+            Handler = emqx_extsub_handler:handle_ack(Handler1, MessageId, ReasonCode),
+            Unacked = maps:remove(MessageId, Unacked0),
+            ?tp_extsub(on_delivery_completed_unacked, #{
+                subscriber_ref => SubscriberRef,
+                old_unacked_count => map_size(Unacked0),
+                new_unacked_count => map_size(Unacked)
+            }),
+            {ok, ensure_deliver_retry_timer(0, St#st{unacked = Unacked}), Handler}
         end
     ).
 
@@ -192,7 +193,9 @@ on_client_handle_info(
     InfoHandleResult = with_sub_handler(
         SubscriberRef,
         fun(#st{buffer = Buffer0} = St, Handler0) ->
-            case emqx_extsub_handler:handle_info(Handler0, InfoMsg) of
+            case
+                emqx_extsub_handler:handle_info(Handler0, callback_ctx(St, SubscriberRef), InfoMsg)
+            of
                 {ok, Handler} ->
                     {ok, St, Handler, ok};
                 {ok, Handler, Messages} ->
@@ -346,6 +349,9 @@ delivers(MessageEntries) ->
                 },
                 Msg0
             ),
+            ?tp(warning, deliver, #{
+                message_id => MessageId, topic => Topic, deliver_qos => emqx_message:qos(Msg)
+            }),
             {deliver, Topic, Msg}
         end,
         MessageEntries
@@ -410,6 +416,21 @@ deliver_count(SessionInfoFn, UnackedCnt) ->
     case InflightMax of
         0 -> ?EXTSUB_MAX_UNACKED - UnackedCnt;
         _ -> max(?EXTSUB_MAX_UNACKED - UnackedCnt, InflightMax - InflightCnt)
+    end.
+
+callback_ctx(State, SubscriberRef) ->
+    #{desired_message_count => desired_message_count(State, SubscriberRef)}.
+
+desired_message_count(#st{buffer = Buffer}, SubscriberRef) ->
+    ?tp(warning, desired_message_count, #{
+        subscriber_ref => SubscriberRef,
+        delivering_count => emqx_extsub_buffer:delivering_count(Buffer, SubscriberRef)
+    }),
+    case emqx_extsub_buffer:delivering_count(Buffer, SubscriberRef) of
+        N when N < ?MIN_SUB_DELIVERING ->
+            ?MIN_SUB_DELIVERING;
+        _ ->
+            0
     end.
 
 ensure_deliver_retry_timer(St) ->
