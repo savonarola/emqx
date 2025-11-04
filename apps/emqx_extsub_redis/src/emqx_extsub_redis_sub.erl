@@ -16,7 +16,8 @@
 
 -export([
     subscribe/1,
-    unsubscribe/1
+    unsubscribe/1,
+    parse_pub_message/1
 ]).
 
 -export([
@@ -34,6 +35,7 @@
 -define(REDIS_POOL_SIZE, 8).
 
 -define(AUTO_RECONNECT_INTERVAL, 2).
+-define(LOCAL_DECODE_THRESHOLD, 2).
 
 -record(subscribe, {
     pub_fn :: function(),
@@ -64,6 +66,8 @@ subscribe(#{topic := Topic, pub_fn := PubFn}) ->
     Key = Topic,
     From = alias([reply]),
     Subscribe = #subscribe{topic = Topic, from = From, pid = self(), pub_fn = PubFn},
+    %% TODO
+    %% monitor the process
     _ = ecpool:pick_and_do({?REDIS_POOL_NAME, Key}, {erlang, send, [Subscribe]}, no_handover),
     wait_resp(From).
 
@@ -151,13 +155,20 @@ handle_info(
     #{conn := Conn, by_topic := ByTopic} = State0
 ) ->
     ?tp_debug(message, #{topic => Topic, notification => Notification, pid => _Pid}),
-    {Id, Message} = parse_pub_message(State0, Notification),
     ok = eredis_sub:ack_message(Conn),
     case ByTopic of
         #{Topic := Pids} ->
+            PubInfo =
+                case maps:size(Pids) >= ?LOCAL_DECODE_THRESHOLD of
+                    true ->
+                        {Id, Message} = parse_pub_message(Notification),
+                        {redis_pub, Topic, {decoded, Id, Message}};
+                    false ->
+                        {redis_pub, Topic, {encoded, Notification}}
+                end,
             lists:foreach(
                 fun(PubFn) ->
-                    PubFn({redis_pub, Topic, Id, Message})
+                    PubFn(PubInfo)
                 end,
                 maps:values(Pids)
             );
@@ -235,7 +246,7 @@ wait_resp(From) ->
         {error, timeout}
     end.
 
-parse_pub_message(_State, Bin) ->
+parse_pub_message(Bin) ->
     [IdBin, MessageBin] = binary:split(Bin, <<":">>),
     Message = emqx_mq_message_db:decode_message(MessageBin),
     Id = binary_to_integer(IdBin),

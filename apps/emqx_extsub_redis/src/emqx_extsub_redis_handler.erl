@@ -69,19 +69,20 @@ handle_info(
         _ ->
             {ok, State, Messages}
     end;
-handle_info(#{has_data := true} = State, _InfoCtx, {redis_pub, _Topic, _Id, _Message}) ->
+handle_info(#{has_data := true} = State, _InfoCtx, {redis_pub, _Topic, _Notification}) ->
     {ok, State};
 handle_info(
     #{has_data := false} = State,
     #{desired_message_count := 0} = _InfoCtx,
-    {redis_pub, _Topic, _Id, _Message}
+    {redis_pub, _Topic, _Notification}
 ) ->
     {ok, State#{has_data => true}};
 handle_info(
     #{has_data := false, last_id := LastId, send := SendFn} = State,
     _InfoCtx,
-    {redis_pub, _Topic, Id, Message}
+    {redis_pub, _Topic, Notification}
 ) ->
+    {Id, Message} = decode_notification(Notification),
     case Id of
         N when N =:= LastId + 1 ->
             %% New next message, send it
@@ -153,3 +154,8 @@ to_messages(State, [MessageBin, IdBin | Rest], Acc, MaxId) ->
     to_messages(State, Rest, [{Id, Message} | Acc], max(MaxId, Id));
 to_messages(_State, [], Acc, MaxId) ->
     {lists:reverse(Acc), MaxId}.
+
+decode_notification({encoded, Notification}) ->
+    emqx_extsub_redis_sub:parse_pub_message(Notification);
+decode_notification({decoded, Id, Message}) ->
+    {Id, Message}.
