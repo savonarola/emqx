@@ -32,7 +32,8 @@
     handle_info/2
 ]).
 
--define(REDIS_HOST, "127.0.0.1").
+% -define(REDIS_HOST, "127.0.0.1").
+-define(REDIS_HOST, "integration-redis-1.emqx5-offline-redis.emqx.io").
 -define(REDIS_PORT, 6379).
 -define(REDIS_DATABASE, 1).
 
@@ -182,9 +183,7 @@ flush(#{conn := Connection, buffer := Buffer0, store_sha := SHA} = State) ->
         end,
         Buffer
     ),
-    {TimeUs, Results} = timer:tc(eredis, qp, [Connection, Commands]),
-    TimeMs = erlang:convert_time_unit(TimeUs, microsecond, millisecond),
-    ok = emqx_extsub_redis_metrics:observe_hist(flush_latency_ms, TimeMs),
+    Results = eredis:qp(Connection, Commands),
     %% TODO
     %% Ignore errors for now
     ?tp(debug, mq_message_db_redis_flush, #{
