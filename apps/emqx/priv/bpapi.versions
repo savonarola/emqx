@@ -21,6 +21,7 @@
 {emqx_connector,2}.
 {emqx_dashboard,1}.
 {emqx_dashboard,2}.
+{emqx_dashboard_sso_oidc,1}.
 {emqx_delayed,1}.
 {emqx_delayed,2}.
 {emqx_delayed,3}.
@@ -42,6 +43,7 @@
 {emqx_gateway_http,1}.
 {emqx_license,2}.
 {emqx_license,3}.
+{emqx_managed_certs,1}.
 {emqx_management,1}.
 {emqx_management,2}.
 {emqx_management,3}.

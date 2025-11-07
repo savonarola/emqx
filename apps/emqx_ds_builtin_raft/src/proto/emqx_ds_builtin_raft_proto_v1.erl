@@ -49,7 +49,7 @@ This module defines a protocol for RPC to the remote builtin_raft shards.
 %%
 %% No longer returns the keys
 %%
-%% === get_delete_streams, delete_next, make_delete_iterator ===
+%% === get_delete_streams, delete_next, make_delete_iterator, drop_slab ===
 %%
 %% APIs have been removed
 

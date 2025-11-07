@@ -4,9 +4,9 @@
 -module(emqx_bridge_s3tables_aggreg_parquet).
 
 -moduledoc """
-Parquet container implementation for `emqx_connector_aggregator` (almost).
+Parquet container implementation for `emqx_connector_aggreg_container` (almost).
 
-Does not quite match the API of `emqx_connector_aggregator`, though, because we need to
+Does not quite match the API of `emqx_connector_aggreg_container`, though, because we need to
 keep track of extra metadata for each fill.
 """.
 
@@ -48,7 +48,8 @@ new(#{schema := Schema, writer_opts := WriterOpts}) ->
     #parquet{writer = Writer}.
 
 -spec fill([emqx_connector_aggregator:record()], container()) -> {iodata(), map(), container()}.
-fill(Records, #parquet{writer = Writer0} = Container0) ->
+fill(Records0, #parquet{writer = Writer0} = Container0) ->
+    Records = lists:map(fun emqx_utils_maps:binary_key_map/1, Records0),
     NumRecords = length(Records),
     {IOData, Writer1} = parquer_writer:write_many(Writer0, Records),
     WriteMetadata = #{?num_records => NumRecords},

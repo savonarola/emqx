@@ -8,44 +8,14 @@
 -define(SERVER, "http://127.0.0.1:18083").
 -define(BASE_PATH, "/api/v5").
 
-init_suite() ->
-    init_suite([]).
-
-init_suite(Apps) ->
-    init_suite(Apps, fun set_special_configs/1, #{}).
-
-init_suite(Apps, SetConfigs) when is_function(SetConfigs) ->
-    init_suite(Apps, SetConfigs, #{}).
-
-init_suite(Apps, SetConfigs, Opts) ->
-    emqx_common_test_helpers:start_apps(
-        Apps ++ [emqx_management, emqx_dashboard], SetConfigs, Opts
-    ),
-    _ = emqx_common_test_http:create_default_app(),
-    ok.
-
-end_suite() ->
-    end_suite([]).
-
-end_suite(Apps) ->
-    emqx_common_test_http:delete_default_app(),
-    emqx_common_test_helpers:stop_apps(Apps ++ [emqx_management, emqx_dashboard]),
-    ok.
-
-set_special_configs(emqx_dashboard) ->
-    emqx_dashboard_api_test_helpers:set_default_config(),
-    ok;
-set_special_configs(_App) ->
-    ok.
-
 -spec emqx_dashboard() -> emqx_cth_suite:appspec().
 emqx_dashboard() ->
-    emqx_dashboard(
-        "dashboard {\n"
-        "           listeners.http { enable = true, bind = 18083}, \n"
-        "           password_expired_time = \"86400s\"\n"
-        "}"
-    ).
+    emqx_dashboard("""
+        dashboard {
+            listeners.http { enable = true, bind = 18083 }
+            password_expired_time = "86400s"
+        }
+    """).
 
 emqx_dashboard(Config) ->
     {emqx_dashboard, #{
@@ -122,16 +92,25 @@ request_api(Method, Url, QueryParams, AuthOrHeaders, Body0, Opts) when
 
 append_query_params(Url, QueryParams) ->
     case QueryParams of
-        "" -> Url;
-        _ -> Url ++ "?" ++ build_query_string(QueryParams)
+        "" ->
+            Url;
+        _ ->
+            case build_query_string(QueryParams) of
+                [] -> Url;
+                QS -> Url ++ "?" ++ QS
+            end
     end.
 
 do_request_api(Method, Request, Opts) ->
     ReturnAll = maps:get(return_all, Opts, false),
     CompatibleMode = maps:get(compatible_mode, Opts, false),
     HttpcReqOpts = maps:get(httpc_req_opts, Opts, []),
-    ct:pal("~p:\n  ~p~n  Opts: ~p", [Method, format_request(Request), Opts]),
-    case httpc:request(Method, Request, [], HttpcReqOpts) of
+    HTTPOpts = maps:get(http_opts, Opts, []),
+    ct:pal(
+        "~p:\n  ~p~n  Opts: ~p~n  HTTP Opts: ~p~n",
+        [Method, format_request(Request), Opts, HTTPOpts]
+    ),
+    case httpc:request(Method, Request, HTTPOpts, HttpcReqOpts) of
         {error, socket_closed_remotely} ->
             {error, socket_closed_remotely};
         {ok, {{_, Code, _}, _Headers, Body}} when CompatibleMode ->
@@ -176,11 +155,15 @@ simplify_result(Res) ->
     end.
 
 simplify_decode_result(Res) ->
+    {Status, _Headers, Body} = simplify_decode_result_with_headers(Res),
+    {Status, Body}.
+
+simplify_decode_result_with_headers(Res) ->
     case Res of
-        {ok, {{_, Status, _}, _Headers, RespBody0}} ->
+        {ok, {{_, Status, _}, Headers, RespBody0}} ->
             RespBody = maybe_json_decode(RespBody0),
-            {Status, RespBody};
-        {error, {{_, Status, _}, _Headers, RespBody0}} ->
+            {Status, Headers, RespBody};
+        {error, {{_, Status, _}, Headers, RespBody0}} ->
             RespBody =
                 case emqx_utils_json:safe_decode(RespBody0) of
                     {ok, Decoded0 = #{<<"message">> := Msg0}} ->
@@ -191,7 +174,7 @@ simplify_decode_result(Res) ->
                     {error, _} ->
                         RespBody0
                 end,
-            {Status, RespBody}
+            {Status, Headers, RespBody}
     end.
 
 auth_header_() ->
@@ -361,11 +344,11 @@ maybe_json_decode(X) ->
         {error, _} -> X
     end.
 
-simple_request(Method, Path, Params) ->
+simple_request(Method, Path, Body) ->
     simple_request(#{
         method => Method,
         url => Path,
-        body => Params
+        body => Body
     }).
 
 simple_request(Method, Path, Body, AuthHeader) ->
@@ -377,9 +360,19 @@ simple_request(Method, Path, Body, AuthHeader) ->
     }).
 
 simple_request(#{method := Method, url := Url} = Params) ->
-    Opts = #{return_all => true},
+    ReturnHeaders = maps:get(return_headers, Params, false),
     AuthHeader = emqx_utils_maps:get_lazy(auth_header, Params, fun auth_header_/0),
+    AuthHeaders = build_http_header(AuthHeader),
     QueryParams = maps:get(query_params, Params, #{}),
     Body = maps:get(body, Params, ""),
-    Res = request_api(Method, Url, QueryParams, AuthHeader, Body, Opts),
-    simplify_decode_result(Res).
+    Headers = maps:get(extra_headers, Params, []),
+    ExtraOpts = maps:get(extra_opts, Params, #{}),
+    Opts0 = maps:with([http_opts, 'content-type'], Params),
+    Opts = maps:merge(maps:merge(Opts0, ExtraOpts), #{return_all => true}),
+    Res = request_api(Method, Url, QueryParams, AuthHeaders ++ Headers, Body, Opts),
+    case ReturnHeaders of
+        false ->
+            simplify_decode_result(Res);
+        true ->
+            simplify_decode_result_with_headers(Res)
+    end.

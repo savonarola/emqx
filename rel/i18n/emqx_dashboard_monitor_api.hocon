@@ -105,6 +105,16 @@ persisted: {
     label: "Persisted Messages"
 }
 
+rules_matched: {
+    desc: "Number of Rules that matched their where clauses in the last sample window."
+    label: "Matched Rules"
+}
+
+actions_executed: {
+    desc: "Number of Action executions (failures + successes) in the last sample window."
+    label: "Actions Executed"
+}
+
 disconnected_durable_sessions: {
     desc: "Number of disconnected durable sessions at the time of sampling. Can only represent an approximation."
     label: "Disconnected Durable Sessions"
@@ -179,6 +189,16 @@ persisted_rate: {
     label: "Persisted Message Rate"
 }
 
+rules_matched_rate: {
+    desc: "Rule match rate in the last sampling window."
+    label: "Rule Match Rate"
+}
+
+actions_executed_rate: {
+    desc: "Action execution rate in the last sampling window."
+    label: "Action Execution Rate"
+}
+
 retained_msg_count: {
     desc: "Number of retained messages at the time of sampling. Can only represent an approximation."
     label: "Retained Messages"
@@ -196,6 +216,21 @@ node_uptime: {
 license_quota: {
     desc: "Maximum number of sessions allowed by the license."
     label: "License Quota"
+}
+
+bad_rpc: {
+    desc: "Bad RPC"
+    label: "Bad RPC"
+}
+
+metrics_deleted: {
+    desc: "Metrics deleted"
+    label: "Metrics Deleted"
+}
+
+node_not_found: {
+    desc: "Node not found"
+    label: "Node Not Found"
 }
 
 }

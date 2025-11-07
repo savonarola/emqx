@@ -304,30 +304,6 @@ on_remove_channel(
     NewState = maps:put(installed_actions, NewInstalledActions, OldState),
     {ok, NewState}.
 
-%% BridgeV1 entrypoint
-on_query(InstId, {send_message, Msg}, State) ->
-    case maps:get(request, State, undefined) of
-        undefined ->
-            ?SLOG(error, #{msg => "arg_request_not_found", connector => InstId}),
-            {error, arg_request_not_found};
-        Request ->
-            #{
-                method := Method,
-                path := Path,
-                body := Body,
-                headers := Headers,
-                request_timeout := Timeout
-            } = process_request(Request, Msg),
-            %% bridge buffer worker has retry, do not let ehttpc retry
-            Retry = 2,
-            ClientId = maps:get(clientid, Msg, undefined),
-            on_query(
-                InstId,
-                {undefined, ClientId, Method, {Path, Headers, Body}, Timeout, Retry},
-                State
-            )
-    end;
-%% BridgeV2 entrypoint
 on_query(
     InstId,
     {ActionId, Msg},
