@@ -158,13 +158,13 @@ on_session_unsubscribed(_ClientInfo, _Topic, _SubOpts) ->
 %% processed; those that fail to do so are considered dead, and their shard are
 %% released. This protocol requirement may be relaxed in the near future.
 
-on_shard_disp_subscription(ClientInfo, Topic) ->
+on_shard_disp_subscription(_ClientInfo, _Topic) ->
     ok.
 
-on_shard_disp_unsubscription(ClientInfo, Topic) ->
+on_shard_disp_unsubscription(_ClientInfo, _Topic) ->
     ok.
 
-on_shard_disp_message(Message) ->
+on_shard_disp_message(_Message) ->
     ok.
 
 publish_to_stream(StreamHandle, #message{} = Message) ->

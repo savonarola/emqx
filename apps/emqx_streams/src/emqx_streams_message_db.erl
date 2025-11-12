@@ -25,7 +25,9 @@ Facade for all operations with the message database.
     suback/3,
     create_client/1,
     subscribe/4,
-    drop/1
+    drop/1,
+    partitions/1,
+    iterator/3
 ]).
 
 -export([
@@ -374,6 +376,55 @@ drop_regular_db_slab(Slab) ->
     [emqx_ds:ttv()].
 dirty_read_all(Stream) ->
     emqx_ds:dirty_read(db(Stream), stream_message_topic(Stream, '#')).
+
+-spec partitions(emqx_streams_types:stream() | emqx_streams_types:stream_handle()) ->
+    [emqx_streams_types:partition()].
+partitions(Stream) ->
+    emqx_ds:list_shards(db(Stream)).
+
+-spec iterator(
+    emqx_streams_types:stream() | emqx_streams_types:stream_handle(),
+    emqx_streams_types:partition(),
+    emqx_streams_types:offset()
+) ->
+    emqx_ds:iterator().
+iterator(StreamHandle, Partition, Offset) ->
+    case Offset of
+        {Generation0, Timestamp0} ->
+            GenerationMin = Generation0,
+            StartTime = Timestamp0 div 1000;
+        earliest ->
+            GenerationMin = 0,
+            StartTime = 0;
+        latest ->
+            GenerationMin = 0,
+            StartTime = now_ms()
+    end,
+    DB = db(StreamHandle),
+    TopicFilter = stream_message_topic(StreamHandle, '#'),
+    StreamResult = emqx_ds:get_streams(DB, TopicFilter, 0, #{
+        shard => Partition, generation_min => GenerationMin
+    }),
+    case StreamResult of
+        {_, Errors} when length(Errors) > 0 ->
+            {error, Errors};
+        {[], []} ->
+            {error, no_streams_found};
+        {Streams, []} ->
+            case Offset of
+                {_Generation1, Timestamp1} ->
+                    [{Slab, Stream} | _] = Streams,
+                    Filter = fun(Ts) -> Ts > Timestamp1 end;
+                earliest ->
+                    [{Slab, Stream} | _] = Streams,
+                    Filter = fun(_Ts) -> true end;
+                latest ->
+                    {Slab, Stream} = lists:last(Streams),
+                    Filter = fun(_Ts) -> true end
+            end,
+            Iterator = emqx_ds:make_iterator(DB, Stream, TopicFilter, StartTime),
+            {ok, Iterator, Slab, Filter}
+    end.
 
 -spec dirty_index(
     emqx_streams_types:stream() | emqx_streams_types:stream_handle(), emqx_ds:shard()
