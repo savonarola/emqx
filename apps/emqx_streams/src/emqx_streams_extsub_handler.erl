@@ -25,7 +25,7 @@ DS streams are explicity called `DS streams' here.
     handle_subscribe/4,
     handle_unsubscribe/3,
     handle_terminate/1,
-    handle_ack/4,
+    handle_delivered/4,
     handle_info/3
 ]).
 
@@ -72,7 +72,7 @@ DS streams are explicity called `DS streams' here.
     send_after_fn :: function(),
     status :: status(),
     subs :: #{sub_id() => stream_state()},
-    topic_filters :: #{emqx_extsub_types:topic_filter() => sub_id()}
+    topic_filters :: #{emqx_types:topic() => sub_id()}
 }).
 
 -type state() :: #state{}.
@@ -100,7 +100,7 @@ handle_subscribe(
     _SubscribeType,
     SubscribeCtx,
     Handler0,
-    <<"$s/", Rest0/binary>> = TopicFilter
+    <<"$s/", Rest0/binary>> = FullTopicFilter
 ) ->
     maybe
         [Partition, Rest1] ?= binary:split(Rest0, <<"/">>),
@@ -110,7 +110,7 @@ handle_subscribe(
         {ok, Offset} ?= parse_timestamp(OffsetBin),
         {ok, Iterator, {_, Generation} = Slab, Filter} ?=
             emqx_streams_message_db:iterator(Stream, Partition, Offset),
-        false ?= topic_present(Handler0, TopicFilter),
+        false ?= topic_present(Handler0, FullTopicFilter),
         #h{
             state = #state{topic_filters = TopicFilters, subs = Subs} = State0,
             ds_client = DSClient0
@@ -126,45 +126,50 @@ handle_subscribe(
             status = #stream_status_unblocked{}
         },
         State1 = State0#state{
-            topic_filters = TopicFilters#{TopicFilter => SubId}, subs = Subs#{SubId => StreamState}
+            topic_filters = TopicFilters#{FullTopicFilter => SubId}, subs = Subs#{SubId => StreamState}
         },
         {ok, DSClient, State} = emqx_streams_message_db:subscribe(Stream, DSClient0, SubId, State1),
         {ok, Handler#h{state = State, ds_client = DSClient}}
     else
-        _ ->
+        Error ->
+            ?tp(error, streams_handler_subscribe_error, #{error => Error, topic_filter => FullTopicFilter}),
             ignore
     end;
-handle_subscribe(_SubscribeType, _SubscribeCtx, _Handler, _TopicFilter) ->
+handle_subscribe(_SubscribeType, _SubscribeCtx, _Handler, _FullTopicFilter) ->
     ignore.
 
 handle_unsubscribe(
     _UnsubscribeType,
     #h{state = #state{topic_filters = TopicFilters0} = State0, ds_client = DSClient0} = Handler,
-    TopicFilter
+    FullTopicFilter
 ) ->
     % -spec unsubscribe(t(), sub_id(), HostState) -> {ok, t(), HostState} | {error, not_found}.
-    SubId = maps:get(TopicFilter, TopicFilters0),
-    {ok, DSClient, #state{topic_filters = TopicFilters, subs = Subs} = State1} = emqx_ds_client:unsubscribe(
-        DSClient0, SubId, State0
-    ),
-    State = State1#state{
-        topic_filters = maps:remove(TopicFilter, TopicFilters),
-        subs = maps:remove(SubId, Subs)
-    },
-    Handler#h{state = State, ds_client = DSClient}.
+    case TopicFilters0 of
+        #{FullTopicFilter := SubId} ->
+            {ok, DSClient, #state{topic_filters = TopicFilters, subs = Subs} = State1} = emqx_ds_client:unsubscribe(
+                DSClient0, SubId, State0
+            ),
+            State = State1#state{
+                topic_filters = maps:remove(FullTopicFilter, TopicFilters),
+                subs = maps:remove(SubId, Subs)
+            },
+            Handler#h{state = State, ds_client = DSClient};
+        _ ->
+            Handler
+    end.
 
 handle_terminate(#h{state = State, ds_client = DSClient}) ->
     ?tp(debug, handle_terminate, #{state => State}),
     _ = emqx_ds_client:destroy(DSClient, State),
     ok.
 
-handle_ack(
+handle_delivered(
     HState,
-    #{desired_message_count := DesiredCount} = _AckCtx,
+    #{desired_message_count := DesiredCount} = _DeliveredCtx,
     _Message,
     _Ack
 ) ->
-    {ok, update_blocking_status(HState, DesiredCount)}.
+    update_blocking_status(HState, DesiredCount).
 
 handle_info(HState, #{desired_message_count := DesiredCount} = _InfoCtx, Info) ->
     handle_info(update_blocking_status(HState, DesiredCount), Info).
@@ -375,7 +380,8 @@ init_handler(undefined, #{send_after := SendAfterFn, send := SendFn} = _Ctx) ->
         send_fn = SendFn,
         send_after_fn = SendAfterFn,
         status = #status_unblocked{},
-        subs = #{}
+        subs = #{},
+        topic_filters = #{}
     },
     DSClient = emqx_streams_message_db:create_client(?MODULE),
     #h{state = State, ds_client = DSClient};
@@ -384,8 +390,8 @@ init_handler(#h{} = Handler, _Ctx) ->
 
 topic_present(undefined, _TopicFilter) ->
     false;
-topic_present(#h{state = #state{topic_filters = TopicFilters}}, TopicFilter) ->
-    maps:is_key(TopicFilter, TopicFilters).
+topic_present(#h{state = #state{topic_filters = TopicFilters}}, FullTopicFilter) ->
+    maps:is_key(FullTopicFilter, TopicFilters).
 
 update_stream_state(#h{state = State} = HState, SubId, StreamState) ->
     HState#h{state = update_stream_state(State, SubId, StreamState)};

@@ -422,7 +422,9 @@ iterator(StreamHandle, Partition, Offset) ->
                     {Slab, Stream} = lists:last(Streams),
                     Filter = fun(_Ts) -> true end
             end,
-            Iterator = emqx_ds:make_iterator(DB, Stream, TopicFilter, StartTime),
+            %% TODO
+            %% Handle error
+            {ok, Iterator} = emqx_ds:make_iterator(DB, Stream, TopicFilter, StartTime),
             {ok, Iterator, Slab, Filter}
     end.
 

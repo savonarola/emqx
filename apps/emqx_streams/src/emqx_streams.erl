@@ -24,13 +24,18 @@ register_hooks() ->
     %% FIXME: prios
     ok = emqx_hooks:add('message.publish', {?MODULE, on_message_publish, []}, ?HP_HIGHEST),
     ok = emqx_hooks:add('session.subscribed', {?MODULE, on_session_subscribed, []}, ?HP_LOWEST),
-    ok = emqx_hooks:add('session.unsubscribed', {?MODULE, on_session_unsubscribed, []}, ?HP_LOWEST).
+    ok = emqx_hooks:add('session.unsubscribed', {?MODULE, on_session_unsubscribed, []}, ?HP_LOWEST),
+    ok = emqx_extsub_handler_registry:register(emqx_streams_extsub_handler, #{
+        handle_generic_messages => true,
+        multi_topic => true
+    }).
 
 -spec unregister_hooks() -> ok.
 unregister_hooks() ->
     emqx_hooks:del('message.publish', {?MODULE, on_message_publish}),
     emqx_hooks:del('session.subscribed', {?MODULE, on_session_subscribed}),
-    emqx_hooks:del('session.unsubscribed', {?MODULE, on_session_unsubscribed}).
+    emqx_hooks:del('session.unsubscribed', {?MODULE, on_session_unsubscribed}),
+    emqx_extsub_handler_registry:unregister(emqx_streams_extsub_handler).
 
 %%
 

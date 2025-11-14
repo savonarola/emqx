@@ -47,9 +47,21 @@ end_per_testcase(_CaseName, _Config) ->
 %% Test cases
 %%--------------------------------------------------------------------
 
-t_smoke(_Config) ->
-    Stream = emqx_streams_test_utils:create_stream(#{topic_filter => <<"t/#">>}),
-    ok = emqx_streams_test_utils:populate(10, #{topic_prefix => <<"t/">>}),
-    AllMessages = emqx_streams_message_db:dirty_read_all(Stream),
-    ?assertEqual(10, length(AllMessages)),
-    ok.
+% t_smoke(_Config) ->
+%     Stream = emqx_streams_test_utils:create_stream(#{topic_filter => <<"t/#">>}),
+%     ok = emqx_streams_test_utils:populate(10, #{topic_prefix => <<"t/">>}),
+%     AllMessages = emqx_streams_message_db:dirty_read_all(Stream),
+%     ?assertEqual(10, length(AllMessages)),
+%     ok.
+
+t_read_all(_Config) ->
+    _Stream = emqx_streams_test_utils:create_stream(#{topic_filter => <<"t/#">>}),
+    ok = emqx_streams_test_utils:populate(50, #{topic_prefix => <<"t/">>, different_clients => true}),
+
+    CSub = emqx_streams_test_utils:emqtt_connect([]),
+    ok = emqx_streams_test_utils:emqtt_sub_stream(CSub, <<"0/1-0/t/#">>),
+    ok = emqx_streams_test_utils:emqtt_sub_stream(CSub, <<"1/1-0/t/#">>),
+
+    {ok, Msgs} = emqx_streams_test_utils:emqtt_drain(_MinMsg = 50, _Timeout = 500),
+    ?assertEqual(50, length(Msgs)),
+    ok = emqtt:disconnect(CSub).
