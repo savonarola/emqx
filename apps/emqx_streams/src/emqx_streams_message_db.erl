@@ -154,6 +154,7 @@ insert(#{is_lastvalue := true} = StreamHandle, IsLimited, Message) ->
                     emqx_streams_metrics:observe_hist_stream(
                         StreamHandle, insert_latency_ms, us_to_ms(Time)
                     ),
+                    emqx_streams_metrics:inc_stream(StreamHandle, insert_ok),
                     IsLimited andalso
                         update_quota(
                             StreamHandle,
@@ -196,6 +197,7 @@ insert(#{is_lastvalue := false} = StreamHandle, true = _IsLimited, Message) ->
             emqx_streams_metrics:observe_hist_stream(
                 StreamHandle, insert_latency_ms, us_to_ms(Time)
             ),
+            emqx_streams_metrics:inc_stream(StreamHandle, insert_ok),
             ok = update_quota(
                 StreamHandle,
                 {Shard, Gen},
@@ -238,6 +240,7 @@ insert(#{is_lastvalue := false} = StreamHandle, false = _IsLimited, Message) ->
                             emqx_streams_metrics:observe_hist_stream(
                                 StreamHandle, insert_latency_ms, ElapsedMs
                             ),
+                            emqx_streams_metrics:inc_stream(StreamHandle, insert_ok),
                             ok;
                         {error, IsRecoverable, Reason} ->
                             emqx_streams_metrics:inc_stream(StreamHandle, insert_errors),
