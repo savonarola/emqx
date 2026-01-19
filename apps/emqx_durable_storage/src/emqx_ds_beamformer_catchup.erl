@@ -214,6 +214,7 @@ do_fulfill(
     StartKey
 ) ->
     T0 = erlang:monotonic_time(microsecond),
+    ct:print("do_fulfill: scan_stream, start_key=~p", [StartKey]),
     ScanResult = emqx_ds_beamformer:scan_stream(
         CBM, DBShard, Stream, TopicFilter, StartKey, BatchSize
     ),
