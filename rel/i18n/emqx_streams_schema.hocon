@@ -103,4 +103,27 @@ read_max_unacked {
     label: "Read Max Unacked"
 }
 
+tools {
+    desc: """~
+        Tools available for the stream"""
+    label: "Tools"
+}
+
+prompt {
+    desc: """~
+        AI prompt for the stream"""
+    label: "Prompt"
+}
+
+provider {
+    desc: """~
+        AI provider for the stream"""
+    label: "Provider"
+}
+
+model {
+    desc: """~
+        AI model for the stream"""
+    label: "Model"
+}
 }

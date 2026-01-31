@@ -58,6 +58,7 @@ on_message_publish_stream(#message{topic = Topic} = Message) ->
             case Result of
                 ok ->
                     emqx_streams_metrics:inc(ds, inserted_messages),
+                    emqx_streams_aug_worker:handle_new_message(Stream),
                     ?tp_debug(streams_on_message_publish_to_queue, #{
                         topic_filter => emqx_streams_prop:topic_filter(Stream),
                         message_topic => emqx_message:topic(Message),

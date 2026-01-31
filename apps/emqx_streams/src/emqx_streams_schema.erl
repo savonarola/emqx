@@ -229,6 +229,30 @@ stream_fields(IsLastValue) ->
                 required => false,
                 importance => ?IMPORTANCE_HIDDEN,
                 default => 1000
+            })},
+        {prompt,
+            mk(binary(), #{
+                desc => ?DESC(prompt),
+                required => false,
+                default => <<>>
+            })},
+        {tools,
+            mk(array(map()), #{
+                desc => ?DESC(tools),
+                required => false,
+                default => []
+            })},
+        {provider,
+            mk(hoconsc:union([openai, together]), #{
+                desc => ?DESC(provider),
+                required => false,
+                default => <<"openai">>
+            })},
+        {model,
+            mk(binary(), #{
+                desc => ?DESC(model),
+                required => false,
+                default => <<"gpt-5">>
             })}
     ].
 

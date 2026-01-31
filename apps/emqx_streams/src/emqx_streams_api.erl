@@ -19,9 +19,9 @@
 
 %% API callbacks
 -export([
-    '/message_streams/streams'/2,
-    '/message_streams/streams/:topic_filter'/2,
-    '/message_streams/config'/2
+    '/context_streams/streams'/2,
+    '/context_streams/streams/:topic_filter'/2,
+    '/context_streams/config'/2
 ]).
 
 -export([
@@ -43,14 +43,14 @@ api_spec() ->
 
 paths() ->
     [
-        "/message_streams/streams",
-        "/message_streams/streams/:topic_filter",
-        "/message_streams/config"
+        "/context_streams/streams",
+        "/context_streams/streams/:topic_filter",
+        "/context_streams/config"
     ].
 
-schema("/message_streams/streams") ->
+schema("/context_streams/streams") ->
     #{
-        'operationId' => '/message_streams/streams',
+        'operationId' => '/context_streams/streams',
         filter => fun ?MODULE:check_ready/2,
         get => #{
             tags => ?TAGS,
@@ -96,9 +96,9 @@ schema("/message_streams/streams") ->
             }
         }
     };
-schema("/message_streams/streams/:topic_filter") ->
+schema("/context_streams/streams/:topic_filter") ->
     #{
-        'operationId' => '/message_streams/streams/:topic_filter',
+        'operationId' => '/context_streams/streams/:topic_filter',
         filter => fun ?MODULE:check_ready/2,
         get => #{
             tags => ?TAGS,
@@ -162,9 +162,9 @@ schema("/message_streams/streams/:topic_filter") ->
             }
         }
     };
-schema("/message_streams/config") ->
+schema("/context_streams/config") ->
     #{
-        'operationId' => '/message_streams/config',
+        'operationId' => '/context_streams/config',
         get => #{
             tags => ?TAGS,
             summary => <<"Get message stream config">>,
@@ -246,7 +246,7 @@ put_message_stream_config_example() ->
 %% Minirest handlers
 %%--------------------------------------------------------------------
 
-'/message_streams/streams'(get, #{query_string := QString}) ->
+'/context_streams/streams'(get, #{query_string := QString}) ->
     EncodedCursor = maps:get(<<"cursor">>, QString, undefined),
     Limit = maps:get(<<"limit">>, QString),
     case decode_cursor(EncodedCursor) of
@@ -264,7 +264,7 @@ put_message_stream_config_example() ->
         bad_cursor ->
             ?BAD_REQUEST(<<"Invalid cursor">>)
     end;
-'/message_streams/streams'(post, #{body := NewMessageStreamRaw}) ->
+'/context_streams/streams'(post, #{body := NewMessageStreamRaw}) ->
     case add_message_stream(NewMessageStreamRaw) of
         {ok, CreatedMessageStreamRaw} ->
             ?OK(CreatedMessageStreamRaw);
@@ -276,14 +276,14 @@ put_message_stream_config_example() ->
             ?SERVICE_UNAVAILABLE(Reason)
     end.
 
-'/message_streams/streams/:topic_filter'(get, #{bindings := #{topic_filter := TopicFilter}}) ->
+'/context_streams/streams/:topic_filter'(get, #{bindings := #{topic_filter := TopicFilter}}) ->
     case get_message_stream(TopicFilter) of
         not_found ->
             ?NOT_FOUND(<<"Message stream not found">>);
         {ok, Stream} ->
             ?OK(Stream)
     end;
-'/message_streams/streams/:topic_filter'(put, #{
+'/context_streams/streams/:topic_filter'(put, #{
     body := UpdatedMessageStream, bindings := #{topic_filter := TopicFilter}
 }) ->
     case update_message_stream(TopicFilter, UpdatedMessageStream) of
@@ -300,7 +300,7 @@ put_message_stream_config_example() ->
         {error, _} = Error ->
             ?SERVICE_UNAVAILABLE(Error)
     end;
-'/message_streams/streams/:topic_filter'(delete, #{bindings := #{topic_filter := TopicFilter}}) ->
+'/context_streams/streams/:topic_filter'(delete, #{bindings := #{topic_filter := TopicFilter}}) ->
     case delete_message_stream(TopicFilter) of
         not_found ->
             ?NOT_FOUND(<<"Message stream not found">>);
@@ -310,9 +310,9 @@ put_message_stream_config_example() ->
             ?NO_CONTENT
     end.
 
-'/message_streams/config'(get, _) ->
+'/context_streams/config'(get, _) ->
     ?OK(emqx_streams_config:raw_api_config());
-'/message_streams/config'(put, #{body := Body}) ->
+'/context_streams/config'(put, #{body := Body}) ->
     case emqx_streams_config:update_config(Body) of
         {ok, _} ->
             ?NO_CONTENT;

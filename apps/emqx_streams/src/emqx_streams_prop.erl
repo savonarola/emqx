@@ -16,12 +16,32 @@ The module contains accessor functions for the Streams.
     topic_filter/1,
     quota_index_opts/1,
     max_unacked/1,
-    data_retention_period/1
+    data_retention_period/1,
+    prompt/1,
+    tools/1,
+    provider/1,
+    model/1
 ]).
 
 %%--------------------------------------------------------------------
 %% API
 %%--------------------------------------------------------------------
+
+-spec prompt(emqx_streams_types:stream()) -> binary().
+prompt(#{prompt := Prompt} = _Stream) ->
+    Prompt.
+
+-spec tools(emqx_streams_types:stream()) -> [term()].
+tools(#{tools := Tools} = _Stream) ->
+    Tools.
+
+-spec provider(emqx_streams_types:stream()) -> binary().
+provider(#{provider := Provider} = _Stream) ->
+    Provider.
+
+-spec model(emqx_streams_types:stream()) -> binary().
+model(#{model := Model} = _Stream) ->
+    Model.
 
 -spec is_limited(emqx_streams_types:stream()) -> boolean().
 is_limited(

@@ -176,6 +176,8 @@ handle_subscribe(
                     Handler = add_unknown_stream(Handler1, SubscribeParams),
                     {ok, schedule_check_stream_status(Handler)}
             end;
+        ignore ->
+            ignore;
         ?err_unrec(Reason) ->
             ?tp(warning, streams_extsub_handler_subscribe_error, #{
                 reason => Reason,
@@ -699,19 +701,19 @@ update_stream_state(#h{state = State} = Handler, DSSubId, StreamState) ->
 update_stream_state(#state{ds_subs = DSSubs} = State, DSSubId, StreamState) ->
     State#state{ds_subs = DSSubs#{DSSubId => StreamState}}.
 
-decode_message(_Shard, ?STREAMS_MESSAGE_DB_TOPIC(_TF, _StreamId, Key), Time, Payload) ->
-    Message = emqx_streams_message_db:decode_message(Payload),
-    add_properties(Message, #{
-        <<"ts">> => integer_to_binary(Time),
-        <<"key">> => Key
-    }).
+decode_message(_Shard, ?STREAMS_MESSAGE_DB_TOPIC(_TF, _StreamId, _Key), _Time, Payload) ->
+    _Message = emqx_streams_message_db:decode_message(Payload).
+%     add_properties(Message, #{
+%         <<"ts">> => integer_to_binary(Time),
+%         <<"key">> => Key
+%     }).
 
-add_properties(Message, AddProperties) when is_map(AddProperties) ->
-    Props = emqx_message:get_header(properties, Message, #{}),
-    UserProperties0 = maps:get('User-Property', Props, []),
-    UserPropMap = maps:merge(maps:from_list(UserProperties0), AddProperties),
-    UserProperties = maps:to_list(UserPropMap),
-    emqx_message:set_header(properties, Props#{'User-Property' => UserProperties}, Message).
+% add_properties(Message, AddProperties) when is_map(AddProperties) ->
+%     Props = emqx_message:get_header(properties, Message, #{}),
+%     UserProperties0 = maps:get('User-Property', Props, []),
+%     UserPropMap = maps:merge(maps:from_list(UserProperties0), AddProperties),
+%     UserProperties = maps:to_list(UserPropMap),
+%     emqx_message:set_header(properties, Props#{'User-Property' => UserProperties}, Message).
 
 init_progress(Stream, ?all_shards, StartTimeUs) ->
     case emqx_streams_message_db:find_generations(Stream, StartTimeUs) of
@@ -852,6 +854,8 @@ check_stream_subscribe_topic_filter(_Ctx, <<"$s/", TopicFilter0/binary>> = FullT
             full_topic_filter = FullTopicFilter
         }}
     end;
+check_stream_subscribe_topic_filter(Ctx, <<"$context-stream/", TopicFilter/binary>>) ->
+    check_stream_subscribe_topic_filter(Ctx, <<"$stream/", TopicFilter/binary>>);
 check_stream_subscribe_topic_filter(Ctx, <<"$stream/", TopicFilter/binary>> = FullTopicFilter) ->
     SubOpts = maps:get(subopts, Ctx, #{}),
     SubProps = maps:get(sub_props, SubOpts, #{}),
@@ -866,7 +870,9 @@ check_stream_subscribe_topic_filter(Ctx, <<"$stream/", TopicFilter/binary>> = Fu
         }}
     end;
 check_stream_subscribe_topic_filter(Ctx, <<"$sp/", _/binary>> = FullTopicFilter) ->
-    check_stream_subscribe_topic_filter_with_partition(Ctx, FullTopicFilter).
+    check_stream_subscribe_topic_filter_with_partition(Ctx, FullTopicFilter);
+check_stream_subscribe_topic_filter(_Ctx, _TopicFilter) ->
+    ignore.
 
 %% Hide partitions from the user for now
 -ifdef(TEST).

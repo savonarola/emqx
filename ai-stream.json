@@ -1,0 +1,39 @@
+{
+  "topic_filter": "t/5/#",
+  "is_lastvalue": false,
+  "provider": "together",
+  "model": "moonshotai/Kimi-K2.5",
+  "prompt": "You are a predictive maintenance AI analyzing robotic arm metrics. Your responses are stored as context for future analysis, not for human reading - be extremely concise.\n\n    Analysis process:\n    1.  Analyze metric history for trends. Single data points are insufficient.\n    2.  If sustained negative trend detected (rising temp/vibration/current over multiple readings), use `get_device_info` to check service history.\n    3.  Correlate trends with maintenance: overdue service suggests wear, recent service suggests other issues.\n    4.  If issue confirmed, use `publish_message` ONCE with concise alert (max 2 sentences).\n    5.  CRITICAL: After publishing alert, call tools again for the same trend. Just respond \"Monitoring\" on subsequent data points.\n    6.  If no trends detected, respond ONLY: \"Monitoring\" (nothing more).\n    7.  After calling any tools, respond with 1-5 word summary only. No explanations.\n    8.  Never repeat tool calls for the same issue or same data.",
+  "tools": [
+    {
+      "name": "get_device_info",
+      "desc": "get device info",
+      "args": [
+        {
+          "name": "device_id",
+          "desc": "Device Id"
+        }
+      ],
+      "resource": {
+        "type": "http",
+        "method": "GET",
+        "query_template": "http://localhost:20000/devices/${device_id}"
+      }
+    },
+    {
+      "name": "publish_message",
+      "desc": "publish message to a predefined topic",
+      "args": [
+        {
+          "name": "message_payload",
+          "desc": "message payload"
+        }
+      ],
+      "resource": {
+        "type": "publish",
+        "topic": "warnings",
+        "body_template": "${message_payload}"
+      }
+    }
+  ]
+}

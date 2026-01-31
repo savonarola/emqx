@@ -10,7 +10,9 @@
     start_metrics/0,
     start_gc_scheduler/0,
     start_gc_sup/0,
-    start_gc/0
+    start_aug_sup/0,
+    start_gc/0,
+    start_aug_worker/1
 ]).
 
 -behaviour(supervisor).
@@ -18,6 +20,7 @@
 
 -define(ROOT_SUP, ?MODULE).
 -define(GC_SUP, emqx_streams_gc_sup).
+-define(AUG_SUP, emqx_streams_aug_sup).
 
 %%
 
@@ -30,6 +33,9 @@ start_gc_sup() ->
 start_post_starter(MFA) ->
     supervisor:start_child(?ROOT_SUP, post_start_child_spec(MFA)).
 
+start_aug_sup() ->
+    supervisor:start_link({local, ?AUG_SUP}, ?MODULE, ?AUG_SUP).
+
 start_gc_scheduler() ->
     ensure_child(?ROOT_SUP, emqx_streams_gc:child_spec()).
 
@@ -39,6 +45,16 @@ start_metrics() ->
 start_gc() ->
     ensure_child(?GC_SUP, emqx_streams_gc_worker:child_spec()).
 
+start_aug_worker(Stream) ->
+    Spec = emqx_streams_aug_worker:child_spec(Stream),
+    case supervisor:start_child(?AUG_SUP, Spec) of
+        {ok, Pid} ->
+            {ok, Pid};
+        {error, {already_started, Pid}} ->
+            {ok, Pid};
+        {error, Reason} ->
+            {error, Reason}
+    end.
 %%
 
 init(?ROOT_SUP) ->
@@ -48,10 +64,19 @@ init(?ROOT_SUP) ->
         period => 10
     },
     ChildSpecs = [
-        gc_sup_child_spec()
+        gc_sup_child_spec(),
+        aug_sup_child_spec()
     ],
     {ok, {SupFlags, ChildSpecs}};
 init(?GC_SUP) ->
+    SupFlags = #{
+        strategy => one_for_one,
+        intensity => 10,
+        period => 10
+    },
+    ChildSpecs = [],
+    {ok, {SupFlags, ChildSpecs}};
+init(?AUG_SUP) ->
     SupFlags = #{
         strategy => one_for_one,
         intensity => 10,
@@ -73,6 +98,16 @@ gc_sup_child_spec() ->
     #{
         id => ?GC_SUP,
         start => {?MODULE, start_gc_sup, []},
+        restart => permanent,
+        shutdown => infinity,
+        type => supervisor,
+        modules => [?MODULE]
+    }.
+
+aug_sup_child_spec() ->
+    #{
+        id => ?AUG_SUP,
+        start => {?MODULE, start_aug_sup, []},
         restart => permanent,
         shutdown => infinity,
         type => supervisor,

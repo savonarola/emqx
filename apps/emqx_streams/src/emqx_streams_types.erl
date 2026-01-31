@@ -29,7 +29,11 @@ The module contains basic types for the Streams application.
     key_expression := emqx_variform:compiled(),
     limits := limits(),
     data_retention_period := interval_ms(),
-    read_max_unacked := non_neg_integer()
+    read_max_unacked := non_neg_integer(),
+    prompt := binary(),
+    tools := [term()],
+    provider := binary(),
+    model := binary()
 }.
 
 -export_type([

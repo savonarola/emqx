@@ -86,7 +86,9 @@ create(
         is_lastvalue := _IsLastValue,
         limits := _Limits,
         data_retention_period := _DataRetentionPeriod,
-        read_max_unacked := _ReadMaxUnacked
+        read_max_unacked := _ReadMaxUnacked,
+        prompt := _Prompt,
+        tools := _Tools
     } = Stream0
 ) ->
     Key = make_key(TopicFilter),
@@ -321,7 +323,7 @@ record_to_stream(
         read_max_unacked = ReadMaxUnacked,
         max_shard_message_count = MaxShardMessageCount,
         max_shard_message_bytes = MaxShardMessageBytes,
-        extra = _Extra
+        extra = Extra
     } = _Rec
 ) ->
     #{
@@ -334,7 +336,11 @@ record_to_stream(
         limits => #{
             max_shard_message_count => MaxShardMessageCount,
             max_shard_message_bytes => MaxShardMessageBytes
-        }
+        },
+        prompt => maps:get(prompt, Extra, <<>>),
+        tools => maps:get(tools, Extra, []),
+        provider => maps:get(provider, Extra, <<"openai">>),
+        model => maps:get(model, Extra, <<"gpt-5">>)
     }.
 
 stream_to_record(
@@ -348,7 +354,11 @@ stream_to_record(
         limits := #{
             max_shard_message_count := MaxShardMessageCount,
             max_shard_message_bytes := MaxShardMessageBytes
-        }
+        },
+        prompt := Prompt,
+        tools := Tools,
+        provider := Provider,
+        model := Model
     } = _Stream
 ) ->
     #?STREAMS_REGISTRY_INDEX_TAB{
@@ -359,7 +369,13 @@ stream_to_record(
         data_retention_period = DataRetentionPeriod,
         read_max_unacked = ReadMaxUnacked,
         max_shard_message_count = MaxShardMessageCount,
-        max_shard_message_bytes = MaxShardMessageBytes
+        max_shard_message_bytes = MaxShardMessageBytes,
+        extra = #{
+            prompt => Prompt,
+            tools => Tools,
+            provider => Provider,
+            model => Model
+        }
     }.
 
 stream_count() ->
