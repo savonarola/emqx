@@ -673,6 +673,7 @@ end).
 }).
 
 -define(SHARE, "$share").
+-define(QUEUE, "$queue").
 
 -define(REDISPATCH_TO(GROUP, TOPIC), {GROUP, TOPIC}).
 
