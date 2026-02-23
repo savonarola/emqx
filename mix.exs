@@ -523,6 +523,7 @@ defmodule EMQXUmbrella.MixProject do
             :emqx_mix,
             :emqx_bpapi,
             :emqx_machine,
+            :emqx_tokio,
             :emqx_gateway,
             :emqx_gateway_stomp,
             :emqx_gateway_mqttsn,

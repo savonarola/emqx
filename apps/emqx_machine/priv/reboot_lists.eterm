@@ -83,7 +83,8 @@
             emqx_plugins,
             quicer,
             bcrypt,
-            emqx_telemetry
+            emqx_telemetry,
+            emqx_tokio
         ],
     %% must always be of type `load'
     ee_business_apps =>
