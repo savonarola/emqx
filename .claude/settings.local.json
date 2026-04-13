@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make SUITE=apps/emqx_agent/test/emqx_agent_demo_storage_pipeline_SUITE.erl ct-suite)",
+      "Bash(python3 exp_board_summary.py)",
+      "Bash(python3 exp_board_summary2.py)",
+      "Bash(make SUITE=apps/emqx_agent/test/emqx_agent_demo_storage_pipeline_SUITE.erl CASE=t_full_path_two_t_devices_packed ct-suite)",
+      "Bash(make apps/emqx_agent-ct)",
+      "Bash(make SUITE=apps/emqx_agent/test/emqx_agent_skill_mqtt_request_SUITE.erl ct-suite)"
+    ]
+  }
+}
