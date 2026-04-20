@@ -9,7 +9,9 @@
       "Bash(make SUITE=apps/emqx_agent/test/emqx_agent_skill_mqtt_request_SUITE.erl ct-suite)",
       "Bash(python3 -)",
       "Bash(./scripts/ct/run.sh --app apps/emqx_agent --only-up)",
-      "Bash(make SUITE=apps/emqx_agent/test/emqx_agent_api_SUITE ct-suite)"
+      "Bash(make SUITE=apps/emqx_agent/test/emqx_agent_api_SUITE ct-suite)",
+      "Bash(grep -v \"ok$\\\\|OK\")",
+      "Bash(grep -v \"^\\\\s*$\")"
     ]
   }
 }
