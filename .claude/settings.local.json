@@ -11,7 +11,17 @@
       "Bash(./scripts/ct/run.sh --app apps/emqx_agent --only-up)",
       "Bash(make SUITE=apps/emqx_agent/test/emqx_agent_api_SUITE ct-suite)",
       "Bash(grep -v \"ok$\\\\|OK\")",
-      "Bash(grep -v \"^\\\\s*$\")"
+      "Bash(grep -v \"^\\\\s*$\")",
+      "Bash(grep -E \"^[a-z_]+$\")",
+      "Bash(sort -u grep -o '?DESC\\([a-z_]*\\)' /home/av/emqx/emqx-v5/apps/emqx_agent/src/emqx_agent_schema.erl)",
+      "Bash(sort -u comm -23 /tmp/needed_keys.txt /tmp/existing_keys.txt)",
+      "Bash(python3 -c \"import paho.mqtt.client\")",
+      "Bash(curl -s -u key:secret http://localhost:18083/api/v5/agent/pipelines/apple-box-inspection)",
+      "Bash(python3 -m json.tool)",
+      "Bash(SUITES=apps/emqx_agent/test/emqx_agent_pipeline_SUITE.erl,apps/emqx_agent/test/emqx_agent_api_SUITE.erl make apps/emqx_agent-ct)",
+      "Bash(make SUITE=apps/emqx_agent/test/emqx_agent_builder_SUITE.erl ct-suite)",
+      "Bash(grep -n \"resolve\\\\|\\\\\\\\\\\\$\\\\.\\\\|jsonpath\\\\|context\" /home/av/emqx/emqx-v5/apps/emqx_agent/src/emqx_agent_pipeline.erl)",
+      "Bash(grep -n \"run_query\\\\|{ok,\" /home/av/emqx/emqx-v5/apps/emqx_agent/src/skills/emqx_agent_skill_postgresql.erl)"
     ]
   }
 }
