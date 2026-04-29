@@ -953,6 +953,8 @@ with_channel(Fun, Args, State = #state{channel = Channel}) ->
 %%--------------------------------------------------------------------
 %% Handle outgoing packets
 
+handle_outgoing(_Packets, State = #state{sockstate = closed}) ->
+    {ok, State};
 handle_outgoing(Packets, State = #state{channel = _Channel}) ->
     Res = do_handle_outgoing(Packets, State),
     _ = ?EXT_TRACE_OUTGOING_STOP(
@@ -1045,9 +1047,13 @@ send(Num, IoData, #state{socket = Socket, sockstate = idle} = State) ->
             sent(Num, Oct, queue_send(Handle, Rest, State));
         {select, _Info} ->
             sent(Num, Oct, queue_send(Handle, IoData, State));
+        {error, {Reason, _Rest}} when Reason =:= closed; Reason =:= einval; Reason =:= enotconn ->
+            {ok, close_socket(State)};
         {error, {Reason, _Rest}} ->
             %% Defer error handling:
             {ok, {sock_error, Reason}, State};
+        {error, Reason} when Reason =:= closed; Reason =:= einval; Reason =:= enotconn ->
+            {ok, close_socket(State)};
         {error, Reason} ->
             {ok, {sock_error, Reason}, State}
     end;
@@ -1078,9 +1084,13 @@ handle_send_ready(Socket, SS = #congested{sendq = SQ}, State) ->
             NSS = SS#congested{handle = Handle, sendq = IoData},
             NState = State#state{sockstate = NSS},
             {ok, NState};
+        {error, {Reason, _Rest}} when Reason =:= closed; Reason =:= einval; Reason =:= enotconn ->
+            {ok, close_socket(State)};
         {error, {Reason, _Rest}} ->
             %% Defer error handling:
             {ok, {sock_error, Reason}, State};
+        {error, Reason} when Reason =:= closed; Reason =:= einval; Reason =:= enotconn ->
+            {ok, close_socket(State)};
         {error, Reason} ->
             {ok, {sock_error, Reason}, State}
     end.
