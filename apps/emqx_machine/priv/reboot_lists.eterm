@@ -92,6 +92,8 @@
             emqx_opentelemetry,
             emqx_mt,
             emqx_mq,
+            emqx_extsub,
+            emqx_extsub_redis,
             emqx_schema_validation,
             emqx_message_transformation,
             emqx_ai_completion,
