@@ -30,7 +30,8 @@
 %% Check API
 -export([
     check/1,
-    check/2
+    check/2,
+    check_subscribe/3
 ]).
 
 -export([
@@ -257,28 +258,36 @@ check(#mqtt_packet_publish{topic_name = TopicName, properties = Props}) ->
         error:_Error ->
             {error, ?RC_TOPIC_NAME_INVALID}
     end;
-check(#mqtt_packet_subscribe{properties = #{'Subscription-Identifier' := I}}) when
-    I =< 0; I > 16#FFFFFFF
-->
-    {error, ?RC_SUBSCRIPTION_IDENTIFIERS_NOT_SUPPORTED};
-check(#mqtt_packet_subscribe{topic_filters = []}) ->
-    {error, ?RC_TOPIC_FILTER_INVALID};
-check(#mqtt_packet_subscribe{topic_filters = TopicFilters}) ->
-    try
-        validate_topic_filters(TopicFilters)
-    catch
-        %% Known Specificed Reason Code
-        error:{error, RC} ->
-            {error, RC};
-        error:_Error ->
-            {error, ?RC_TOPIC_FILTER_INVALID}
-    end;
+check(#mqtt_packet_subscribe{properties = Properties, topic_filters = TopicFilters}) ->
+    check_subscribe(Properties, TopicFilters, #{});
 check(#mqtt_packet_unsubscribe{topic_filters = []}) ->
     {error, ?RC_TOPIC_FILTER_INVALID};
 check(#mqtt_packet_unsubscribe{topic_filters = TopicFilters}) ->
     try
         validate_topic_filters(TopicFilters)
     catch
+        error:_Error ->
+            {error, ?RC_TOPIC_FILTER_INVALID}
+    end.
+
+-spec check_subscribe(
+    emqx_types:properties(),
+    [{emqx_types:topic() | emqx_types:share(), emqx_types:subopts()}],
+    map()
+) ->
+    ok | {error, emqx_types:reason_code()}.
+check_subscribe(#{'Subscription-Identifier' := I}, _TopicFilters, _Opts) when
+    I =< 0; I > 16#FFFFFFF
+->
+    {error, ?RC_SUBSCRIPTION_IDENTIFIERS_NOT_SUPPORTED};
+check_subscribe(_Properties, [], _Opts) ->
+    {error, ?RC_TOPIC_FILTER_INVALID};
+check_subscribe(_Properties, TopicFilters, _Opts) ->
+    try
+        validate_topic_filters(TopicFilters)
+    catch
+        error:{error, RC} ->
+            {error, RC};
         error:_Error ->
             {error, ?RC_TOPIC_FILTER_INVALID}
     end.
@@ -414,6 +423,8 @@ run_checks([Check | More], Packet, Options) ->
 validate_topic_filters(TopicFilters) ->
     lists:foreach(
         fun
+            ({#share{}, #{nl := 1}}) ->
+                error({error, ?RC_PROTOCOL_ERROR});
             %% Protocol Error and Should Disconnect
             %% MQTT-5.0 [MQTT-3.8.3-4] and [MQTT-4.13.1-1]
             ({<<?SHARE, "/", _Rest/binary>>, #{nl := 1}}) ->
