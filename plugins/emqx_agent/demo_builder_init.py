@@ -43,9 +43,6 @@ OPENAI_BASE_URL = env("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = env("OPENAI_MODEL", "gpt-5.4")
 OPENAI_API_KEY = env("OPENAI_API_KEY")
 
-FIREWORKS_BASE_URL = env("FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1")
-FIREWORKS_MODEL = env("FIREWORKS_MODEL", "accounts/fireworks/models/kimi-k2p5")
-
 PGHOST = env("PGHOST", "pgsql")
 PGPORT = env("PGPORT", "5432")
 PGDATABASE = env("PGDATABASE", "mqtt")

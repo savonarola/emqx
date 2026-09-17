@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Provision all EMQX Agent resources for the Apple Box Conveyor Quality Inspector demo.
+r"""Provision the Apple Box Conveyor Quality Inspector demo without PostgreSQL.
 
 Required env vars:
   OPENAI_API_KEY     — OpenAI API key
 
 Optional env vars (for this init script):
-  EMQX_HOST          — EMQX host for API requests (default: localhost)
-  EMQX_BASE_URL      — EMQX Agent plugin API base URL
-                       (default: http://$EMQX_HOST:18083/api/v5/plugin_api/emqx_agent)
-  EMQX_CORE_BASE_URL — EMQX core API base URL (default: http://$EMQX_HOST:18083/api/v5)
+  EMQX_BASE_URL      — EMQX server base URL (default: http://localhost:18083/)
   EMQX_API_CREDS     — Basic-auth "key:secret" (default: key:secret)
   OPENAI_BASE_URL    — OpenAI-compatible base URL (default: https://api.openai.com/v1)
   OPENAI_MODEL       — Model name              (default: gpt-5.4-mini)
-  PGHOST / PGPORT / PGDATABASE / PGUSER / PGPASSWORD  — PostgreSQL connection
 
 Usage:
-  python3 demo_apple_box_init.py
+  EMQX_BASE_URL='http://localhost:18083/' \
+  EMQX_API_CREDS='key:secret' \
+  OPENAI_API_KEY='your-openai-api-key' \
+  OPENAI_BASE_URL='https://api.openai.com/v1' \
+  OPENAI_MODEL='gpt-5.4-mini' \
+  python3 demo_apple_box_nopg_init.py
 """
 
 import base64
@@ -35,22 +36,14 @@ def env(name: str, default: str | None = None) -> str:
     return value
 
 
-EMQX_HOST = env("EMQX_HOST", "localhost")
-BASE_URL = env(
-    "EMQX_BASE_URL", f"http://{EMQX_HOST}:18083/api/v5/plugin_api/emqx_agent"
-)
-CORE_BASE_URL = env("EMQX_CORE_BASE_URL", f"http://{EMQX_HOST}:18083/api/v5")
+EMQX_BASE_URL = env("EMQX_BASE_URL", "http://localhost:18083/").rstrip("/")
+CORE_BASE_URL = f"{EMQX_BASE_URL}/api/v5"
+BASE_URL = f"{CORE_BASE_URL}/plugin_api/emqx_agent"
 CREDS = env("EMQX_API_CREDS", "key:secret")
 
 OPENAI_BASE_URL = env("OPENAI_BASE_URL", "https://api.openai.com/v1")
 OPENAI_MODEL = env("OPENAI_MODEL", "gpt-5.4-mini")
 OPENAI_API_KEY = env("OPENAI_API_KEY")
-
-PGHOST = env("PGHOST", "pgsql")
-PGPORT = env("PGPORT", "5432")
-PGDATABASE = env("PGDATABASE", "mqtt")
-PGUSER = env("PGUSER", "root")
-PGPASSWORD = env("PGPASSWORD", "public")
 
 PROVIDER_NAME = "apple-inspector"
 PIPELINE_ID = "apple-box-inspection"
@@ -58,8 +51,6 @@ PIPELINE_ID = "apple-box-inspection"
 SK_SHOT = "box-shot"
 SK_ALERT = "box-alert"
 SK_STATUS = "box-status"
-SK_REGISTER = "box-register"
-CONNECTION_ID = "pg-main"
 
 
 def empty_object_schema() -> dict:
@@ -156,61 +147,6 @@ def deactivate_pipeline_maybe(pid: str) -> None:
         api_request("PUT", f"/pipelines/{pid}", {**pipeline, "active": False})
 
 
-# ── Database setup ─────────────────────────────────────────────────────────────
-
-
-def create_db_table() -> None:
-    """Create the inspections table via the PostgreSQL tool resource."""
-    sql = (
-        "CREATE TABLE IF NOT EXISTS apple_box_inspections ("
-        "  id SERIAL PRIMARY KEY,"
-        "  conveyor_id TEXT NOT NULL,"
-        "  box_id TEXT NOT NULL,"
-        "  status TEXT NOT NULL,"
-        "  reason TEXT,"
-        "  inspected_at TIMESTAMPTZ DEFAULT NOW()"
-        ")"
-    )
-    # Use psycopg2 if available, otherwise fall back to psql subprocess.
-    try:
-        import psycopg2  # type: ignore
-
-        conn = psycopg2.connect(
-            host=PGHOST,
-            port=int(PGPORT),
-            dbname=PGDATABASE,
-            user=PGUSER,
-            password=PGPASSWORD,
-        )
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            cur.execute(sql)
-        conn.close()
-        print(f"  table apple_box_inspections ready (psycopg2)")
-    except ImportError:
-        import subprocess
-
-        env_vars = os.environ.copy()
-        env_vars["PGPASSWORD"] = PGPASSWORD
-        result = subprocess.run(
-            [
-                "psql",
-                f"--host={PGHOST}",
-                f"--port={PGPORT}",
-                f"--dbname={PGDATABASE}",
-                f"--username={PGUSER}",
-                "--command",
-                sql,
-            ],
-            env=env_vars,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"psql failed: {result.stderr}")
-        print(f"  table apple_box_inspections ready (psql)")
-
-
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
 
@@ -220,32 +156,7 @@ def delete_old_assets() -> None:
     api_delete_maybe(f"/tools/message__request/{SK_SHOT}")
     api_delete_maybe(f"/tools/message__publish/{SK_ALERT}")
     api_delete_maybe(f"/tools/message__publish/{SK_STATUS}")
-    api_delete_maybe(f"/tools/postgresql__query/{SK_REGISTER}")
-    api_delete_maybe(f"/connections/{CONNECTION_ID}")
     api_delete_maybe(f"/ai/providers/{PROVIDER_NAME}", base_url=CORE_BASE_URL)
-
-
-def create_connection() -> None:
-    api_request(
-        "POST",
-        "/connections",
-        {
-            "id": CONNECTION_ID,
-            "type": "postgresql",
-            "enable": True,
-            "config": {
-                "server": f"{PGHOST}:{PGPORT}",
-                "database": PGDATABASE,
-                "username": PGUSER,
-                "password": PGPASSWORD,
-                "pool_size": 1,
-                "connect_timeout": 5000,
-                "disable_prepared_statements": True,
-                "ssl": {"enable": False},
-            },
-        },
-    )
-    print(f"  connection {CONNECTION_ID!r} created")
 
 
 def create_ai_provider() -> None:
@@ -305,23 +216,6 @@ def create_tools() -> None:
     )
     print(f"  tool {SK_STATUS!r} created")
 
-    api_request(
-        "POST",
-        "/tools",
-        {
-            "type": "postgresql__query",
-            "id": SK_REGISTER,
-            "desc": "Record box inspection result in the database",
-            "resource": CONNECTION_ID,
-            "query": (
-                "INSERT INTO apple_box_inspections"
-                "(conveyor_id, box_id, status, reason) "
-                "VALUES(${conveyor_id}, ${box_id}, ${status}, ${reason})"
-            ),
-        },
-    )
-    print(f"  tool {SK_REGISTER!r} created")
-
 
 INSPECTOR_INSTRUCTIONS = (
     "You are an apple quality inspector for a conveyor line. "
@@ -366,18 +260,6 @@ def create_pipeline() -> None:
                     "result_path": "$.inspection",
                 },
                 {
-                    "id": "register",
-                    "type": "call_tool",
-                    "tool": f"postgresql__query@{SK_REGISTER}",
-                    "args": {
-                        "conveyor_id": "$.event.conveyor_id",
-                        "box_id": "$.event.box_id",
-                        "status": "$.inspection.status",
-                        "reason": "$.inspection.reason",
-                    },
-                    "result_path": "$.db_result",
-                },
-                {
                     "id": "notify",
                     "type": "call_tool",
                     "tool": f"message__publish@{SK_STATUS}",
@@ -396,12 +278,6 @@ def create_pipeline() -> None:
 def main() -> int:
     print("==> Removing any existing apple-box assets")
     delete_old_assets()
-
-    print(f"==> Creating PostgreSQL connection on {PGHOST}:{PGPORT}/{PGDATABASE}")
-    create_connection()
-
-    print(f"==> Creating database table on {PGHOST}:{PGPORT}/{PGDATABASE}")
-    create_db_table()
 
     print("==> Creating tools")
     create_tools()
