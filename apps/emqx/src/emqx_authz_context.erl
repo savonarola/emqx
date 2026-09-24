@@ -88,7 +88,7 @@ get_authn(AuthzContext, Key, Default) ->
 
 -spec require_trusted_attributes() -> boolean().
 require_trusted_attributes() ->
-    Default = emqx_security_profile:policy(authz_context) =:= restricted,
+    Default = emqx_security_profile:policy(authorization_require_trusted_attributes),
     emqx:get_config([authorization, require_trusted_attributes], Default).
 
 %%--------------------------------------------------------------------

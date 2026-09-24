@@ -59,7 +59,8 @@ merge_authn_result(ClientInfo0, AuthResult0, ClientAttrsMode) ->
     {ClientInfo2, TrustedMask2} = apply_clientid_override(
         ClientInfo1, AuthResult0, TrustedMask1
     ),
-    {ClientInfo, TrustedMask} = apply_zone_override(ClientInfo2, AuthResult0, TrustedMask2),
+    {ClientInfo, TrustedMask3} = apply_zone_override(ClientInfo2, AuthResult0, TrustedMask2),
+    TrustedMask = merge_masks(TrustedMask3, configured_trusted_mask(ClientInfo)),
     ExpireAt = maps:get(expire_at, AuthResult0, undefined),
     AuthnResult0 = maps:without(
         [client_attrs, clientid_override, expire_at, trusted_attrs, zone_override],
@@ -99,7 +100,7 @@ maybe_trusted(ClientInfo, true) ->
 
 -spec mqtt_require_trusted_attributes(emqx_types:clientinfo()) -> boolean().
 mqtt_require_trusted_attributes(#{zone := Zone}) ->
-    Default = emqx_security_profile:policy(authz_context) =:= restricted,
+    Default = emqx_security_profile:policy(mqtt_require_trusted_attributes),
     emqx_config:get_zone_conf(Zone, [mqtt, require_trusted_attributes], Default).
 
 -spec set(emqx_types:clientinfo(), key_path(), term()) -> emqx_types:clientinfo().
@@ -192,6 +193,57 @@ apply_zone_override(ClientInfo, #{zone_override := Zone}, TrustedMask) when is_b
     end;
 apply_zone_override(ClientInfo, _AuthResult, TrustedMask) ->
     {ClientInfo, TrustedMask}.
+
+configured_trusted_mask(#{zone := Zone} = ClientInfo) ->
+    Paths = emqx_config:get_zone_conf(Zone, [mqtt, trusted_client_attributes], []),
+    lists:foldl(
+        fun(Path, Mask) ->
+            case resolve_configured_path(Path, ClientInfo) of
+                {ok, ResolvedPath} -> put_mask(ResolvedPath, Mask);
+                error -> Mask
+            end
+        end,
+        #{},
+        Paths
+    );
+configured_trusted_mask(_ClientInfo) ->
+    #{}.
+
+resolve_configured_path(Path, ClientInfo) when is_binary(Path) ->
+    case binary:split(Path, <<".">>, [global]) of
+        Segments = [First | _] when First =/= <<>> ->
+            resolve_configured_path(Segments, ClientInfo, []);
+        _ ->
+            error
+    end.
+
+resolve_configured_path([], _Value, Acc) ->
+    {ok, lists:reverse(Acc)};
+resolve_configured_path([Segment | Rest], Value, Acc) when is_map(Value) ->
+    case configured_key(Segment, Value) of
+        {ok, Key} -> resolve_configured_path(Rest, maps:get(Key, Value), [Key | Acc]);
+        error -> error
+    end;
+resolve_configured_path(_Segments, _Value, _Acc) ->
+    error.
+
+configured_key(Segment, Map) ->
+    case maps:is_key(Segment, Map) of
+        true ->
+            {ok, Segment};
+        false ->
+            configured_atom_key(Segment, maps:keys(Map))
+    end.
+
+configured_atom_key(Segment, [Key | Rest]) when is_atom(Key) ->
+    case atom_to_binary(Key) of
+        Segment -> {ok, Key};
+        _ -> configured_atom_key(Segment, Rest)
+    end;
+configured_atom_key(Segment, [_Key | Rest]) ->
+    configured_atom_key(Segment, Rest);
+configured_atom_key(_Segment, []) ->
+    error.
 
 merge_masks(true, _Mask) ->
     true;

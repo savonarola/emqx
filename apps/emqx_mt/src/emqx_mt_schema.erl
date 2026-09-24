@@ -64,6 +64,17 @@ fields("config") ->
                     converter => fun compile_post_auth_tns_expression/2
                 }
             )},
+        {require_trusted_attributes,
+            mk(
+                boolean(),
+                #{
+                    desc => ?DESC("require_trusted_attributes"),
+                    importance => ?IMPORTANCE_HIGH,
+                    default => emqx_security_profile:policy(
+                        multi_tenancy_require_trusted_attributes
+                    )
+                }
+            )},
         {deny_namespaces,
             mk(
                 hoconsc:array(binary()),

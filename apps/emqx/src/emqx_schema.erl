@@ -3095,7 +3095,14 @@ authz_fields() ->
                     default => emqx_security_profile:policy(authz_default_include_mountpoint),
                     desc => ?DESC("authz_include_mountpoint")
                 }
-            )}
+            )},
+        {"require_trusted_attributes",
+            sc(boolean(), #{
+                default => emqx_security_profile:policy(
+                    authorization_require_trusted_attributes
+                ),
+                desc => ?DESC("authz_require_trusted_attributes")
+            })}
     ].
 
 %% @private return a list of keys in a parent field
@@ -4466,6 +4473,16 @@ mqtt_general() ->
             sc(boolean(), #{
                 default => false,
                 desc => ?DESC("namespace_as_mountpoint")
+            })},
+        {"require_trusted_attributes",
+            sc(boolean(), #{
+                default => emqx_security_profile:policy(mqtt_require_trusted_attributes),
+                desc => ?DESC("mqtt_require_trusted_attributes")
+            })},
+        {"trusted_client_attributes",
+            sc(hoconsc:array(binary()), #{
+                default => [],
+                desc => ?DESC("mqtt_trusted_client_attributes")
             })}
     ].
 %% All session's importance should be lower than general part to organize document.

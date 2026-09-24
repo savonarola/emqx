@@ -60,6 +60,9 @@ Returns policy depending on the current security profile.
     (authn_jwt_missing) -> ignore | deny;
     (internal_subscription_checks) -> boolean();
     (authz_context) -> legacy | restricted;
+    (authorization_require_trusted_attributes) -> boolean();
+    (multi_tenancy_require_trusted_attributes) -> boolean();
+    (mqtt_require_trusted_attributes) -> boolean();
     (delayed_publish_reauthorization) -> boolean();
     (exhook_server_unavailable) -> honor_failed_action | deny;
     (exhook_message_publish_failure) -> ignore | deny;
@@ -130,6 +133,12 @@ policy(authz_context) ->
         legacy -> legacy;
         hardened -> restricted
     end;
+policy(authorization_require_trusted_attributes) ->
+    trusted_attributes_default();
+policy(multi_tenancy_require_trusted_attributes) ->
+    trusted_attributes_default();
+policy(mqtt_require_trusted_attributes) ->
+    trusted_attributes_default();
 policy(delayed_publish_reauthorization) ->
     case profile() of
         legacy -> false;
@@ -212,3 +221,9 @@ cache_profile() ->
         end,
     _ = persistent_term:put(?PT_KEY, Profile),
     Profile.
+
+trusted_attributes_default() ->
+    case profile() of
+        legacy -> false;
+        hardened -> true
+    end.

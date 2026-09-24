@@ -24,20 +24,27 @@ emqx_mt_schema {
             tenant namespace key used by multi-tenancy quota and routing decisions.
             Leave empty to disable (default). When empty, multi-tenancy resolves
             `tns` only from `mqtt.client_attrs_init` (evaluated before authentication).
-            When configured, the expression can reference any binding available to
+            When configured, the expression can reference bindings available to
             `mqtt.client_attrs_init` (for example, <code>username</code>,
-            <code>clientid</code>, <code>cert_common_name</code>) plus
-            <code>client_attrs.*</code> (merged pre-auth and authentication-response
-            attributes). Example: <code>client_attrs.tag</code> makes the multi-tenancy
+            <code>clientid</code>, and <code>cert_common_name</code>) plus
+            <code>client_attrs.*</code>. When <code>require_trusted_attributes</code> is
+            enabled, the expression can access only trusted bindings. Example:
+            <code>client_attrs.tag</code> makes the multi-tenancy
             app treat an auth-server-supplied <code>tag</code> attribute as the
             tenant namespace. Example with fallback:
             <code>coalesce(client_attrs.tag, username)</code>.
-            If the expression renders to an empty string, the existing
-            <code>tns</code> value (if any) is kept. If the expression errors, a
+            If the expression renders to an empty string or returns an error, a
             warning is logged and the client is treated as having no <code>tns</code>.
             Names listed in <code>deny_namespaces</code> cannot be used as a
             namespace; a client resolving to one of them is rejected.~"""
         label: "Post-authentication tns expression"
+    }
+    require_trusted_attributes {
+        desc: """~
+            Use only trusted client attributes for namespace resolution, managed namespace
+            checks, and quota checks. The default is `false` for the legacy security profile
+            and `true` for the hardened security profile.~"""
+        label: "Require Trusted Attributes"
     }
     deny_namespaces {
         desc: """~

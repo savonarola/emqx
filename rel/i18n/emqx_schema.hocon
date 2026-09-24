@@ -15,6 +15,14 @@ Find more details in 'authorization.sources' config."""
 fields_authorization_no_match.label:
 """Authorization no match"""
 
+authz_require_trusted_attributes {
+  label: "Require Trusted Attributes"
+  desc: """~
+    Use only trusted client attributes for authorization rules, backend request templates,
+    superuser checks, and client ACL checks. The default is `false` for the legacy security
+    profile and `true` for the hardened security profile.~"""
+}
+
 zones.desc:
 """A zone is a set of configs grouped by the zone <code>name</code>.
 For flexible configuration mapping, the <code>name</code> can be set to a listener's <code>zone</code> config.
@@ -2121,6 +2129,23 @@ namespace_as_mountpoint {
     Example (Namespace `n1`):
       - Client subscribes to `sensors/#` -> Broker registers `n1/sensors/#`.
       - Broker routes `n1/sensors/data` -> Client receives `sensors/data`.~"""
+}
+
+mqtt_require_trusted_attributes {
+  label: "Require Trusted MQTT Attributes"
+  desc: """~
+    Use only trusted client attributes for namespace mountpoints, gateway mountpoint templates,
+    and limiter adjustment. The default is `false` for the legacy security profile and `true`
+    for the hardened security profile. A zone can override this setting.~"""
+}
+
+mqtt_trusted_client_attributes {
+  label: "Additional Trusted Client Attributes"
+  desc: """~
+    Client information paths to trust in addition to fields validated by authentication.
+    Use dotted paths for nested values, for example `clientid` and `client_attrs.tns`.
+    A zone can override this list. Configure a path only when its value is validated by an
+    external control.~"""
 }
 
 authz_include_mountpoint {

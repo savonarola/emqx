@@ -156,7 +156,7 @@ get_post_auth_tns_expression() ->
 
 -spec require_trusted_attributes() -> boolean().
 require_trusted_attributes() ->
-    Default = emqx_security_profile:policy(authz_context) =:= restricted,
+    Default = emqx_security_profile:policy(multi_tenancy_require_trusted_attributes),
     emqx:get_config([multi_tenancy, require_trusted_attributes], Default).
 
 -spec get_managed_ns_config(emqx_mt:tns()) ->

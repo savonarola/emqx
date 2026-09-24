@@ -69,6 +69,7 @@ t_profile(Config) ->
 
     ?assertEqual(Profile, emqx_security_profile:profile()),
     assert_policies(Profile),
+    assert_trusted_attribute_config(Profile),
 
     assert_default_binds(Profile),
 
@@ -105,6 +106,13 @@ assert_policies(legacy) ->
     ?assertEqual(ignore, emqx_security_profile:policy(authn_jwt_missing)),
     ?assertEqual(false, emqx_security_profile:policy(internal_subscription_checks)),
     ?assertEqual(legacy, emqx_security_profile:policy(authz_context)),
+    ?assertEqual(
+        false, emqx_security_profile:policy(authorization_require_trusted_attributes)
+    ),
+    ?assertEqual(
+        false, emqx_security_profile:policy(multi_tenancy_require_trusted_attributes)
+    ),
+    ?assertEqual(false, emqx_security_profile:policy(mqtt_require_trusted_attributes)),
     ?assertEqual(false, emqx_security_profile:policy(delayed_publish_reauthorization)),
     ?assertEqual(
         honor_failed_action,
@@ -120,7 +128,11 @@ assert_policies(legacy) ->
     ),
     ?assertEqual(false, emqx_security_profile:policy(authz_default_include_mountpoint)),
     ?assertMatch(
-        #{authorization := #{include_mountpoint := false}},
+        #{
+            authorization := #{
+                include_mountpoint := false, require_trusted_attributes := false
+            }
+        },
         hocon_tconf:check_plain(
             emqx_schema,
             #{<<"authorization">> => #{}},
@@ -139,6 +151,13 @@ assert_policies(hardened) ->
     ?assertEqual(deny, emqx_security_profile:policy(authn_jwt_missing)),
     ?assertEqual(true, emqx_security_profile:policy(internal_subscription_checks)),
     ?assertEqual(restricted, emqx_security_profile:policy(authz_context)),
+    ?assertEqual(
+        true, emqx_security_profile:policy(authorization_require_trusted_attributes)
+    ),
+    ?assertEqual(
+        true, emqx_security_profile:policy(multi_tenancy_require_trusted_attributes)
+    ),
+    ?assertEqual(true, emqx_security_profile:policy(mqtt_require_trusted_attributes)),
     ?assertEqual(true, emqx_security_profile:policy(delayed_publish_reauthorization)),
     ?assertEqual(deny, emqx_security_profile:policy(exhook_server_unavailable)),
     ?assertEqual(deny, emqx_security_profile:policy(exhook_message_publish_failure)),
@@ -151,7 +170,7 @@ assert_policies(hardened) ->
     ),
     ?assertEqual(true, emqx_security_profile:policy(authz_default_include_mountpoint)),
     ?assertMatch(
-        #{authorization := #{include_mountpoint := true}},
+        #{authorization := #{include_mountpoint := true, require_trusted_attributes := true}},
         hocon_tconf:check_plain(
             emqx_schema,
             #{<<"authorization">> => #{}},
@@ -162,6 +181,64 @@ assert_policies(hardened) ->
     ?assertEqual(
         true, emqx_security_profile:policy(authz_mnesia_mt_rule_conflict_protection)
     ).
+
+assert_trusted_attribute_config(Profile) ->
+    Expected = Profile =:= hardened,
+    ?assertEqual(Expected, emqx:get_config([mqtt, require_trusted_attributes])),
+    ?assertEqual([], emqx:get_config([mqtt, trusted_client_attributes])),
+    ?assertMatch(
+        #{<<"multi_tenancy">> := #{<<"require_trusted_attributes">> := Expected}},
+        hocon_tconf:check_plain(
+            emqx_mt_schema,
+            #{<<"multi_tenancy">> => #{}},
+            #{atom_key => false, required => false},
+            [multi_tenancy]
+        )
+    ),
+    ClientInfo = #{
+        zone => default,
+        clientid => <<"client">>,
+        username => <<"user">>,
+        client_attrs => #{<<"tns">> => <<"tenant">>, <<"other">> => <<"value">>}
+    },
+    emqx_config:put_zone_conf(default, [mqtt, require_trusted_attributes], not Expected),
+    ?assertEqual(
+        not Expected, emqx_clientinfo:mqtt_require_trusted_attributes(ClientInfo)
+    ),
+    emqx_config:put_zone_conf(default, [mqtt, require_trusted_attributes], Expected),
+    emqx_config:put_zone_conf(default, [mqtt, trusted_client_attributes], [
+        <<"username">>, <<"client_attrs.tns">>, <<"missing.path">>
+    ]),
+    TrustedClientInfo = emqx_clientinfo:merge_authn_result(ClientInfo, #{}, merge),
+    ?assertEqual({ok, <<"user">>}, emqx_clientinfo:get_trusted(TrustedClientInfo, username)),
+    ?assertEqual(
+        {ok, <<"tenant">>},
+        emqx_clientinfo:get_trusted(TrustedClientInfo, [client_attrs, <<"tns">>])
+    ),
+    ?assertEqual(
+        error,
+        emqx_clientinfo:get_trusted(TrustedClientInfo, [client_attrs, <<"other">>])
+    ),
+    emqx_config:put([zones, trusted_zone], #{
+        mqtt => #{
+            require_trusted_attributes => not Expected,
+            trusted_client_attributes => [<<"client_attrs.other">>]
+        }
+    }),
+    ZoneClientInfo = emqx_clientinfo:merge_authn_result(
+        ClientInfo, #{zone_override => <<"trusted_zone">>}, merge
+    ),
+    ?assertEqual(trusted_zone, maps:get(zone, ZoneClientInfo)),
+    ?assertEqual(
+        not Expected, emqx_clientinfo:mqtt_require_trusted_attributes(ZoneClientInfo)
+    ),
+    ?assertEqual(
+        {ok, <<"value">>},
+        emqx_clientinfo:get_trusted(ZoneClientInfo, [client_attrs, <<"other">>])
+    ),
+    ?assertEqual(error, emqx_clientinfo:get_trusted(ZoneClientInfo, username)),
+    emqx_config:put([zones], #{}),
+    emqx_config:put_zone_conf(default, [mqtt, trusted_client_attributes], []).
 
 assert_default_binds(Profile) ->
     %% Schema defaults are static bare ports; the profile is applied at
