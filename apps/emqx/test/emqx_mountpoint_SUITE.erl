@@ -142,3 +142,27 @@ t_replvar(_) ->
             }
         )
     ).
+
+%% Verify that strict rendering rejects missing allowed mountpoint variables.
+t_replvar_strict(_) ->
+    ?assertEqual(
+        {ok, <<"mount/user/client/">>},
+        emqx_mountpoint:replvar_strict(
+            <<"mount/${username}/${clientid}/">>,
+            #{username => <<"user">>, clientid => <<"client">>}
+        )
+    ),
+    ?assertMatch(
+        {error, {unresolved_mountpoint_placeholders, [_]}},
+        emqx_mountpoint:replvar_strict(
+            <<"mount/${username}/${clientid}/">>,
+            #{clientid => <<"client">>}
+        )
+    ),
+    ?assertEqual(
+        {ok, <<"mount/${not.allowed}/client/">>},
+        emqx_mountpoint:replvar_strict(
+            <<"mount/${not.allowed}/${clientid}/">>,
+            #{clientid => <<"client">>}
+        )
+    ).

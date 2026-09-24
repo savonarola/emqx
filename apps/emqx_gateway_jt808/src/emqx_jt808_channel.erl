@@ -335,9 +335,14 @@ do_handle_in(Frame = ?MSG(?MC_AUTH), Channel0) ->
         {ok, _NFrame, Channel} ->
             case authenticate(Frame, Channel) of
                 true ->
-                    NChannel0 = normalize_authenticated_phone(Frame, Channel),
-                    NChannel = process_connect(Frame, ensure_connected(NChannel0)),
-                    authack({0, MsgSn, NChannel});
+                    case normalize_authenticated_phone(Frame, Channel) of
+                        {ok, NChannel0} ->
+                            NChannel = process_connect(Frame, ensure_connected(NChannel0)),
+                            authack({0, MsgSn, NChannel});
+                        {error, Reason} ->
+                            ?SLOG(warning, #{msg => "mountpoint_render_failed", reason => Reason}),
+                            authack({1, MsgSn, Channel})
+                    end;
                 false ->
                     authack({1, MsgSn, Channel})
             end
@@ -839,12 +844,24 @@ terminate(Reason, #channel{clientinfo = ClientInfo, conninfo = ConnInfo}) ->
 %%--------------------------------------------------------------------
 
 maybe_fix_mountpoint(ClientInfo = #{mountpoint := undefined}) ->
-    ClientInfo;
+    {ok, ClientInfo};
 maybe_fix_mountpoint(ClientInfo = #{mountpoint := Mountpoint}) ->
     %% TODO: Enrich the variable replacement????
     %%       i.e: ${ClientInfo.auth_result.productKey}
-    Mountpoint1 = emqx_mountpoint:replvar(Mountpoint, ClientInfo),
-    ClientInfo#{mountpoint := Mountpoint1}.
+    RequireTrustedAttrs = emqx_clientinfo:mqtt_require_trusted_attributes(ClientInfo),
+    MountpointClientInfo = emqx_clientinfo:maybe_trusted(ClientInfo, RequireTrustedAttrs),
+    case RequireTrustedAttrs of
+        false ->
+            Mountpoint1 = emqx_mountpoint:replvar(Mountpoint, MountpointClientInfo),
+            {ok, ClientInfo#{mountpoint := Mountpoint1}};
+        true ->
+            case emqx_mountpoint:replvar_strict(Mountpoint, MountpointClientInfo) of
+                {ok, Mountpoint1} ->
+                    {ok, emqx_clientinfo:set(ClientInfo, mountpoint, Mountpoint1)};
+                {error, _} = Error ->
+                    Error
+            end
+    end.
 
 process_connect(
     _Frame,
@@ -1219,14 +1236,20 @@ normalize_authenticated_phone(
     #{<<"header">> := #{<<"phone">> := Phone}},
     Channel = #channel{clientinfo = ClientInfo0, conninfo = ConnInfo}
 ) ->
-    ClientInfo = maps:without(
+    ClientInfo1 = maps:without(
         [registered_phone, authenticated_phone],
         ClientInfo0#{phone => Phone, clientid => Phone}
     ),
-    Channel#channel{
-        clientinfo = ClientInfo,
-        conninfo = ConnInfo#{clientid => Phone}
-    }.
+    ClientInfo2 = emqx_clientinfo:set_trusted(ClientInfo1, clientid, Phone),
+    case maybe_fix_mountpoint(ClientInfo2) of
+        {ok, ClientInfo} ->
+            {ok, Channel#channel{
+                clientinfo = ClientInfo,
+                conninfo = ConnInfo#{clientid => Phone}
+            }};
+        {error, _} = Error ->
+            Error
+    end.
 
 check_connected_frame_phone(
     #{<<"header">> := #{<<"phone">> := Phone}},
@@ -1303,13 +1326,13 @@ enrich_clientinfo(
 ) ->
     ProtoVer = maps:get(<<"proto_ver">>, Header, ?PROTO_VER_2013),
     NClientInfo0 = maps:remove(authenticated_phone, ClientInfo),
-    NClientInfo = maybe_fix_mountpoint(NClientInfo0#{
+    NClientInfo = NClientInfo0#{
         phone => Phone,
         clientid => Phone,
         manufacturer => Manu,
         terminal_id => DevId,
         proto_ver => ProtoVer
-    }),
+    },
     {ok, Channel#channel{clientinfo = NClientInfo}};
 %% Auth
 enrich_clientinfo(

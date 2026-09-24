@@ -11,6 +11,12 @@
 
 all() -> emqx_common_test_helpers:all(?MODULE).
 
+%% Verify that disabled projection returns the original client info term.
+t_maybe_trusted_disabled(_) ->
+    ClientInfo = #{clientid => <<"client">>, trusted_attrs => #{clientinfo => #{}}},
+    ?assert(ClientInfo =:= emqx_clientinfo:maybe_trusted(ClientInfo, false)),
+    ?assertNot(ClientInfo =:= emqx_clientinfo:maybe_trusted(ClientInfo, true)).
+
 %% Verify that authn composition relocates outputs and trusts returned values and overrides.
 t_merge_authn_result(_) ->
     ClientInfo0 = #{

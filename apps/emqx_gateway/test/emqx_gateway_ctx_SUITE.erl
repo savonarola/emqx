@@ -27,18 +27,21 @@ init_per_suite(Conf) ->
             (#{clientid := admin}) ->
                 {ok, #{is_superuser => true}};
             (#{clientid := <<"original-clientid">>}) ->
-                {ok, #{clientid_override => <<"overridden-clientid">>}};
+                {ok, #{
+                    clientid_override => <<"overridden-clientid">>,
+                    trusted_attrs => #{clientid => true}
+                }};
             (#{clientid := <<"client-with-auth-attrs">>}) ->
                 {ok, #{
                     client_attrs => #{<<"tenant">> => <<"tenant-1">>},
-                    trusted_attrs => #{username => true}
+                    trusted_attrs => #{clientid => true, username => true}
                 }};
             (#{clientid := <<"expiring">>}) ->
                 {ok, #{expire_at => erlang:system_time(millisecond) + 10_000}};
             (#{clientid := <<"zone-override">>}) ->
                 {ok, #{zone_override => <<"default">>, custom_authn => value}};
             (_) ->
-                {ok, #{}}
+                {ok, #{trusted_attrs => #{clientid => true}}}
         end
     ),
     Conf.
@@ -105,7 +108,9 @@ t_clientid_override_ignored(_) ->
         ?assertEqual(<<"original-clientid">>, maps:get(clientid, NInfo)),
         ?assertEqual(<<"mqttsn/original-clientid/">>, maps:get(mountpoint, NInfo)),
         ?assertEqual(false, maps:is_key(clientid_override, NInfo)),
-        ?assertEqual(error, emqx_clientinfo:get_trusted(NInfo, clientid))
+        ?assertEqual(
+            {ok, <<"original-clientid">>}, emqx_clientinfo:get_trusted(NInfo, clientid)
+        )
     end),
     ?assertMatch(
         [
@@ -140,6 +145,18 @@ t_mountpoint_after_authn(_) ->
         emqx_clientinfo:get_trusted(NInfo, [client_attrs, <<"tenant">>])
     ),
     ok.
+
+%% Verify that a missing trusted gateway mountpoint variable rejects authentication.
+t_mountpoint_missing_trusted_variable(_) ->
+    Ctx = #{gwname => mqttsn, cm => self()},
+    Info = #{
+        mountpoint => <<"mqttsn/${username}/${clientid}/">>,
+        clientid => <<"missing-username">>
+    },
+    ?assertMatch(
+        {error, {unresolved_mountpoint_placeholders, [_]}},
+        emqx_gateway_ctx:authenticate(Ctx, Info)
+    ).
 
 %% Verify that gateway expiry reads the relocated trusted authn value.
 t_connection_expire_interval(_) ->

@@ -208,15 +208,27 @@ metrics_inc(_Ctx = #{metrics_tab := Tab}, Name, Oct) ->
 %%--------------------------------------------------------------------
 
 eval_mountpoint(ClientInfo = #{mountpoint := undefined}) ->
-    ClientInfo;
+    {ok, ClientInfo};
 eval_mountpoint(ClientInfo = #{mountpoint := MountPoint}) ->
-    MountPoint1 = emqx_mountpoint:replvar(MountPoint, ClientInfo),
-    emqx_clientinfo:set(ClientInfo, mountpoint, MountPoint1).
+    RequireTrustedAttrs = emqx_clientinfo:mqtt_require_trusted_attributes(ClientInfo),
+    MountpointClientInfo = emqx_clientinfo:maybe_trusted(ClientInfo, RequireTrustedAttrs),
+    case RequireTrustedAttrs of
+        false ->
+            MountPoint1 = emqx_mountpoint:replvar(MountPoint, MountpointClientInfo),
+            {ok, ClientInfo#{mountpoint := MountPoint1}};
+        true ->
+            case emqx_mountpoint:replvar_strict(MountPoint, MountpointClientInfo) of
+                {ok, MountPoint1} ->
+                    {ok, emqx_clientinfo:set(ClientInfo, mountpoint, MountPoint1)};
+                {error, Reason} ->
+                    {error, Reason}
+            end
+    end.
 
 handle_auth_result(GwName, ClientInfo, AuthResult0) ->
     AuthResult = maybe_drop_clientid_override(GwName, ClientInfo, AuthResult0),
     ClientInfo1 = emqx_clientinfo:merge_authn_result(ClientInfo, AuthResult, replace),
-    {ok, eval_mountpoint(ClientInfo1)}.
+    eval_mountpoint(ClientInfo1).
 
 maybe_drop_clientid_override(GwName, ClientInfo, AuthResult) ->
     case maps:take(clientid_override, AuthResult) of

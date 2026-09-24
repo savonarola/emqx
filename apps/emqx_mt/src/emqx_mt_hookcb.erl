@@ -79,22 +79,29 @@ on_session_resumed(ClientInfo, _SessionInfo) ->
     register_in_namespace(ClientInfo).
 
 register_in_namespace(
-    #{
-        clientid := ClientId,
-        client_attrs := #{?CLIENT_ATTR_NAME_TNS := Tns}
-    }
+    #{clientid := ClientId} = ClientInfo
 ) ->
-    ?TRACE("session_registered_in_namespace", #{}),
-    ok = emqx_mt_pool:add(Tns, ClientId, self());
+    case tenant_namespace(ClientInfo) of
+        Tns when is_binary(Tns) ->
+            ?TRACE("session_registered_in_namespace", #{}),
+            ok = emqx_mt_pool:add(Tns, ClientId, self());
+        undefined ->
+            ok
+    end;
 register_in_namespace(_ClientInfo) ->
     %% not a multi-tenant client
     ok.
 
 on_authenticate(ClientInfo, DefaultResult) ->
-    case emqx_mt_config:get_post_auth_tns_expression() of
-        undefined ->
+    case
+        {
+            emqx_mt_config:require_trusted_attributes(),
+            emqx_mt_config:get_post_auth_tns_expression()
+        }
+    of
+        {false, undefined} ->
             do_on_authenticate(ClientInfo, DefaultResult);
-        _Compiled ->
+        {_RequireTrustedAttrs, _Compiled} ->
             %% Namespace will be (re)derived by the `client.post_authn' hook
             %% from authn-response client_attrs.  Defer all tns-based gating
             %% (namespace config errors, quota, managed-ns membership) to
@@ -107,6 +114,19 @@ on_authenticate(ClientInfo, DefaultResult) ->
 do_on_authenticate(
     #{clientid := ClientId, client_attrs := #{?CLIENT_ATTR_NAME_TNS := Tns}}, DefaultResult
 ) ->
+    check_namespace(ClientId, Tns, DefaultResult);
+do_on_authenticate(_, DefaultResult) ->
+    AllowOnlyManagedNSs = emqx_mt_config:get_allow_only_managed_namespaces(),
+    case AllowOnlyManagedNSs of
+        true ->
+            ?TRACE("deny_due_to_no_tenant_namespace", #{}),
+            {stop, {error, not_authorized}};
+        false ->
+            ?TRACE("no_tenant_namespace", #{}),
+            DefaultResult
+    end.
+
+check_namespace(ClientId, Tns, OnPass) ->
     IsTombstoned = emqx_mt_state:is_tombstoned(Tns),
     case emqx:is_denied_namespace(Tns) of
         true ->
@@ -118,21 +138,11 @@ do_on_authenticate(
         false ->
             case emqx_config:get_namespace_config_errors(Tns) of
                 undefined ->
-                    decide(ClientId, Tns, DefaultResult);
+                    decide(ClientId, Tns, OnPass);
                 #{} ->
                     ?TRACE("deny_due_to_namespace_config_errors", #{tns => Tns}),
                     {stop, {error, server_unavailable}}
             end
-    end;
-do_on_authenticate(_, DefaultResult) ->
-    AllowOnlyManagedNSs = emqx_mt_config:get_allow_only_managed_namespaces(),
-    case AllowOnlyManagedNSs of
-        true ->
-            ?TRACE("deny_due_to_no_tenant_namespace", #{}),
-            {stop, {error, not_authorized}};
-        false ->
-            ?TRACE("no_tenant_namespace", #{}),
-            DefaultResult
     end.
 
 %% Pure namespace/quota decision shared between the pre-auth `client.authenticate'
@@ -196,27 +206,57 @@ validate_not_tombstoned(_ClientInfo) ->
 %%   * `{ok, NewCtx}' to replace the accumulator (with rewritten tns);
 %%   * `{stop, {error, Reason}}' to reject the client with a CONNACK error.
 on_post_authn(#{client_info := #{clientid := ClientId} = ClientInfo} = Ctx) ->
+    RequireTrustedAttrs = emqx_mt_config:require_trusted_attributes(),
     case emqx_mt_config:get_post_auth_tns_expression() of
+        undefined when RequireTrustedAttrs ->
+            check_trusted_namespace(ClientId, ClientInfo, Ctx);
         undefined ->
             validate_not_tombstoned(ClientInfo);
         Compiled ->
-            eval_post_auth_tns_expression(Compiled, ClientId, ClientInfo, Ctx)
+            EvalClientInfo = emqx_clientinfo:maybe_trusted(ClientInfo, RequireTrustedAttrs),
+            eval_post_auth_tns_expression(
+                Compiled, ClientId, EvalClientInfo, ClientInfo, Ctx, RequireTrustedAttrs
+            )
     end.
 
-eval_post_auth_tns_expression(Compiled, ClientId, ClientInfo, Ctx) ->
-    case emqx_variform:render(Compiled, ClientInfo) of
+check_trusted_namespace(ClientId, ClientInfo, Ctx) ->
+    case emqx_clientinfo:get_trusted(ClientInfo, [client_attrs, ?CLIENT_ATTR_NAME_TNS]) of
+        {ok, Tns} when is_binary(Tns) ->
+            check_namespace(ClientId, Tns, ok);
+        _ ->
+            gate_untrusted_namespace(ClientInfo, Ctx)
+    end.
+
+gate_untrusted_namespace(ClientInfo, Ctx) ->
+    case emqx_mt_config:get_allow_only_managed_namespaces() of
+        true ->
+            ?TRACE("deny_due_to_no_tenant_namespace_post_authn", #{}),
+            {stop, {error, not_authorized}};
+        false ->
+            case pre_auth_tns(ClientInfo) of
+                undefined -> ok;
+                _ -> {ok, Ctx#{client_info := strip_tns(ClientInfo, true)}}
+            end
+    end.
+
+eval_post_auth_tns_expression(
+    Compiled, ClientId, EvalClientInfo, ClientInfo, Ctx, RequireTrustedAttrs
+) ->
+    case emqx_variform:render(Compiled, EvalClientInfo) of
         {ok, <<>>} ->
             ?TRACE("post_auth_tns_expression_rendered_empty", #{}),
-            gate_with_no_tns(ClientInfo, Ctx);
+            gate_with_no_tns(EvalClientInfo, ClientInfo, Ctx, RequireTrustedAttrs);
         {ok, Tns} ->
-            decide_with_rewritten_tns(ClientId, Tns, ClientInfo, Ctx);
+            decide_with_rewritten_tns(
+                ClientId, Tns, ClientInfo, Ctx, RequireTrustedAttrs
+            );
         {error, Reason} ->
             ?SLOG(
                 warning,
                 #{msg => "post_auth_tns_expression_error", reason => Reason},
                 #{clientid => ClientId}
             ),
-            gate_with_no_tns(ClientInfo, Ctx)
+            gate_with_no_tns(EvalClientInfo, ClientInfo, Ctx, RequireTrustedAttrs)
     end.
 
 %% The post-auth expression did not yield a namespace (it rendered empty or
@@ -228,8 +268,8 @@ eval_post_auth_tns_expression(Compiled, ClientId, ClientInfo, Ctx) ->
 %% reject when `allow_only_managed_namespaces' is set, otherwise pass through.
 %% Any pre-auth `client_attrs.tns' is stripped so it cannot linger after the
 %% expression declined to assign one.
-gate_with_no_tns(ClientInfo, Ctx) ->
-    case pre_auth_tns(ClientInfo) of
+gate_with_no_tns(EvalClientInfo, ClientInfo, Ctx, RequireTrustedAttrs) ->
+    case pre_auth_tns(EvalClientInfo) of
         Tns when is_binary(Tns) ->
             IsTombstoned = emqx_mt_state:is_tombstoned(Tns),
             case emqx:is_denied_namespace(Tns) of
@@ -240,20 +280,20 @@ gate_with_no_tns(ClientInfo, Ctx) ->
                     ?TRACE("deny_due_to_namespace_being_deleted", #{}),
                     {stop, {error, server_unavailable}};
                 false ->
-                    gate_managed_only(ClientInfo, Ctx)
+                    gate_managed_only(ClientInfo, Ctx, RequireTrustedAttrs)
             end;
         undefined ->
-            gate_managed_only(ClientInfo, Ctx)
+            gate_managed_only(ClientInfo, Ctx, RequireTrustedAttrs)
     end.
 
-gate_managed_only(ClientInfo, Ctx) ->
+gate_managed_only(ClientInfo, Ctx, RequireTrustedAttrs) ->
     case emqx_mt_config:get_allow_only_managed_namespaces() of
         true ->
             ?TRACE("deny_due_to_no_tenant_namespace_post_authn", #{}),
             {stop, {error, not_authorized}};
         false ->
             ?TRACE("no_tenant_namespace_post_authn", #{}),
-            {ok, Ctx#{client_info := strip_tns(ClientInfo)}}
+            {ok, Ctx#{client_info := strip_tns(ClientInfo, RequireTrustedAttrs)}}
     end.
 
 pre_auth_tns(#{client_attrs := #{?CLIENT_ATTR_NAME_TNS := Tns}}) ->
@@ -261,12 +301,32 @@ pre_auth_tns(#{client_attrs := #{?CLIENT_ATTR_NAME_TNS := Tns}}) ->
 pre_auth_tns(_) ->
     undefined.
 
-strip_tns(#{client_attrs := Attrs} = ClientInfo) ->
+tenant_namespace(ClientInfo) ->
+    case emqx_mt_config:require_trusted_attributes() of
+        true ->
+            case
+                emqx_clientinfo:get_trusted(
+                    ClientInfo, [client_attrs, ?CLIENT_ATTR_NAME_TNS]
+                )
+            of
+                {ok, Tns} when is_binary(Tns) -> Tns;
+                _ -> undefined
+            end;
+        false ->
+            pre_auth_tns(ClientInfo)
+    end.
+
+strip_tns(#{client_attrs := Attrs} = ClientInfo, true) ->
+    ClientInfo1 = emqx_clientinfo:set(
+        ClientInfo, [client_attrs, ?CLIENT_ATTR_NAME_TNS], undefined
+    ),
+    ClientInfo1#{client_attrs => maps:remove(?CLIENT_ATTR_NAME_TNS, Attrs)};
+strip_tns(#{client_attrs := Attrs} = ClientInfo, false) ->
     ClientInfo#{client_attrs => maps:remove(?CLIENT_ATTR_NAME_TNS, Attrs)};
-strip_tns(ClientInfo) ->
+strip_tns(ClientInfo, _RequireTrustedAttrs) ->
     ClientInfo.
 
-decide_with_rewritten_tns(ClientId, Tns, ClientInfo, Ctx) ->
+decide_with_rewritten_tns(ClientId, Tns, ClientInfo, Ctx, RequireTrustedAttrs) ->
     IsTombstoned = emqx_mt_state:is_tombstoned(Tns),
     case emqx:is_denied_namespace(Tns) of
         true ->
@@ -278,14 +338,17 @@ decide_with_rewritten_tns(ClientId, Tns, ClientInfo, Ctx) ->
         false ->
             case emqx_config:get_namespace_config_errors(Tns) of
                 undefined ->
-                    decide(ClientId, Tns, {ok, Ctx#{client_info := set_tns(ClientInfo, Tns)}});
+                    NewClientInfo = set_tns(ClientInfo, Tns, RequireTrustedAttrs),
+                    decide(ClientId, Tns, {ok, Ctx#{client_info := NewClientInfo}});
                 #{} ->
                     ?TRACE("deny_due_to_namespace_config_errors", #{tns => Tns}),
                     {stop, {error, server_unavailable}}
             end
     end.
 
-set_tns(ClientInfo, Tns) ->
+set_tns(ClientInfo, Tns, true) ->
+    emqx_clientinfo:set_trusted(ClientInfo, [client_attrs, ?CLIENT_ATTR_NAME_TNS], Tns);
+set_tns(ClientInfo, Tns, false) ->
     Attrs = maps:get(client_attrs, ClientInfo, #{}),
     ClientInfo#{client_attrs => Attrs#{?CLIENT_ATTR_NAME_TNS => Tns}}.
 

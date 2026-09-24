@@ -742,7 +742,10 @@ post_process_connect(
 %% and the container is built on first use, once a finite limit is
 %% configured for the zone or the listener; see try_consume_quota/2.
 adjust_limiter(ClientInfo) ->
-    emqx_hooks:run_fold('channel.limiter_adjustment', [ClientInfo], undefined).
+    LimiterClientInfo = emqx_clientinfo:maybe_trusted(
+        ClientInfo, emqx_clientinfo:mqtt_require_trusted_attributes(ClientInfo)
+    ),
+    emqx_hooks:run_fold('channel.limiter_adjustment', [LimiterClientInfo], undefined).
 
 try_consume_quota(Needs, #channel{quota = undefined, clientinfo = ClientInfo} = Channel) ->
     #{zone := Zone, listener := ListenerId} = ClientInfo,
@@ -2663,26 +2666,52 @@ get_user_property_as_map(#mqtt_packet_connect{properties = #{'User-Property' := 
 get_user_property_as_map(_) ->
     #{}.
 
-fix_mountpoint(#{mountpoint := undefined, zone := Zone} = ClientInfo) ->
+fix_mountpoint(ClientInfo) ->
+    RequireTrustedAttrs = emqx_clientinfo:mqtt_require_trusted_attributes(ClientInfo),
+    MountpointClientInfo = emqx_clientinfo:maybe_trusted(ClientInfo, RequireTrustedAttrs),
+    fix_mountpoint(ClientInfo, MountpointClientInfo, RequireTrustedAttrs).
+
+fix_mountpoint(
+    #{mountpoint := undefined, zone := Zone} = ClientInfo,
+    MountpointClientInfo,
+    RequireTrustedAttrs
+) ->
     case get_mqtt_conf(Zone, namespace_as_mountpoint, false) of
         true ->
-            case get_tenant_namespace(ClientInfo) of
+            case get_tenant_namespace(MountpointClientInfo) of
                 undefined ->
-                    ClientInfo;
+                    {ok, ClientInfo};
                 Tns ->
-                    ClientInfo#{mountpoint => iolist_to_binary([Tns, "/"])}
+                    Mountpoint = iolist_to_binary([Tns, "/"]),
+                    {ok, set_mountpoint(ClientInfo, Mountpoint, RequireTrustedAttrs)}
             end;
         false ->
-            ClientInfo
+            {ok, ClientInfo}
     end;
-fix_mountpoint(#{mountpoint := MountPoint} = ClientInfo) ->
+fix_mountpoint(#{mountpoint := MountPoint} = ClientInfo, ClientInfo, false) ->
     MountPoint1 = emqx_mountpoint:replvar(MountPoint, ClientInfo),
-    ClientInfo#{mountpoint := MountPoint1}.
+    {ok, ClientInfo#{mountpoint := MountPoint1}};
+fix_mountpoint(#{mountpoint := MountPoint} = ClientInfo, MountpointClientInfo, true) ->
+    case emqx_mountpoint:replvar_strict(MountPoint, MountpointClientInfo) of
+        {ok, MountPoint1} ->
+            {ok, emqx_clientinfo:set(ClientInfo, mountpoint, MountPoint1)};
+        {error, Reason} ->
+            ?SLOG(warning, #{msg => "mountpoint_render_failed", reason => Reason}),
+            {error, ?RC_NOT_AUTHORIZED, ClientInfo}
+    end.
+
+set_mountpoint(ClientInfo, Mountpoint, false) ->
+    ClientInfo#{mountpoint := Mountpoint};
+set_mountpoint(ClientInfo, Mountpoint, true) ->
+    emqx_clientinfo:set(ClientInfo, mountpoint, Mountpoint).
 
 fix_mountpoint(_PipelineOutput, #channel{clientinfo = ClientInfo0} = Channel0) ->
-    ClientInfo = fix_mountpoint(ClientInfo0),
-    Channel = Channel0#channel{clientinfo = ClientInfo},
-    {ok, Channel}.
+    case fix_mountpoint(ClientInfo0) of
+        {ok, ClientInfo} ->
+            {ok, Channel0#channel{clientinfo = ClientInfo}};
+        {error, Reason, ClientInfo} ->
+            {error, Reason, Channel0#channel{clientinfo = ClientInfo}}
+    end.
 
 %%--------------------------------------------------------------------
 %% Set log metadata

@@ -160,13 +160,17 @@ nkey_authenticate(NKey, Sig, Nonce, ClientInfo, AllowedNKeys) ->
             CanonicalNKey = emqx_nats_nkey:normalize(NKey),
             case emqx_nats_nkey:verify_signature(CanonicalNKey, Sig, Nonce) of
                 {ok, _PubKey} ->
-                    {ok, ClientInfo#{
+                    ClientInfo1 = ClientInfo#{
                         username => CanonicalNKey,
                         password => undefined,
                         auth_method => nkey,
                         nkey => CanonicalNKey,
                         auth_expire_at => undefined
-                    }};
+                    },
+                    ClientInfo2 = emqx_clientinfo:set_trusted(
+                        ClientInfo1, username, CanonicalNKey
+                    ),
+                    {ok, emqx_clientinfo:set_trusted(ClientInfo2, auth_expire_at, undefined)};
                 {error, Reason} ->
                     {error, Reason}
             end
@@ -199,7 +203,7 @@ jwt_authenticate(JWT, NKey, Sig, ConnInfo, ClientInfo, Method) ->
         {ok, Username} ?= verify_jwt_nonce_signature(Claims, NKey, Sig, ConnInfo),
         JWTPerms = extract_jwt_permissions(Claims),
         AuthExpireAt = jwt_claims_expire_at([Claims, AccountClaims]),
-        {ok, ClientInfo#{
+        ClientInfo1 = ClientInfo#{
             username => Username,
             password => undefined,
             auth_method => jwt,
@@ -207,7 +211,9 @@ jwt_authenticate(JWT, NKey, Sig, ConnInfo, ClientInfo, Method) ->
             jwt_claims => Claims,
             jwt_permissions => JWTPerms,
             auth_expire_at => AuthExpireAt
-        }}
+        },
+        ClientInfo2 = emqx_clientinfo:set_trusted(ClientInfo1, username, Username),
+        {ok, emqx_clientinfo:set_trusted(ClientInfo2, auth_expire_at, AuthExpireAt)}
     end.
 
 -spec validate_jwt_config(map()) -> ok | {error, binary()}.
@@ -761,13 +767,17 @@ token_authenticate(Token, ClientInfo, Method) ->
             Type = token_type(ConfigToken),
             case check_token(Type, ConfigToken, Token) of
                 true ->
-                    {ok, ClientInfo#{
+                    ClientInfo1 = ClientInfo#{
                         username => <<"token">>,
                         password => undefined,
                         auth_method => token,
                         token_type => Type,
                         auth_expire_at => undefined
-                    }};
+                    },
+                    ClientInfo2 = emqx_clientinfo:set_trusted(
+                        ClientInfo1, username, <<"token">>
+                    ),
+                    {ok, emqx_clientinfo:set_trusted(ClientInfo2, auth_expire_at, undefined)};
                 false ->
                     {error, invalid_token}
             end

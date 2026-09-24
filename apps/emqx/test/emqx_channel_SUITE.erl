@@ -1053,6 +1053,46 @@ t_quota_stays_absent_on_subscribe(_) ->
     {ok, Replies, Chann1} = emqx_channel:handle_in(Subscribe, Chann),
     ?assertEqual(undefined, emqx_channel:info(quota, Chann1)).
 
+%% Verify that limiter hooks receive trusted input only when MQTT enforcement is enabled.
+t_limiter_adjustment_trusted_context(_) ->
+    TestPid = self(),
+    Hook = {?MODULE, capture_limiter_context, [TestPid]},
+    ok = emqx_hooks:add('channel.limiter_adjustment', Hook, ?HP_HIGHEST),
+    ClientInfo = emqx_clientinfo:merge_authn_result(
+        clientinfo(#{
+            username => <<"untrusted-user">>,
+            client_attrs => #{<<"tns">> => <<"untrusted-tenant">>}
+        }),
+        #{trusted_attrs => #{clientid => true}},
+        merge
+    ),
+    try
+        emqx_common_test_helpers:with_security_profile("hardened", fun() ->
+            undefined = emqx_channel:adjust_limiter(ClientInfo),
+            receive
+                {limiter_context, TrustedContext} ->
+                    ?assertNot(maps:is_key(username, TrustedContext)),
+                    ?assertNot(maps:is_key(client_attrs, TrustedContext))
+            after 1_000 ->
+                ct:fail(limiter_context_missing)
+            end
+        end),
+        emqx_common_test_helpers:with_security_profile("legacy", fun() ->
+            undefined = emqx_channel:adjust_limiter(ClientInfo),
+            receive
+                {limiter_context, ClientInfo} -> ok
+            after 1_000 ->
+                ct:fail(limiter_context_missing)
+            end
+        end)
+    after
+        emqx_hooks:del('channel.limiter_adjustment', {?MODULE, capture_limiter_context})
+    end.
+
+capture_limiter_context(ClientInfo, Limiter, TestPid) ->
+    TestPid ! {limiter_context, ClientInfo},
+    {ok, Limiter}.
+
 t_mount_will_msg(_) ->
     Self = self(),
     ClientInfo = clientinfo(#{mountpoint => <<"prefix/">>}),

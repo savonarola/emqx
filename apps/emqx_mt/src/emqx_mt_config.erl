@@ -15,6 +15,7 @@
     get_allow_only_managed_namespaces/0,
     set_allow_only_managed_namespaces/1,
     get_post_auth_tns_expression/0,
+    require_trusted_attributes/0,
 
     create_managed_ns/1,
     delete_managed_ns/1,
@@ -152,6 +153,11 @@ get_post_auth_tns_expression() ->
         V when ?IS_NOT_SET(V) -> undefined;
         Compiled -> Compiled
     end.
+
+-spec require_trusted_attributes() -> boolean().
+require_trusted_attributes() ->
+    Default = emqx_security_profile:policy(authz_context) =:= restricted,
+    emqx:get_config([multi_tenancy, require_trusted_attributes], Default).
 
 -spec get_managed_ns_config(emqx_mt:tns()) ->
     {ok, root_config()} | {error, not_found}.

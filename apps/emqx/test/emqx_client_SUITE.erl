@@ -102,6 +102,8 @@ groups() ->
             t_clientid_override_fail_with_expression_exception,
             t_clientid_override_fail_with_unbound_var,
             t_namespace_as_mountpoint_enabled,
+            t_namespace_as_mountpoint_trusted,
+            t_namespace_as_mountpoint_untrusted,
             t_namespace_as_mountpoint_disabled,
             t_namespace_as_mountpoint_no_tns
         ]},
@@ -914,6 +916,86 @@ t_namespace_as_mountpoint_enabled(_) ->
         maps:get(clientinfo, emqx_cm:get_chan_info(ClientId))
     ),
     emqtt:disconnect(Client).
+
+t_namespace_as_mountpoint_trusted(init, Config) ->
+    override_conf(
+        #{
+            [mqtt, client_attrs_init] => [mk_client_attrs_init_tns("user_property.namespace")],
+            [mqtt, namespace_as_mountpoint] => true
+        },
+        Config
+    ).
+
+%% Verify that an explicitly trusted namespace selects the MQTT mountpoint.
+t_namespace_as_mountpoint_trusted(_) ->
+    with_authentication_hook(trust_tns_authentication, fun() ->
+        Namespace = <<"n2">>,
+        ClientId = <<"test-client-trusted-namespace">>,
+        {ok, Client} = emqtt:start_link([
+            {clientid, ClientId},
+            {port, 1883},
+            {proto_ver, v5},
+            {properties, #{'User-Property' => [{<<"namespace">>, Namespace}]}}
+        ]),
+        {ok, _} = emqtt:connect(Client),
+        ?assertMatch(
+            #{mountpoint := <<"n2/">>},
+            maps:get(clientinfo, emqx_cm:get_chan_info(ClientId))
+        ),
+        emqtt:disconnect(Client)
+    end).
+
+t_namespace_as_mountpoint_untrusted(init, Config) ->
+    override_conf(
+        #{
+            [mqtt, client_attrs_init] => [mk_client_attrs_init_tns("user_property.namespace")],
+            [mqtt, namespace_as_mountpoint] => true
+        },
+        Config
+    ).
+
+%% Verify that an untrusted client namespace cannot select the MQTT mountpoint.
+t_namespace_as_mountpoint_untrusted(_) ->
+    with_authentication_hook(trust_clientid_authentication, fun() ->
+        ClientId = <<"test-client-untrusted-namespace">>,
+        {ok, Client} = emqtt:start_link([
+            {clientid, ClientId},
+            {port, 1883},
+            {proto_ver, v5},
+            {properties, #{'User-Property' => [{<<"namespace">>, <<"forged">>}]}}
+        ]),
+        {ok, _} = emqtt:connect(Client),
+        ExpectedMountpoint =
+            case emqx_security_profile:profile() of
+                legacy -> <<"forged/">>;
+                hardened -> undefined
+            end,
+        ?assertMatch(
+            #{mountpoint := ExpectedMountpoint},
+            maps:get(clientinfo, emqx_cm:get_chan_info(ClientId))
+        ),
+        emqtt:disconnect(Client)
+    end).
+
+trust_tns_authentication(_Credential, _Acc) ->
+    {stop,
+        {ok, #{
+            is_superuser => false,
+            trusted_attrs => #{client_attrs => #{<<"tns">> => true}}
+        }}}.
+
+trust_clientid_authentication(_Credential, _Acc) ->
+    {stop, {ok, #{is_superuser => false, trusted_attrs => #{clientid => true}}}}.
+
+with_authentication_hook(HookFun, Fun) ->
+    OldEnableAuthnValues = emqx_common_test_helpers:listeners_enable_authn(true),
+    ok = emqx_hooks:add('client.authenticate', {?MODULE, HookFun, []}, ?HP_HIGHEST),
+    try
+        Fun()
+    after
+        emqx_hooks:del('client.authenticate', {?MODULE, HookFun}),
+        emqx_common_test_helpers:listeners_enable_authn(OldEnableAuthnValues)
+    end.
 
 t_namespace_as_mountpoint_disabled(init, Config) ->
     %% Set tns attribute from user property

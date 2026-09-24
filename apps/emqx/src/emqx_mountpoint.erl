@@ -14,7 +14,7 @@
     unmount/2
 ]).
 
--export([replvar/2]).
+-export([replvar/2, replvar_strict/2]).
 
 -export([lookup/2]).
 
@@ -91,6 +91,21 @@ replvar(MountPoint, Vars) ->
     {String, _Errors} = emqx_template:render(Template, {?MODULE, Vars}),
     unicode:characters_to_binary(String).
 
+-spec replvar_strict(option(mountpoint()), map()) ->
+    {ok, option(mountpoint())} | {error, term()}.
+replvar_strict(undefined, _Vars) ->
+    {ok, undefined};
+replvar_strict(MountPoint, Vars) ->
+    Template = parse(MountPoint),
+    case emqx_template:render(Template, {?MODULE, {strict, Vars}}) of
+        {String, []} ->
+            {ok, unicode:characters_to_binary(String)};
+        {_String, Errors} ->
+            {error, {unresolved_mountpoint_placeholders, Errors}}
+    end.
+
+lookup(Accessor, {strict, Vars}) ->
+    lookup_strict(Accessor, Vars);
 lookup([<<?VAR_CLIENTID>>], #{clientid := ClientId}) when is_binary(ClientId) ->
     {ok, ClientId};
 lookup([<<?VAR_USERNAME>>], #{username := Username}) when is_binary(Username) ->
@@ -106,6 +121,24 @@ lookup([<<"client_attrs">>, AttrName], #{client_attrs := Attrs}) when is_map(Att
     {ok, maps:get(AttrName, Attrs, Original)};
 lookup(Accessor, _) ->
     {ok, iolist_to_binary(["${", lists:join(".", Accessor), "}"])}.
+
+lookup_strict([<<?VAR_CLIENTID>>], #{clientid := ClientId}) when is_binary(ClientId) ->
+    {ok, ClientId};
+lookup_strict([<<?VAR_USERNAME>>], #{username := Username}) when is_binary(Username) ->
+    {ok, Username};
+lookup_strict([<<?VAR_ENDPOINT_NAME>>], #{endpoint_name := Name}) when is_binary(Name) ->
+    {ok, Name};
+lookup_strict([<<?VAR_PEERHOST>>], #{peerhost := PeerHost}) when PeerHost =/= undefined ->
+    {ok, peerhost_to_binary(PeerHost)};
+lookup_strict([<<?VAR_ZONE>>], #{zone := Zone}) when is_atom(Zone) ->
+    {ok, atom_to_binary(Zone)};
+lookup_strict([<<"client_attrs">>, AttrName], #{client_attrs := Attrs}) when is_map(Attrs) ->
+    case maps:find(AttrName, Attrs) of
+        {ok, Value} -> {ok, Value};
+        error -> {error, undefined}
+    end;
+lookup_strict(_Accessor, _Vars) ->
+    {error, undefined}.
 
 peerhost_to_binary({_, _, _, _} = PeerHost) ->
     iolist_to_binary(inet:ntoa(PeerHost));

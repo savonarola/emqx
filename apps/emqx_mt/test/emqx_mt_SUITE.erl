@@ -163,7 +163,7 @@ connect(Opts0) ->
     end.
 
 allow_authentication(_ClientInfo, _DefaultResult) ->
-    {stop, ok}.
+    {stop, {ok, #{is_superuser => false, trusted_attrs => true}}}.
 
 setup_corrupt_namespace_scenario(TestCase, TCConfig) ->
     {ok, Agent} = emqx_utils_agent:start_link(_BarType0 = binary()),
@@ -1749,6 +1749,9 @@ set_post_auth_tns_expression(Expr) when is_binary(Expr) ->
 clear_post_auth_tns_expression() ->
     set_post_auth_tns_expression(<<>>).
 
+trusted_client_info(ClientInfo) ->
+    emqx_clientinfo:merge_authn_result(ClientInfo, #{trusted_attrs => true}, merge).
+
 -doc "Sanity: when expression is unset, post-authn hook leaves ClientInfo untouched.".
 t_post_auth_tns_expression_disabled({init, Config}) ->
     ok = clear_post_auth_tns_expression(),
@@ -1757,11 +1760,11 @@ t_post_auth_tns_expression_disabled({'end', _Config}) ->
     ok = clear_post_auth_tns_expression();
 t_post_auth_tns_expression_disabled(_Config) ->
     ?assertEqual(undefined, emqx_mt_config:get_post_auth_tns_expression()),
-    ClientInfo = #{
+    ClientInfo = trusted_client_info(#{
         clientid => <<"c1">>,
         username => <<"u1">>,
         client_attrs => #{<<"tns">> => <<"preauth">>}
-    },
+    }),
     ?assertEqual(ok, emqx_mt_hookcb:on_post_authn(#{client_info => ClientInfo})).
 
 -doc """
@@ -1791,26 +1794,59 @@ t_post_auth_no_tns_client(Config) when is_list(Config) ->
         end
     ).
 
+%% Verify that an untrusted tenant attribute is not authoritative in hardened mode.
+t_untrusted_tenant_namespace({init, Config}) ->
+    ok = clear_post_auth_tns_expression(),
+    Config;
+t_untrusted_tenant_namespace({'end', _Config}) ->
+    ok;
+t_untrusted_tenant_namespace(Config) when is_list(Config) ->
+    ClientInfo = #{
+        clientid => <<"forged-client">>,
+        client_attrs => #{<<"tns">> => <<"forged-tenant">>}
+    },
+    Result = emqx_mt_hookcb:on_post_authn(#{client_info => ClientInfo}),
+    case ?config(security_profile, Config) of
+        legacy ->
+            ?assertEqual(ok, Result);
+        hardened ->
+            ?assertMatch(
+                {ok, #{client_info := #{client_attrs := Attrs}}} when
+                    not is_map_key(<<"tns">>, Attrs),
+                Result
+            )
+    end.
+
 -doc "Expression reads client_attrs.tag and rewrites client_attrs.tns.".
 t_post_auth_tns_expression_reads_client_attrs_tag({init, Config}) ->
     ok = set_post_auth_tns_expression(<<"client_attrs.tag">>),
     Config;
 t_post_auth_tns_expression_reads_client_attrs_tag({'end', _Config}) ->
     ok = clear_post_auth_tns_expression();
-t_post_auth_tns_expression_reads_client_attrs_tag(_Config) ->
-    ClientInfo = #{
+t_post_auth_tns_expression_reads_client_attrs_tag(Config) ->
+    ClientInfo = trusted_client_info(#{
         clientid => <<"c1">>,
         username => <<"u1">>,
         client_attrs => #{<<"tag">> => <<"bypass_acme">>}
-    },
+    }),
+    {ok, #{client_info := ResultClientInfo}} = emqx_mt_hookcb:on_post_authn(#{
+        client_info => ClientInfo
+    }),
     ?assertMatch(
-        {ok, #{
-            client_info := #{
-                client_attrs := #{<<"tns">> := <<"bypass_acme">>, <<"tag">> := <<"bypass_acme">>}
+        #{
+            client_attrs := #{
+                <<"tns">> := <<"bypass_acme">>, <<"tag">> := <<"bypass_acme">>
             }
-        }},
-        emqx_mt_hookcb:on_post_authn(#{client_info => ClientInfo})
-    ).
+        },
+        ResultClientInfo
+    ),
+    TrustedTns = emqx_clientinfo:get_trusted(
+        ResultClientInfo, [client_attrs, <<"tns">>]
+    ),
+    case ?config(security_profile, Config) of
+        legacy -> ?assertEqual(error, TrustedTns);
+        hardened -> ?assertEqual({ok, <<"bypass_acme">>}, TrustedTns)
+    end.
 
 -doc "coalesce(client_attrs.tag, username) falls back to username when no tag.".
 t_post_auth_tns_expression_coalesce_fallback({init, Config}) ->
@@ -1819,20 +1855,20 @@ t_post_auth_tns_expression_coalesce_fallback({init, Config}) ->
 t_post_auth_tns_expression_coalesce_fallback({'end', _Config}) ->
     ok = clear_post_auth_tns_expression();
 t_post_auth_tns_expression_coalesce_fallback(_Config) ->
-    CI1 = #{
+    CI1 = trusted_client_info(#{
         clientid => <<"c1">>,
         username => <<"alice">>,
         client_attrs => #{<<"tag">> => <<"bypass_acme">>}
-    },
+    }),
     ?assertMatch(
         {ok, #{client_info := #{client_attrs := #{<<"tns">> := <<"bypass_acme">>}}}},
         emqx_mt_hookcb:on_post_authn(#{client_info => CI1})
     ),
-    CI2 = #{
+    CI2 = trusted_client_info(#{
         clientid => <<"c2">>,
         username => <<"alice">>,
         client_attrs => #{}
-    },
+    }),
     ?assertMatch(
         {ok, #{client_info := #{client_attrs := #{<<"tns">> := <<"alice">>}}}},
         emqx_mt_hookcb:on_post_authn(#{client_info => CI2})
@@ -1982,11 +2018,11 @@ t_post_auth_tns_expression_quota_enforced(_Config) ->
     ?assertEqual({ok, 1}, emqx_mt:count_clients(Ns)),
     %% Now simulate a post-authn evaluation for a different client that the
     %% expression routes into the same namespace via client_attrs.tag.
-    ClientInfo = #{
+    ClientInfo = trusted_client_info(#{
         clientid => C2,
         username => <<"someone_else">>,
         client_attrs => #{<<"tag">> => Ns}
-    },
+    }),
     ?assertMatch(
         {stop, {error, quota_exceeded}},
         emqx_mt_hookcb:on_post_authn(#{client_info => ClientInfo})

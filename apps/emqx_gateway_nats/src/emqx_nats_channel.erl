@@ -399,12 +399,24 @@ write_clientinfo(Override, ClientInfo) ->
     maps:merge(ClientInfo, Override2).
 
 fix_mountpoint(_Packet, #{mountpoint := undefined}) ->
-    ok;
+    {ok, unchanged};
 fix_mountpoint(_Packet, ClientInfo = #{mountpoint := Mountpoint}) ->
     %% TODO: Enrich the variable replacement????
     %%       i.e: ${ClientInfo.auth_result.productKey}
-    Mountpoint1 = emqx_mountpoint:replvar(Mountpoint, ClientInfo),
-    {ok, ClientInfo#{mountpoint := Mountpoint1}}.
+    RequireTrustedAttrs = emqx_clientinfo:mqtt_require_trusted_attributes(ClientInfo),
+    MountpointClientInfo = emqx_clientinfo:maybe_trusted(ClientInfo, RequireTrustedAttrs),
+    case RequireTrustedAttrs of
+        false ->
+            Mountpoint1 = emqx_mountpoint:replvar(Mountpoint, MountpointClientInfo),
+            {ok, ClientInfo#{mountpoint := Mountpoint1}};
+        true ->
+            case emqx_mountpoint:replvar_strict(Mountpoint, MountpointClientInfo) of
+                {ok, Mountpoint1} ->
+                    {ok, emqx_clientinfo:set(ClientInfo, mountpoint, Mountpoint1)};
+                {error, _} = Error ->
+                    Error
+            end
+    end.
 
 set_log_meta(_Packet, #channel{clientinfo = #{clientid := ClientId}}) ->
     emqx_logger:set_metadata_clientid(ClientId),
@@ -440,8 +452,10 @@ auth_connect(
                     %% Internal auth intentionally bypasses `emqx_gateway_ctx:authenticate/2`.
                     %% This skips `client.authenticate`/`client.check_authn_complete` hooks
                     %% as a known implementation trade-off for NATS internal auth.
-                    NClientInfo = normalize_mountpoint(ConnParams, NClientInfo0),
-                    {ok, set_clientinfo(Channel, NClientInfo)};
+                    case normalize_mountpoint(ConnParams, NClientInfo0) of
+                        {ok, NClientInfo} -> {ok, set_clientinfo(Channel, NClientInfo)};
+                        {error, Reason} -> {error, Reason}
+                    end;
                 {continue, NClientInfo} ->
                     case maps:get(gateway_auth_enabled, Authn, false) of
                         true ->
@@ -472,8 +486,10 @@ auth_connect_without_configured_authn(ConnParams, ClientInfo, Channel, ClientId,
     case emqx_security_profile:policy(authn_not_configured) of
         allow ->
             NClientInfo0 = maps:put(auth_expire_at, undefined, ClientInfo),
-            NClientInfo1 = normalize_mountpoint(ConnParams, NClientInfo0),
-            {ok, set_clientinfo(Channel, NClientInfo1)};
+            case normalize_mountpoint(ConnParams, NClientInfo0) of
+                {ok, NClientInfo1} -> {ok, set_clientinfo(Channel, NClientInfo1)};
+                {error, Reason} -> {error, Reason}
+            end;
         deny ->
             log_auth_failed("client_login_failed", ClientId, Username, not_authorized),
             {error, not_authorized}
@@ -482,8 +498,10 @@ auth_connect_without_configured_authn(ConnParams, ClientInfo, Channel, ClientId,
 auth_connect_with_gateway(Ctx, ConnParams, ClientInfo, Channel, ClientId, Username) ->
     case emqx_gateway_ctx:authenticate(Ctx, ClientInfo) of
         {ok, NClientInfo0} ->
-            NClientInfo = normalize_mountpoint(ConnParams, NClientInfo0),
-            {ok, set_clientinfo(Channel, NClientInfo)};
+            case normalize_mountpoint(ConnParams, NClientInfo0) of
+                {ok, NClientInfo} -> {ok, set_clientinfo(Channel, NClientInfo)};
+                {error, Reason} -> {error, Reason}
+            end;
         {error, Reason} ->
             log_auth_failed("client_login_failed", ClientId, Username, Reason),
             {error, Reason}
@@ -491,10 +509,12 @@ auth_connect_with_gateway(Ctx, ConnParams, ClientInfo, Channel, ClientId, Userna
 
 normalize_mountpoint(ConnParams, ClientInfo) ->
     case fix_mountpoint(ConnParams, ClientInfo) of
-        ok ->
-            ClientInfo;
+        {ok, unchanged} ->
+            {ok, ClientInfo};
         {ok, NClientInfo} ->
-            NClientInfo
+            {ok, NClientInfo};
+        {error, _} = Error ->
+            Error
     end.
 
 auth_failed_msg(token) ->

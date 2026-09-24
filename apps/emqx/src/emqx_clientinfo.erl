@@ -7,6 +7,8 @@
 -export([
     merge_authn_result/3,
     get_trusted/2,
+    maybe_trusted/2,
+    mqtt_require_trusted_attributes/1,
     set/3,
     set_trusted/3,
     trusted/1
@@ -88,6 +90,17 @@ get_trusted(ClientInfo, Key) ->
         {ok, _} = Found -> Found;
         error -> trusted_find(Path, ClientInfo)
     end.
+
+-spec maybe_trusted(emqx_types:clientinfo(), boolean()) -> emqx_types:clientinfo().
+maybe_trusted(ClientInfo, false) ->
+    ClientInfo;
+maybe_trusted(ClientInfo, true) ->
+    trusted(ClientInfo).
+
+-spec mqtt_require_trusted_attributes(emqx_types:clientinfo()) -> boolean().
+mqtt_require_trusted_attributes(#{zone := Zone}) ->
+    Default = emqx_security_profile:policy(authz_context) =:= restricted,
+    emqx_config:get_zone_conf(Zone, [mqtt, require_trusted_attributes], Default).
 
 -spec set(emqx_types:clientinfo(), key_path(), term()) -> emqx_types:clientinfo().
 set(ClientInfo0, Key, Value) ->
