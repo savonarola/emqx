@@ -143,7 +143,8 @@ create(
         user_group => UserGroup,
         user_id_type => Type,
         password_hash_algorithm => Algorithm,
-        autogenerate_password => AutogeneratePassword
+        autogenerate_password => AutogeneratePassword,
+        trusted_attrs => trusted_attrs(Type)
     },
     ok = bootstrap_user_from_file(Config, State),
     {ok, State}.
@@ -161,7 +162,7 @@ authenticate(
         user_group := UserGroup,
         user_id_type := Type,
         password_hash_algorithm := Algorithm0
-    }
+    } = State
 ) ->
     Namespace = get_namespace(Credential),
     UserId = get_user_identity(Credential, Type),
@@ -188,7 +189,10 @@ authenticate(
                 )
             of
                 true ->
-                    {ok, #{is_superuser => IsSuperuser}};
+                    {ok,
+                        emqx_authn_utils:add_trusted_attrs(
+                            #{is_superuser => IsSuperuser}, State
+                        )};
                 false ->
                     {error, bad_username_or_password}
             end
@@ -841,6 +845,13 @@ get_user_identity(#{clientid := ClientID}, clientid) ->
     ClientID;
 get_user_identity(_, Type) ->
     {error, {bad_user_identity_type, Type}}.
+
+trusted_attrs(UserIdType) ->
+    emqx_utils_maps:deep_force_put(
+        [client_attrs, ?CLIENT_ATTR_NAME_TNS],
+        #{UserIdType => true},
+        true
+    ).
 
 trans(Fun, Args) ->
     case mria:transaction(?AUTHN_SHARD, Fun, Args) of

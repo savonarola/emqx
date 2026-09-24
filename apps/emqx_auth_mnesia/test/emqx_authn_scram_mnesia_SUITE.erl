@@ -688,6 +688,10 @@ test_is_superuser(UserInfo, ExpectedIsSuperuser) ->
     ),
 
     ?assertMatch(#{is_superuser := ExpectedIsSuperuser}, UserInfo1),
+    ?assertEqual(
+        #{client_attrs => #{?CLIENT_ATTR_NAME_TNS => true}},
+        maps:get(trusted_attrs, UserInfo1)
+    ),
 
     ok = emqx_authn_scram_mnesia:destroy(State).
 

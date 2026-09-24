@@ -102,3 +102,20 @@ t_parse_sql(_Config) ->
         [<<"u">>, <<"${age}">>, <<"${city.name}">>],
         RenderedRow
     ).
+
+%% Verify that used authentication variables convert to a nested trust mask.
+t_make_trusted_attrs(_Config) ->
+    ?assertEqual(
+        #{
+            username => true,
+            cn => true,
+            client_attrs => #{<<"tns">> => true, <<"nested">> => #{<<"value">> => true}}
+        },
+        emqx_authn_utils:make_trusted_attrs([
+            "username",
+            "password",
+            "cert_common_name",
+            "client_attrs.tns",
+            "client_attrs.nested.value"
+        ])
+    ).

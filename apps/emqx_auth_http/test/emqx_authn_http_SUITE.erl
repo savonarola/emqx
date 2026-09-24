@@ -239,7 +239,11 @@ t_oauth2_client_credentials(TCConfig) ->
     },
     {ok, _} = emqx:update_config(?PATH, {create_authenticator, ?GLOBAL, AuthConfig}),
     ?assertEqual(
-        {ok, #{is_superuser => false, client_attrs => #{}}},
+        {ok, #{
+            is_superuser => false,
+            client_attrs => #{},
+            trusted_attrs => #{username => true}
+        }},
         emqx_access_control:authenticate(?CREDENTIALS)
     ).
 
@@ -800,13 +804,15 @@ t_node_cache(TCConfig) ->
         username => <<"username">>,
         password => <<"password">>
     }),
-    ?assertMatch(
-        ?EXCEPTION_ALLOW,
-        emqx_access_control:authenticate(Credentials)
+    {ok, FirstResult} = emqx_access_control:authenticate(Credentials),
+    ?assertEqual(
+        #{clientid => true, username => true},
+        maps:get(trusted_attrs, FirstResult)
     ),
-    ?assertMatch(
-        ?EXCEPTION_ALLOW,
-        emqx_access_control:authenticate(Credentials)
+    {ok, CachedResult} = emqx_access_control:authenticate(Credentials),
+    ?assertEqual(
+        #{clientid => true, username => true},
+        maps:get(trusted_attrs, CachedResult)
     ),
     ?assertMatch(
         #{hits := #{value := 1}, misses := #{value := 1}},
@@ -1772,7 +1778,12 @@ samples() ->
                 {ok, Req, State}
             end,
             config_params => #{},
-            result => {ok, #{is_superuser => false, client_attrs => #{}}}
+            result =>
+                {ok, #{
+                    is_superuser => false,
+                    client_attrs => #{},
+                    trusted_attrs => #{username => true}
+                }}
         },
 
         %% get request with json body response
@@ -1794,7 +1805,12 @@ samples() ->
                 {ok, Req, State}
             end,
             config_params => #{},
-            result => {ok, #{is_superuser => true, client_attrs => #{<<"fid">> => <<"n11">>}}}
+            result =>
+                {ok, #{
+                    is_superuser => true,
+                    client_attrs => #{<<"fid">> => <<"n11">>},
+                    trusted_attrs => #{username => true}
+                }}
         },
 
         %% get request with non-utf8 password
@@ -1819,7 +1835,12 @@ samples() ->
             credentials => #{
                 password => <<255, 255, 255>>
             },
-            result => {ok, #{is_superuser => true, client_attrs => #{}}}
+            result =>
+                {ok, #{
+                    is_superuser => true,
+                    client_attrs => #{},
+                    trusted_attrs => #{username => true}
+                }}
         },
 
         %% get request with url-form-encoded body response
@@ -1837,7 +1858,12 @@ samples() ->
                 {ok, Req, State}
             end,
             config_params => #{},
-            result => {ok, #{is_superuser => true, client_attrs => #{}}}
+            result =>
+                {ok, #{
+                    is_superuser => true,
+                    client_attrs => #{},
+                    trusted_attrs => #{username => true}
+                }}
         },
 
         %% get request with response of unknown encoding
@@ -1879,7 +1905,12 @@ samples() ->
                 <<"method">> => <<"post">>,
                 <<"headers">> => #{<<"content-type">> => <<"application/json">>}
             },
-            result => {ok, #{is_superuser => false, client_attrs => #{}}}
+            result =>
+                {ok, #{
+                    is_superuser => false,
+                    client_attrs => #{},
+                    trusted_attrs => #{username => true}
+                }}
         },
 
         %% post request, no content-type header
@@ -1903,7 +1934,12 @@ samples() ->
                 <<"method">> => <<"post">>,
                 <<"headers">> => #{}
             },
-            result => {ok, #{is_superuser => false, client_attrs => #{}}}
+            result =>
+                {ok, #{
+                    is_superuser => false,
+                    client_attrs => #{},
+                    trusted_attrs => #{username => true}
+                }}
         },
 
         %% simple post request, application/x-www-form-urlencoded
@@ -1929,7 +1965,12 @@ samples() ->
                         <<"application/x-www-form-urlencoded">>
                 }
             },
-            result => {ok, #{is_superuser => false, client_attrs => #{}}}
+            result =>
+                {ok, #{
+                    is_superuser => false,
+                    client_attrs => #{},
+                    trusted_attrs => #{username => true}
+                }}
         },
 
         %% simple post request for placeholders, application/json
@@ -1977,7 +2018,22 @@ samples() ->
                     <<"the_group">> => <<"${client_attrs.group}">>
                 }
             },
-            result => {ok, #{is_superuser => false, client_attrs => #{}}}
+            result =>
+                {ok, #{
+                    is_superuser => false,
+                    client_attrs => #{},
+                    trusted_attrs => #{
+                        clientid => true,
+                        username => true,
+                        peerhost => true,
+                        peerport => true,
+                        peername => true,
+                        dn => true,
+                        cn => true,
+                        cert_pem => true,
+                        client_attrs => #{<<"group">> => true}
+                    }
+                }}
         },
 
         %% post request with non-utf8 password, application/json
@@ -2033,7 +2089,12 @@ samples() ->
             credentials => #{
                 password => <<255, 255, 255>>
             },
-            result => {ok, #{is_superuser => false, client_attrs => #{}}}
+            result =>
+                {ok, #{
+                    is_superuser => false,
+                    client_attrs => #{},
+                    trusted_attrs => #{}
+                }}
         },
 
         %% custom headers
@@ -2055,7 +2116,7 @@ samples() ->
                 {ok, Req, State}
             end,
             config_params => #{},
-            result => {ok, #{is_superuser => false}}
+            result => {ok, #{is_superuser => false, trusted_attrs => #{username => true}}}
         },
 
         %% 400 code
@@ -2148,8 +2209,16 @@ profile_cases() ->
 
 expected_authn_result(TCConfig) ->
     case ?config(security_profile, TCConfig) of
-        legacy -> {ok, #{is_superuser => false}};
-        hardened -> {error, not_authorized}
+        legacy ->
+            {ok, #{
+                is_superuser => false,
+                trusted_attrs => #{
+                    username => true,
+                    client_attrs => #{<<"tns">> => true}
+                }
+            }};
+        hardened ->
+            {error, not_authorized}
     end.
 
 uri_encode(T) ->

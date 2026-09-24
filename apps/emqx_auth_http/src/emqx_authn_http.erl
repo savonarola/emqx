@@ -67,9 +67,12 @@ authenticate(Credential, State) ->
             }),
             case Response of
                 {ok, 204, _Headers} ->
-                    {ok, #{is_superuser => false}};
+                    {ok,
+                        emqx_authn_utils:add_trusted_attrs(
+                            #{is_superuser => false}, State
+                        )};
                 {ok, 200, Headers, Body} ->
-                    handle_response(Headers, Body);
+                    add_trusted_attrs(handle_response(Headers, Body), State);
                 {ok, _StatusCode, _Headers} ->
                     emqx_authn_utils:backend_failure_result();
                 {ok, _StatusCode, _Headers, _Body} ->
@@ -294,7 +297,10 @@ parse_templates(
 
 finalize_state(Config, Vars, StateBase) ->
     CacheKeyTemplate = emqx_auth_template:cache_key_template(Vars),
-    emqx_authn_utils:init_state(Config, StateBase#{cache_key_template => CacheKeyTemplate}).
+    emqx_authn_utils:init_state(Config, StateBase#{
+        cache_key_template => CacheKeyTemplate,
+        trusted_attrs => emqx_authn_utils:make_trusted_attrs(Vars)
+    }).
 
 check_no_oauth2(#{oauth2 := #{enable := true}}) ->
     throw(
@@ -331,6 +337,11 @@ handle_response(Headers, Body) ->
         {error, _Reason} ->
             emqx_authn_utils:backend_failure_result()
     end.
+
+add_trusted_attrs({ok, AuthResult}, State) ->
+    {ok, emqx_authn_utils:add_trusted_attrs(AuthResult, State)};
+add_trusted_attrs(Result, _State) ->
+    Result.
 
 body_to_auth_data(Body) ->
     case maps:get(<<"result">>, Body, <<"ignore">>) of

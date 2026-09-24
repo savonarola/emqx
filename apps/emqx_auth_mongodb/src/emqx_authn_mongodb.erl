@@ -106,7 +106,7 @@ authenticate_with_filter(
         {ok, Doc} ->
             case check_password(Password, Doc, State) of
                 ok ->
-                    {ok, authn_result(Doc, State)};
+                    {ok, emqx_authn_utils:add_trusted_attrs(authn_result(Doc, State), State)};
                 {error, {cannot_find_password_hash_field, PasswordHashField}} ->
                     ?TRACE_AUTHN_PROVIDER(error, "cannot_find_password_hash_field", #{
                         resource => ResourceId,
@@ -148,6 +148,7 @@ create_state(ResourceId, #{filter := Filter} = Config) ->
     State = State0#{
         filter_template => FilterTemplate,
         cache_key_template => CacheKeyTemplate,
+        trusted_attrs => emqx_authn_utils:make_trusted_attrs(Vars),
         resource_id => ResourceId
     },
     ok = emqx_authn_password_hashing:init(maps:get(password_hash_algorithm, State)),

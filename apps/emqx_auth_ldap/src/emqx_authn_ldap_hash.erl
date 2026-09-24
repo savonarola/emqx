@@ -74,7 +74,8 @@ do_authenticate(Password, Entry, #{resource_id := ResourceId} = State) ->
         ok ?= verify_user_enabled(Entry),
         ok ?= ensure_password(Password, Entry, State),
         {ok, AclFields} ?= emqx_auth_ldap_acl:acl_from_entry(State, Entry),
-        {ok, maps:merge(AclFields, authn_result(Entry, State))}
+        AuthResult = maps:merge(AclFields, authn_result(Entry, State)),
+        {ok, emqx_authn_utils:add_trusted_attrs(AuthResult, State)}
     else
         {error, Reason} ->
             ?TRACE_AUTHN_PROVIDER(error, "ldap_authentication_failed", #{

@@ -345,9 +345,13 @@ t_authenticate(TCConfig) ->
     User = maybe_add_ns(#{user_id => <<"u">>, password => <<"p">>}, TCConfig),
     {ok, _} = emqx_authn_mnesia:add_user(User, State),
 
-    {ok, _} = emqx_authn_mnesia:authenticate(
+    {ok, AuthResult} = emqx_authn_mnesia:authenticate(
         maybe_add_ns_clientinfo(#{username => <<"u">>, password => <<"p">>}, TCConfig),
         State
+    ),
+    ?assertEqual(
+        #{username => true, client_attrs => #{?CLIENT_ATTR_NAME_TNS => true}},
+        maps:get(trusted_attrs, AuthResult)
     ),
     {error, bad_username_or_password} = emqx_authn_mnesia:authenticate(
         maybe_add_ns_clientinfo(#{username => <<"u">>, password => <<"badpass">>}, TCConfig),

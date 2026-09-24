@@ -154,14 +154,24 @@ authenticate(
             reason => Reason
         })
     end,
-    emqx_utils_scram:authenticate(
+    Result = emqx_utils_scram:authenticate(
         AuthMethod, AuthData, AuthCache, State, RetrieveFun, OnErrFun, [is_superuser]
-    );
+    ),
+    add_trusted_attrs(Result);
 authenticate(_Credential, _State) ->
     ignore.
 
 destroy(#{user_group := UserGroup}) ->
     trans(fun ?MODULE:do_destroy/1, [UserGroup]).
+
+add_trusted_attrs({ok, AuthResult, AuthData}) ->
+    {ok,
+        AuthResult#{
+            trusted_attrs => #{client_attrs => #{?CLIENT_ATTR_NAME_TNS => true}}
+        },
+        AuthData};
+add_trusted_attrs(Result) ->
+    Result.
 
 do_destroy(UserGroup) ->
     ok = lists:foreach(

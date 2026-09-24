@@ -153,13 +153,14 @@ t_destroy(Config) ->
     {ok, [#{provider := emqx_authn_ldap, state := State}]} =
         emqx_authn_chains:list_authenticators(?GLOBAL),
 
-    {ok, _} = emqx_authn_ldap:authenticate(
+    {ok, AuthResult} = emqx_authn_ldap:authenticate(
         #{
             username => <<"mqttuser0001">>,
             password => <<"mqttuser0001">>
         },
         State
     ),
+    ?assertEqual(#{username => true}, maps:get(trusted_attrs, AuthResult)),
 
     emqx_authn_test_lib:delete_authenticators(
         [authentication],

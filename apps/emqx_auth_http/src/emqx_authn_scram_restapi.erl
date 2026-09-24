@@ -83,15 +83,25 @@ authenticate(
             reason => Reason
         })
     end,
-    emqx_utils_scram:authenticate(
+    Result = emqx_utils_scram:authenticate(
         AuthMethod, AuthData, AuthCache, State, RetrieveFun, OnErrFun, ?AUTHN_DATA_FIELDS
-    );
+    ),
+    add_trusted_attrs(Result, State);
 authenticate(_Credential, _State) ->
     ignore.
 
 destroy(#{resource_id := ResourceId}) ->
     _ = emqx_resource:remove_local(ResourceId),
     ok.
+
+add_trusted_attrs({ok, AuthResult, AuthData}, #{trusted_attrs := TrustedAttrs}) ->
+    {ok,
+        AuthResult#{
+            trusted_attrs => emqx_utils_maps:deep_remove([username], TrustedAttrs)
+        },
+        AuthData};
+add_trusted_attrs(Result, _State) ->
+    Result.
 
 %%--------------------------------------------------------------------
 %% Internal functions

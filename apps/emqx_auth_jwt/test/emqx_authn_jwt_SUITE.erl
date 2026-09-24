@@ -94,7 +94,9 @@ t_hmac_based(ProfileConfig) ->
         username => <<"myuser">>,
         password => JWS
     },
-    ?assertMatch({ok, #{is_superuser := false}}, emqx_authn_jwt:authenticate(Credential, State)),
+    {ok, AuthResult} = emqx_authn_jwt:authenticate(Credential, State),
+    ?assertEqual(#{username => true}, maps:get(trusted_attrs, AuthResult)),
+    ?assertEqual(false, maps:get(is_superuser, AuthResult)),
 
     Payload1 = #{
         <<"username">> => <<"myuser">>,
@@ -281,8 +283,16 @@ t_public_key(ProfileConfig) ->
 t_invalid_signature(Config) ->
     Expected =
         case ?config(security_profile, Config) of
-            legacy -> {ok, #{is_superuser => false}};
-            hardened -> {error, not_authorized}
+            legacy ->
+                {ok, #{
+                    is_superuser => false,
+                    trusted_attrs => #{
+                        username => true,
+                        client_attrs => #{<<"tns">> => true}
+                    }
+                }};
+            hardened ->
+                {error, not_authorized}
         end,
     ?assertEqual(Expected, authenticate_with_invalid_signature()).
 

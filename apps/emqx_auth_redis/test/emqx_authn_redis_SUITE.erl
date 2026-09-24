@@ -197,7 +197,11 @@ test_user_auth(
         protocol => mqtt
     },
 
-    Auth = fun() -> ?assertEqual(Result, emqx_access_control:authenticate(Credentials)) end,
+    Auth = fun() ->
+        emqx_authn_test_lib:assert_auth_result(
+            Result, emqx_access_control:authenticate(Credentials)
+        )
+    end,
     run(Config, Credentials, Auth),
 
     case maps:get(redis_result, Config, undefined) of
@@ -228,13 +232,14 @@ test_destroy(#{security_profile := Profile}) ->
     {ok, [#{provider := emqx_authn_redis, state := State}]} =
         emqx_authn_chains:list_authenticators(?GLOBAL),
 
-    {ok, _} = emqx_authn_redis:authenticate(
+    {ok, AuthResult} = emqx_authn_redis:authenticate(
         #{
             username => <<"plain">>,
             password => <<"plain">>
         },
         State
     ),
+    ?assertEqual(#{username => true}, maps:get(trusted_attrs, AuthResult)),
 
     emqx_authn_test_lib:delete_authenticators(
         [authentication],

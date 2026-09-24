@@ -109,7 +109,7 @@ format_authentication_result(
         {ok, AclFields} ->
             AuthResult0 = AclFields#{is_superuser => IsSuperuser},
             AuthResult = maps:merge(AuthResult0, clientid_override(Entry, State)),
-            {ok, AuthResult};
+            {ok, emqx_authn_utils:add_trusted_attrs(AuthResult, State)};
         {error, Reason} ->
             ?TRACE_AUTHN_PROVIDER(error, "ldap_bind_invalid_acl_rules", #{
                 resource => ResourceId,

@@ -108,6 +108,11 @@ with_security_profiles(Case, Fun) ->
         Profiles
     ).
 
+assert_auth_result({ok, Expected}, {ok, Actual}) when not is_map_key(trusted_attrs, Expected) ->
+    ?assertEqual(Expected, maps:remove(trusted_attrs, Actual));
+assert_auth_result(Expected, Actual) ->
+    ?assertEqual(Expected, Actual).
+
 add_permissive_builtin_authenticator(Path, Chain, Username, Password) ->
     Config = #{
         <<"mechanism">> => <<"password_based">>,

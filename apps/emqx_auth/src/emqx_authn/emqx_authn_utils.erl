@@ -16,6 +16,8 @@
     parse_deep/1,
     parse_str/1,
     parse_sql/2,
+    make_trusted_attrs/1,
+    add_trusted_attrs/2,
     is_superuser/1,
     client_attrs/1,
     maybe_client_attrs/1,
@@ -145,6 +147,23 @@ parse_str(Template) -> emqx_auth_template:parse_str(Template, ?AUTHN_DEFAULT_ALL
     {used_template_vars(), emqx_template_sql:statement(), emqx_template_sql:row_template()}.
 parse_sql(Template, ReplaceWith) ->
     emqx_auth_template:parse_sql(Template, ReplaceWith, ?AUTHN_DEFAULT_ALLOWED_VARS).
+
+-spec make_trusted_attrs(used_template_vars()) -> emqx_clientinfo:trusted_mask().
+make_trusted_attrs(Vars) ->
+    lists:foldl(
+        fun(Var, Acc) ->
+            case trusted_attr_path(Var) of
+                skip -> Acc;
+                Path -> emqx_utils_maps:deep_force_put(Path, Acc, true)
+            end
+        end,
+        #{},
+        Vars
+    ).
+
+-spec add_trusted_attrs(map(), map()) -> map().
+add_trusted_attrs(AuthResult, #{trusted_attrs := TrustedAttrs}) ->
+    AuthResult#{trusted_attrs => TrustedAttrs}.
 
 -spec check_password_from_selected_map(atom(), #{binary() => term()}, binary() | undefined) ->
     {error, bad_username_or_password} | ok.
@@ -329,6 +348,23 @@ authn_backend_failure_policy() ->
 %%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
+
+trusted_attr_path(Var) ->
+    case binary:split(iolist_to_binary(Var), <<".">>, [global]) of
+        [<<"password">>] -> skip;
+        [<<"cert_subject">>] -> [dn];
+        [<<"cert_common_name">>] -> [cn];
+        [<<"proto_name">>] -> [protocol];
+        [<<"client_attrs">> | AttrPath] -> [client_attrs | AttrPath];
+        [Key] -> [key_atom(Key)]
+    end.
+
+key_atom(Key) ->
+    try binary_to_existing_atom(Key, utf8) of
+        Atom -> Atom
+    catch
+        error:badarg -> Key
+    end.
 
 without_password(Credential, []) ->
     Credential;

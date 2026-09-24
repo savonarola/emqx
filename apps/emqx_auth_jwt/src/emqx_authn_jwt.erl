@@ -120,12 +120,15 @@ do_authenticate(
         jwk := JWK,
         allowed_algs := AllowedAlgs,
         acl_claim_name := AclClaimName
-    }
+    } = State
 ) ->
     %% XXX: Only supports single public key
     JWKs = [JWK],
     VerifyClaims = render_expected(VerifyClaims0, Credential),
-    verify(JWT, JWKs, AllowedAlgs, VerifyClaims, AclClaimName, DisconnectAfterExpire);
+    add_trusted_attrs(
+        verify(JWT, JWKs, AllowedAlgs, VerifyClaims, AclClaimName, DisconnectAfterExpire),
+        State
+    );
 do_authenticate(
     JWT,
     Credential,
@@ -135,7 +138,7 @@ do_authenticate(
         resource_id := ResourceId,
         allowed_algs := AllowedAlgs,
         acl_claim_name := AclClaimName
-    }
+    } = State
 ) ->
     case emqx_resource:simple_sync_query(ResourceId, get_jwks) of
         {error, Reason} ->
@@ -148,7 +151,10 @@ do_authenticate(
             emqx_authn_utils:backend_failure_result();
         {ok, JWKs} ->
             VerifyClaims = render_expected(VerifyClaims0, Credential),
-            verify(JWT, JWKs, AllowedAlgs, VerifyClaims, AclClaimName, DisconnectAfterExpire)
+            add_trusted_attrs(
+                verify(JWT, JWKs, AllowedAlgs, VerifyClaims, AclClaimName, DisconnectAfterExpire),
+                State
+            )
     end.
 
 destroy(#{resource_id := ResourceId}) ->
@@ -176,10 +182,12 @@ create_authn_hmac_based(#{
             {error, Reason};
         Secret ->
             JWK = jose_jwk:from_oct(Secret),
+            {VerifyClaimVars, ParsedVerifyClaims} = handle_verify_claims_with_vars(VerifyClaims),
             {ok, #{
                 jwk => JWK,
                 allowed_algs => ?JWT_HMAC_ALGORITHMS,
-                verify_claims => handle_verify_claims(VerifyClaims),
+                verify_claims => ParsedVerifyClaims,
+                trusted_attrs => trusted_attrs(From, VerifyClaimVars),
                 disconnect_after_expire => DisconnectAfterExpire,
                 on_missing_jwt => OnMissingJWT,
                 acl_claim_name => AclClaimName,
@@ -205,10 +213,12 @@ create_authn_public_key(
                 maps:get(enable, Config, false),
                 PublicKey
             ),
+        {VerifyClaimVars, ParsedVerifyClaims} = handle_verify_claims_with_vars(VerifyClaims),
         {ok, #{
             jwk => JWK,
             allowed_algs => ?JWT_PUBLIC_KEY_ALGORITHMS,
-            verify_claims => handle_verify_claims(VerifyClaims),
+            verify_claims => ParsedVerifyClaims,
+            trusted_attrs => trusted_attrs(From, VerifyClaimVars),
             disconnect_after_expire => DisconnectAfterExpire,
             on_missing_jwt => OnMissingJWT,
             acl_claim_name => AclClaimName,
@@ -227,6 +237,7 @@ create_authn_public_key_with_jwks(
         from := From
     } = Config
 ) ->
+    {VerifyClaimVars, ParsedVerifyClaims} = handle_verify_claims_with_vars(VerifyClaims),
     ResourceConfig = emqx_authn_utils:cleanup_resource_config(
         [verify_claims, disconnect_after_expire, on_missing_jwt, acl_claim_name, from], Config
     ),
@@ -235,7 +246,8 @@ create_authn_public_key_with_jwks(
         #{
             resource_id => ResourceId,
             allowed_algs => ?JWT_PUBLIC_KEY_ALGORITHMS,
-            verify_claims => handle_verify_claims(VerifyClaims),
+            verify_claims => ParsedVerifyClaims,
+            trusted_attrs => trusted_attrs(From, VerifyClaimVars),
             disconnect_after_expire => DisconnectAfterExpire,
             on_missing_jwt => OnMissingJWT,
             acl_claim_name => AclClaimName,
@@ -482,14 +494,22 @@ do_verify_claims(Claims, [{Name, Value} | More]) ->
             {error, {claims, {Name, Value0}}}
     end.
 
-handle_verify_claims(VerifyClaims) ->
-    handle_verify_claims(VerifyClaims, []).
+handle_verify_claims_with_vars(VerifyClaims) ->
+    handle_verify_claims(VerifyClaims, [], []).
 
-handle_verify_claims([], Acc) ->
-    Acc;
-handle_verify_claims([{Name, Expected0} | More], Acc) ->
-    {_, Expected1} = emqx_auth_template:parse_str(Expected0, ?ALLOWED_VARS),
-    handle_verify_claims(More, [{Name, Expected1} | Acc]).
+handle_verify_claims([], VarsAcc, ClaimsAcc) ->
+    {lists:usort(VarsAcc), ClaimsAcc};
+handle_verify_claims([{Name, Expected0} | More], VarsAcc, ClaimsAcc) ->
+    {Vars, Expected1} = emqx_auth_template:parse_str(Expected0, ?ALLOWED_VARS),
+    handle_verify_claims(More, Vars ++ VarsAcc, [{Name, Expected1} | ClaimsAcc]).
+
+trusted_attrs(From, VerifyClaimVars) ->
+    emqx_authn_utils:make_trusted_attrs([atom_to_list(From) | VerifyClaimVars]).
+
+add_trusted_attrs({ok, AuthResult}, State) ->
+    {ok, emqx_authn_utils:add_trusted_attrs(AuthResult, State)};
+add_trusted_attrs(Result, _State) ->
+    Result.
 
 binary_to_number(Bin) ->
     case string:to_integer(Bin) of

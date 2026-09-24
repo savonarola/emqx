@@ -107,7 +107,7 @@ auth_begin(SaslConn, ClientToken) ->
             {continue, ServerToken, #{sasl_conn => SaslConn}};
         {ok, {sasl_ok, ServerToken}} ->
             sasl_auth:server_done(SaslConn),
-            {ok, #{}, ServerToken};
+            {ok, #{trusted_attrs => #{}}, ServerToken};
         Reason ->
             ?TRACE_AUTHN_PROVIDER("sasl_kerberos_start_failed", #{
                 reason => Reason,
@@ -123,7 +123,7 @@ auth_continue(SaslConn, ClientToken) ->
             {continue, ServerToken, #{sasl_conn => SaslConn}};
         {ok, {sasl_ok, ServerToken}} ->
             sasl_auth:server_done(SaslConn),
-            {ok, #{}, ServerToken};
+            {ok, #{trusted_attrs => #{}}, ServerToken};
         Reason ->
             ?TRACE_AUTHN_PROVIDER("sasl_kerberos_step_failed", #{
                 reason => Reason,

@@ -97,6 +97,9 @@ create_state(
                 query_timeout => QueryTimeout,
                 method => Method,
                 cache_key_template => CacheKeyTemplate,
+                trusted_attrs => emqx_authn_utils:make_trusted_attrs(
+                    lists:uniq(BaseDNVars ++ FilterVars ++ PasswordVars)
+                ),
                 base_dn_template => BaseDNTemplate,
                 filter_template => FilterTemplate,
                 password_template => PasswordTemplate,

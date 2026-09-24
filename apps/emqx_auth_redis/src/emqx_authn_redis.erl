@@ -67,7 +67,7 @@ authenticate(
         resource_id := ResourceId,
         password_hash_algorithm := Algorithm,
         cache_key_template := CacheKeyTemplate
-    }
+    } = State
 ) ->
     NKey = emqx_auth_template:render_str(KeyTemplate, Credential),
     Command = [CommandName, NKey | Fields],
@@ -84,7 +84,7 @@ authenticate(
                         )
                     of
                         ok ->
-                            {ok, authn_result(Selected)};
+                            {ok, emqx_authn_utils:add_trusted_attrs(authn_result(Selected), State)};
                         {error, _Reason} = Error ->
                             Error
                     end;
@@ -143,6 +143,7 @@ create_state(
             password_hash_algorithm => Algorithm,
             cmd => Cmd,
             cache_key_template => CacheKeyTemplate,
+            trusted_attrs => emqx_authn_utils:make_trusted_attrs(Vars),
             resource_id => ResourceId
         }),
         ResourceConfig = emqx_authn_utils:cleanup_resource_config(

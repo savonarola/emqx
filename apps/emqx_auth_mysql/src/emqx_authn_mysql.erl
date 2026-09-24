@@ -70,7 +70,7 @@ authenticate(
         resource_id := ResourceId,
         password_hash_algorithm := Algorithm,
         cache_key_template := CacheKeyTemplate
-    }
+    } = State
 ) ->
     RenderedArgs = emqx_auth_template:render_sql_params(ArgsTemplate, Credential),
     CacheKey = emqx_auth_template:cache_key(Credential, CacheKeyTemplate),
@@ -88,7 +88,7 @@ authenticate(
                 )
             of
                 ok ->
-                    {ok, authn_result(Selected)};
+                    {ok, emqx_authn_utils:add_trusted_attrs(authn_result(Selected), State)};
                 {error, Reason} ->
                     {error, Reason}
             end;
@@ -119,6 +119,7 @@ create_state(
         args_template => ArgsTemplate,
         query_timeout => QueryTimeout,
         cache_key_template => CacheKeyTemplate,
+        trusted_attrs => emqx_authn_utils:make_trusted_attrs(Vars),
         resource_id => ResourceId
     }),
     ResourceConfig = emqx_authn_utils:cleanup_resource_config(
