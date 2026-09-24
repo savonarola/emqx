@@ -408,7 +408,7 @@ fix_mountpoint(_Packet, ClientInfo = #{mountpoint := Mountpoint}) ->
     case RequireTrustedAttrs of
         false ->
             Mountpoint1 = emqx_mountpoint:replvar(Mountpoint, MountpointClientInfo),
-            {ok, ClientInfo#{mountpoint := Mountpoint1}};
+            {ok, emqx_clientinfo:set(ClientInfo, mountpoint, Mountpoint1)};
         true ->
             case emqx_mountpoint:replvar_strict(Mountpoint, MountpointClientInfo) of
                 {ok, Mountpoint1} ->

@@ -215,7 +215,7 @@ eval_mountpoint(ClientInfo = #{mountpoint := MountPoint}) ->
     case RequireTrustedAttrs of
         false ->
             MountPoint1 = emqx_mountpoint:replvar(MountPoint, MountpointClientInfo),
-            {ok, ClientInfo#{mountpoint := MountPoint1}};
+            {ok, emqx_clientinfo:set(ClientInfo, mountpoint, MountPoint1)};
         true ->
             case emqx_mountpoint:replvar_strict(MountPoint, MountpointClientInfo) of
                 {ok, MountPoint1} ->

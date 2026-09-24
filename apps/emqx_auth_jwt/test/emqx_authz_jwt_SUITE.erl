@@ -63,7 +63,13 @@ init_per_testcase(TestCase, Config) ->
         ?AUTHN_PATH,
         ?GLOBAL
     ),
-    AuthConfig = authn_config(),
+    AuthConfig0 = authn_config(),
+    AuthConfig =
+        case TestCase of
+            t_topic_rules -> topic_rules_authn_config(AuthConfig0);
+            t_topic_rules_v2 -> topic_rules_authn_config(AuthConfig0);
+            _ -> AuthConfig0
+        end,
     {ok, _} = emqx:update_config(
         ?AUTHN_PATH,
         {create_authenticator, ?GLOBAL, AuthConfig}
@@ -104,7 +110,8 @@ t_topic_rules(_Config) ->
                 <<"testall3/#">>
             ]
         },
-        <<"username">> => <<"username">>
+        <<"username">> => <<"username">>,
+        <<"clientid">> => <<"clientid">>
     },
     test_topic_rules(JWT).
 
@@ -141,7 +148,8 @@ t_topic_rules_v2(_Config) ->
                 ]
             }
         ],
-        <<"username">> => <<"username">>
+        <<"username">> => <<"username">>,
+        <<"clientid">> => <<"clientid">>
     },
     test_topic_rules(JWT).
 
@@ -385,7 +393,7 @@ t_check_no_expire(_Config) ->
 
 t_check_undefined_expire(_Config) ->
     Acl = #{expire => undefined, rules => #{<<"sub">> => [<<"a/b">>]}},
-    Client = #{acl => Acl},
+    Client = #{trusted_attrs => #{authn => #{acl => Acl}}},
 
     ?assertMatch(
         {matched, allow},
@@ -470,6 +478,14 @@ authn_config() ->
         <<"disconnect_after_expire">> => false,
         <<"verify_claims">> => #{
             <<"username">> => ?PH_USERNAME
+        }
+    }.
+
+topic_rules_authn_config(Config) ->
+    Config#{
+        <<"verify_claims">> => #{
+            <<"username">> => ?PH_USERNAME,
+            <<"clientid">> => ?PH_CLIENTID
         }
     }.
 

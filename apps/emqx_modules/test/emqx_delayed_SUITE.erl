@@ -48,7 +48,11 @@ init_per_testcase(t_load_case, Config) ->
     emqx_common_test_helpers:set_security_profile("legacy"),
     Config;
 init_per_testcase(Case, Config) ->
-    emqx_common_test_helpers:set_security_profile(test_security_profile(Case)),
+    Profile = test_security_profile(Case),
+    emqx_common_test_helpers:set_security_profile(Profile),
+    emqx_config:put(
+        [authorization, require_trusted_attributes], Profile =:= "hardened"
+    ),
     {atomic, ok} = mria:clear_table(emqx_delayed),
     ok = emqx_delayed:load(),
     Config.
@@ -343,7 +347,8 @@ t_reauthorize_legacy_delayed_message_after_hardening(_) ->
     ?assertWaitEvent(
         begin
             {stop, _} = on_message_publish(Msg),
-            emqx_common_test_helpers:set_security_profile("hardened")
+            emqx_common_test_helpers:set_security_profile("hardened"),
+            emqx_config:put([authorization, require_trusted_attributes], true)
         end,
         #{
             ?snk_kind := ignore_delayed_message_publish,

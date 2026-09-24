@@ -125,14 +125,15 @@ t_authz_context_security_profile(_) ->
         client_attrs => #{<<"role">> => <<"reader">>},
         custom_authz_field => custom_value
     }),
-    RestrictedContext = maps:remove(custom_authz_field, maps:remove(password, ClientInfo)),
-    Cases = [
-        {"legacy", ClientInfo},
-        {"hardened", RestrictedContext}
-    ],
-    lists:foreach(
-        fun({Profile, ExpectedContext}) ->
-            emqx_common_test_helpers:with_security_profile(Profile, fun() ->
+    RestrictedContext = emqx_clientinfo:trusted(ClientInfo),
+    Cases = [{false, ClientInfo}, {true, RestrictedContext}],
+    OldRequireTrusted = emqx:get_config([authorization, require_trusted_attributes]),
+    try
+        lists:foreach(
+            fun({RequireTrusted, ExpectedContext}) ->
+                emqx_config:put(
+                    [authorization, require_trusted_attributes], RequireTrusted
+                ),
                 ok = emqx_hooks:put(
                     'client.authorize', {?MODULE, capture_authz_context, []}, ?HP_AUTHZ
                 ),
@@ -150,10 +151,14 @@ t_authz_context_security_profile(_) ->
                 after 1000 ->
                     ct:fail(authz_context_not_captured)
                 end
-            end)
-        end,
-        Cases
-    ).
+            end,
+            Cases
+        )
+    after
+        emqx_config:put(
+            [authorization, require_trusted_attributes], OldRequireTrusted
+        )
+    end.
 
 t_quick_deny_anonymous(_) ->
     ok = emqx_hooks:put(

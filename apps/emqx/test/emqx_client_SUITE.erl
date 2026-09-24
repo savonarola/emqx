@@ -911,10 +911,13 @@ t_namespace_as_mountpoint_enabled(_) ->
     ]),
     {ok, _} = emqtt:connect(Client),
     ExpectedMountpoint = <<"n1/">>,
+    ClientInfo = maps:get(clientinfo, emqx_cm:get_chan_info(ClientId)),
     ?assertMatch(
         #{mountpoint := ExpectedMountpoint},
-        maps:get(clientinfo, emqx_cm:get_chan_info(ClientId))
+        ClientInfo
     ),
+    %% A mountpoint derived by this consumer must not become trusted implicitly.
+    ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, mountpoint)),
     emqtt:disconnect(Client).
 
 t_namespace_as_mountpoint_trusted(init, Config) ->

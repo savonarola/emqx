@@ -310,7 +310,7 @@ setup_authenticator(#{setup := ExtraConfig} = _Case) ->
 
 create_client_info(#{credentials := Credentials, client_info := ClientInfo0} = Case) ->
     {ok, Data} = emqx_access_control:authenticate(Credentials),
-    ClientInfo = maps:merge(ClientInfo0, Data),
+    ClientInfo = emqx_clientinfo:merge_authn_result(ClientInfo0, Data, merge),
     Case#{client_info => ClientInfo}.
 
 raw_ldap_authn_config() ->

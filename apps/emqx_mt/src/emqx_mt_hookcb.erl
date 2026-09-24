@@ -349,8 +349,7 @@ decide_with_rewritten_tns(ClientId, Tns, ClientInfo, Ctx, RequireTrustedAttrs) -
 set_tns(ClientInfo, Tns, true) ->
     emqx_clientinfo:set_trusted(ClientInfo, [client_attrs, ?CLIENT_ATTR_NAME_TNS], Tns);
 set_tns(ClientInfo, Tns, false) ->
-    Attrs = maps:get(client_attrs, ClientInfo, #{}),
-    ClientInfo#{client_attrs => Attrs#{?CLIENT_ATTR_NAME_TNS => Tns}}.
+    emqx_clientinfo:set(ClientInfo, [client_attrs, ?CLIENT_ATTR_NAME_TNS], Tns).
 
 on_api_actor_will_be_created(#{?namespace := ?global_ns}, Ok) ->
     Ok;

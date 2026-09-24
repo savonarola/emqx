@@ -2700,9 +2700,7 @@ fix_mountpoint(#{mountpoint := MountPoint} = ClientInfo, MountpointClientInfo, t
             {error, ?RC_NOT_AUTHORIZED, ClientInfo}
     end.
 
-set_mountpoint(ClientInfo, Mountpoint, false) ->
-    ClientInfo#{mountpoint := Mountpoint};
-set_mountpoint(ClientInfo, Mountpoint, true) ->
+set_mountpoint(ClientInfo, Mountpoint, _RequireTrustedAttrs) ->
     emqx_clientinfo:set(ClientInfo, mountpoint, Mountpoint).
 
 fix_mountpoint(_PipelineOutput, #channel{clientinfo = ClientInfo0} = Channel0) ->

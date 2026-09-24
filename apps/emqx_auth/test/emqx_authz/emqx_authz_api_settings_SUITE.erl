@@ -51,6 +51,9 @@ end_per_suite(Config) ->
 
 t_api(_) ->
     DefaultIncludeMountpoint = emqx_security_profile:policy(authz_default_include_mountpoint),
+    DefaultRequireTrusted = emqx_security_profile:policy(
+        authorization_require_trusted_attributes
+    ),
     Settings1Put = #{
         <<"no_match">> => <<"deny">>,
         <<"deny_action">> => <<"disconnect">>,
@@ -61,6 +64,7 @@ t_api(_) ->
             <<"excludes">> => [<<"nocache/#">>]
         },
         <<"include_mountpoint">> => true,
+        <<"require_trusted_attributes">> => true,
         <<"ignore_backend_failures">> => true,
         <<"ignore_rule_render_failures">> => false
     },
@@ -84,6 +88,7 @@ t_api(_) ->
     Settings2Get = Settings2Put#{
         <<"cache">> := Cache#{<<"excludes">> => []},
         <<"include_mountpoint">> => DefaultIncludeMountpoint,
+        <<"require_trusted_attributes">> => DefaultRequireTrusted,
         <<"ignore_backend_failures">> => <<"per_security_profile">>,
         <<"ignore_rule_render_failures">> => <<"per_security_profile">>
     },

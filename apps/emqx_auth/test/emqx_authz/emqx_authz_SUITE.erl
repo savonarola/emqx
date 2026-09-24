@@ -123,6 +123,10 @@ t_client_info_acl_expire_uses_restricted_now_time(_) ->
 
 %% Verify that hardened authorization cannot use a username omitted from the authn trust mask.
 t_untrusted_username(Config) ->
+    emqx_config:put(
+        [authorization, require_trusted_attributes],
+        ?config(security_profile, Config) =:= hardened
+    ),
     ClientInfo = #{
         zone => default,
         clientid => <<"authenticated-client">>,
@@ -141,6 +145,10 @@ t_untrusted_username(Config) ->
 
 %% Verify that required authorization variables fail closed only when enforcement is enabled.
 t_required_authorization_vars(Config) ->
+    emqx_config:put(
+        [authorization, require_trusted_attributes],
+        ?config(security_profile, Config) =:= hardened
+    ),
     Vars = #{client_attrs => #{<<"tenant">> => <<"t1">>}},
     ?assertEqual(
         ok,
@@ -1023,9 +1031,15 @@ Verifies that, when we set `authorization.include_mountpoint = true`, then autho
 backends evaluate the original topics prefixed by `mountpoint`.
 """.
 t_mount_prefix_for_authz(TCConfig) ->
-    emqx_common_test_helpers:with_security_profile("legacy", fun() ->
+    OldRequireTrusted = emqx:get_config([authorization, require_trusted_attributes]),
+    emqx_config:put([authorization, require_trusted_attributes], false),
+    try
         do_t_mount_prefix_for_authz(TCConfig)
-    end).
+    after
+        emqx_config:put(
+            [authorization, require_trusted_attributes], OldRequireTrusted
+        )
+    end.
 
 do_t_mount_prefix_for_authz(_TCConfig) ->
     Mountpoint = <<"mountpoint/">>,
@@ -1051,6 +1065,7 @@ do_t_mount_prefix_for_authz(_TCConfig) ->
         ?HP_LOWEST
     ),
     {ok, _} = emqx_authz:update(?CMD_REPLACE, [?SOURCE_MYSQL]),
+    emqx_config:put([authorization, require_trusted_attributes], false),
     Username = <<"imauser">>,
     {ok, C1} = emqtt:start_link(),
     {ok, _} = emqtt:connect(C1),

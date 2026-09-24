@@ -1066,27 +1066,27 @@ t_limiter_adjustment_trusted_context(_) ->
         #{trusted_attrs => #{clientid => true}},
         merge
     ),
+    OldRequireTrusted = emqx:get_config([mqtt, require_trusted_attributes]),
     try
-        emqx_common_test_helpers:with_security_profile("hardened", fun() ->
-            undefined = emqx_channel:adjust_limiter(ClientInfo),
-            receive
-                {limiter_context, TrustedContext} ->
-                    ?assertNot(maps:is_key(username, TrustedContext)),
-                    ?assertNot(maps:is_key(client_attrs, TrustedContext))
-            after 1_000 ->
-                ct:fail(limiter_context_missing)
-            end
-        end),
-        emqx_common_test_helpers:with_security_profile("legacy", fun() ->
-            undefined = emqx_channel:adjust_limiter(ClientInfo),
-            receive
-                {limiter_context, ClientInfo} -> ok
-            after 1_000 ->
-                ct:fail(limiter_context_missing)
-            end
-        end)
+        emqx_config:put([mqtt, require_trusted_attributes], true),
+        undefined = emqx_channel:adjust_limiter(ClientInfo),
+        receive
+            {limiter_context, TrustedContext} ->
+                ?assertNot(maps:is_key(username, TrustedContext)),
+                ?assertNot(maps:is_key(client_attrs, TrustedContext))
+        after 1_000 ->
+            ct:fail(limiter_context_missing)
+        end,
+        emqx_config:put([mqtt, require_trusted_attributes], false),
+        undefined = emqx_channel:adjust_limiter(ClientInfo),
+        receive
+            {limiter_context, ClientInfo} -> ok
+        after 1_000 ->
+            ct:fail(limiter_context_missing)
+        end
     after
-        emqx_hooks:del('channel.limiter_adjustment', {?MODULE, capture_limiter_context})
+        emqx_hooks:del('channel.limiter_adjustment', {?MODULE, capture_limiter_context}),
+        emqx_config:put([mqtt, require_trusted_attributes], OldRequireTrusted)
     end.
 
 capture_limiter_context(ClientInfo, Limiter, TestPid) ->

@@ -40,6 +40,8 @@ init_per_suite(Conf) ->
                 {ok, #{expire_at => erlang:system_time(millisecond) + 10_000}};
             (#{clientid := <<"zone-override">>}) ->
                 {ok, #{zone_override => <<"default">>, custom_authn => value}};
+            (#{clientid := <<"trusted-all">>}) ->
+                {ok, #{trusted_attrs => true}};
             (_) ->
                 {ok, #{trusted_attrs => #{clientid => true}}}
         end
@@ -157,6 +159,19 @@ t_mountpoint_missing_trusted_variable(_) ->
         {error, {unresolved_mountpoint_placeholders, [_]}},
         emqx_gateway_ctx:authenticate(Ctx, Info)
     ).
+
+%% Verify that legacy gateway rendering clears inherited trust from the mountpoint.
+t_legacy_mountpoint_is_not_trusted(_) ->
+    emqx_common_test_helpers:with_security_profile("legacy", fun() ->
+        Ctx = #{gwname => mqttsn, cm => self()},
+        Info = #{
+            mountpoint => <<"mqttsn/${clientid}/">>,
+            clientid => <<"trusted-all">>
+        },
+        {ok, NInfo} = emqx_gateway_ctx:authenticate(Ctx, Info),
+        ?assertEqual(<<"mqttsn/trusted-all/">>, maps:get(mountpoint, NInfo)),
+        ?assertEqual(error, emqx_clientinfo:get_trusted(NInfo, mountpoint))
+    end).
 
 %% Verify that gateway expiry reads the relocated trusted authn value.
 t_connection_expire_interval(_) ->
