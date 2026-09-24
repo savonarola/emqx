@@ -143,6 +143,7 @@ end).
     is_superuser := boolean(),
     %% millisecond timestamp
     expire_at => pos_integer(),
+    trusted_attrs => emqx_clientinfo:trusted_mask(),
     atom() => term()
 }.
 -type user_info() :: #{

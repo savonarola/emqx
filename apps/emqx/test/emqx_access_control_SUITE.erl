@@ -39,7 +39,8 @@ end_per_testcase(_, _Config) ->
     ok = emqx_hooks:del('client.authenticate', {?MODULE, quick_deny_anonymous_authn}),
     ok = emqx_hooks:del('client.authenticate', {?MODULE, crashing_authn}),
     ok = emqx_hooks:del('client.authenticate', {?MODULE, permissive_authn_stop}),
-    ok = emqx_hooks:del('client.authenticate', {?MODULE, permissive_authn_ok}).
+    ok = emqx_hooks:del('client.authenticate', {?MODULE, permissive_authn_ok}),
+    ok = emqx_hooks:del('client.authenticate', {?MODULE, trusted_attrs_authn}).
 
 t_authenticate(_) ->
     ClientInfo = clientinfo(),
@@ -51,7 +52,25 @@ t_authenticate(_) ->
         {error, not_authorized},
         emqx_access_control:authenticate(ClientInfo#{enable_authn => quick_deny_anonymous})
     ),
-    ?assertMatch({ok, _}, emqx_access_control:authenticate(ClientInfo#{enable_authn => false})).
+    ?assertEqual(
+        {ok, #{is_superuser => false, trusted_attrs => true}},
+        emqx_access_control:authenticate(ClientInfo#{enable_authn => false})
+    ).
+
+%% Verify that authentication preserves the trusted input mask returned by a hook.
+t_authenticate_trusted_attrs(_) ->
+    ok = emqx_hooks:put(
+        'client.authenticate',
+        {?MODULE, trusted_attrs_authn, []},
+        ?HP_AUTHN
+    ),
+    ?assertEqual(
+        {ok, #{
+            is_superuser => false,
+            trusted_attrs => #{username => true, client_attrs => #{<<"tns">> => true}}
+        }},
+        emqx_access_control:authenticate(clientinfo())
+    ).
 
 t_authorize(_) ->
     ?assertEqual(
@@ -261,6 +280,13 @@ permissive_authn_stop(_ClientInfo, _AuthResult) ->
 
 permissive_authn_ok(_ClientInfo, _AuthResult) ->
     {ok, {ok, #{is_superuser => false}}}.
+
+trusted_attrs_authn(_ClientInfo, _AuthResult) ->
+    {stop,
+        {ok, #{
+            is_superuser => false,
+            trusted_attrs => #{username => true, client_attrs => #{<<"tns">> => true}}
+        }}}.
 
 crashing_authz(_ClientInfo, _Action, _Topic, _AuthzResult) ->
     erlang:error(authz_hook_crashed).

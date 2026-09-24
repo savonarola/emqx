@@ -31,6 +31,7 @@
     client_attrs => #{binary() => binary()},
     clientid_override => binary(),
     expire_at => non_neg_integer(),
+    trusted_attrs => emqx_clientinfo:trusted_mask(),
     %% Authentication may return ACL rules that will reside in client info
     %% for the later use in authorizers. See emqx_authz_client_info module.
     acl => term()
@@ -110,8 +111,9 @@ authenticate(Credential) ->
     NotSuperUser = #{is_superuser => false},
     case pre_hook_authenticate(Credential) of
         ok ->
-            on_authentication_complete_success(Credential, NotSuperUser, anonymous),
-            {ok, NotSuperUser};
+            AnonymousResult = NotSuperUser#{trusted_attrs => true},
+            on_authentication_complete_success(Credential, AnonymousResult, anonymous),
+            {ok, AnonymousResult};
         continue ->
             case run_hooks('client.authenticate', [Credential], default_authn_result()) of
                 ignore ->
@@ -377,8 +379,9 @@ inc_authn_metrics(anonymous) ->
     emqx_metrics:inc_global('authentication.success').
 
 on_authentication_complete_no_hooks(#{enable_authn := false} = Credential, Extra) ->
-    on_authentication_complete_success(Credential, Extra, anonymous),
-    {ok, Extra};
+    AnonymousResult = Extra#{trusted_attrs => true},
+    on_authentication_complete_success(Credential, AnonymousResult, anonymous),
+    {ok, AnonymousResult};
 on_authentication_complete_no_hooks(Credential, _Extra) ->
     on_authentication_complete_error(Credential, no_authn_hooks),
     {error, not_authorized}.
