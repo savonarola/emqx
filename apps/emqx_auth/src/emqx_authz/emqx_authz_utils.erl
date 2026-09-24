@@ -16,6 +16,7 @@
     update_config/2,
     authz_vars/1,
     vars_for_rule_query/2,
+    check_required_vars/2,
     authorize_with_row/6,
     authz_backend_failure_policy/0,
     authz_rule_render_failure_policy/0,
@@ -201,6 +202,25 @@ vars_for_rule_query(AuthzContext, ?authz_action(PubSub, Qos) = Action) ->
         retain => maps:get(retain, Action, false)
     }.
 
+-spec check_required_vars(map(), [emqx_template:varname()]) -> ok | {error, [binary()]}.
+check_required_vars(Vars, RequiredVars) ->
+    case emqx_authz_context:require_trusted_attributes() of
+        false ->
+            ok;
+        true ->
+            Bindings = emqx_auth_template:rename_client_info_vars(Vars),
+            Missing = [
+                Name
+             || Var <- lists:usort(RequiredVars),
+                Name <- [var_name(Var)],
+                not var_is_present(Name, Bindings)
+            ],
+            case Missing of
+                [] -> ok;
+                _ -> {error, Missing}
+            end
+    end.
+
 -spec cached_simple_sync_query(
     emqx_auth_cache:cache_key(),
     emqx_resource:resource_id(),
@@ -212,6 +232,38 @@ cached_simple_sync_query(CacheKey, ResourceID, Query) ->
 -spec cached_apply(emqx_auth_cache:cache_key(), fun(() -> term())) -> term().
 cached_apply(CacheKey, Fun) ->
     emqx_auth_utils:cached_apply(?AUTHZ_CACHE, CacheKey, Fun).
+
+var_name({var_namespace, Name}) ->
+    iolist_to_binary(Name);
+var_name(Name) ->
+    iolist_to_binary(Name).
+
+var_is_present(Name, Bindings) ->
+    Path = binary:split(Name, <<".">>, [global]),
+    case find_var(Path, Bindings) of
+        {ok, Value} when Value =/= undefined -> true;
+        _ -> false
+    end.
+
+find_var([], Value) ->
+    {ok, Value};
+find_var([Key | Rest], Map) when is_map(Map) ->
+    case maps:find(Key, Map) of
+        {ok, Value} ->
+            find_var(Rest, Value);
+        error ->
+            case emqx_utils:safe_to_existing_atom(Key, utf8) of
+                {ok, Atom} ->
+                    case maps:find(Atom, Map) of
+                        {ok, Value} -> find_var(Rest, Value);
+                        error -> error
+                    end;
+                {error, _} ->
+                    error
+            end
+    end;
+find_var(_Path, _Value) ->
+    error.
 
 -spec authorize_with_row(
     emqx_authz_source:source_type(),

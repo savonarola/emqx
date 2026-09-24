@@ -464,13 +464,12 @@ init_metrics(Source) ->
 ) ->
     {stop, #{result => deny, from => ?MODULE}}.
 authorize_deny(
-    #{
-        username := Username
-    } = _AuthzContext,
+    AuthzContext,
     _PubSub,
     Topic,
     _DefaultResult
 ) ->
+    Username = maps:get(username, AuthzContext, undefined),
     emqx_metrics:inc_global(?METRIC_DENY),
     ?SLOG(warning, #{
         msg => "authorization_not_initialized",
@@ -492,9 +491,10 @@ authorize_deny(
     source_states()
 ) ->
     authz_result().
-authorize(#{username := Username} = AuthzContext, PubSub, Topic, _DefaultResult, SourceStates) ->
-    case maps:get(is_superuser, AuthzContext, false) of
+authorize(AuthzContext, PubSub, Topic, _DefaultResult, SourceStates) ->
+    case emqx_authz_context:get_authn(AuthzContext, is_superuser, false) of
         true ->
+            Username = maps:get(username, AuthzContext, undefined),
             ?tp(authz_skipped, #{reason => client_is_superuser, action => PubSub}),
             ?TRACE("AUTHZ", "authorization_skipped_as_superuser", #{
                 username => Username,
@@ -524,9 +524,12 @@ authorize_non_superuser(AuthzContext, PubSub, Topic, SourceStates) ->
             ignore
     end.
 
-source_for_logging(client_info, #{acl := Acl}) ->
-    maps:get(source_for_logging, Acl, client_info);
-source_for_logging(Type, _) ->
+source_for_logging(client_info, AuthzContext) ->
+    case emqx_authz_context:get_authn(AuthzContext, acl, undefined) of
+        Acl when is_map(Acl) -> maps:get(source_for_logging, Acl, client_info);
+        _ -> client_info
+    end;
+source_for_logging(Type, _AuthzContext) ->
     Type.
 
 do_authorize(_AuthzContext, _Action, _Topic, []) ->
@@ -554,9 +557,7 @@ do_authorize(AuthzContext, Action, Topic, [SourceState | SourceStates]) ->
     do_authorize_with_source(AuthzContext, Action, Topic, SourceState, SourceStates).
 
 do_authorize_with_source(
-    #{
-        username := Username
-    } = AuthzContext,
+    AuthzContext,
     Action = ?authz_action(_PubSub),
     Topic,
     SourceState,
@@ -564,6 +565,7 @@ do_authorize_with_source(
 ) ->
     Type = type(SourceState),
     Module = authz_module(Type),
+    Username = maps:get(username, AuthzContext, undefined),
     emqx_metrics_worker:inc(authz_metrics, Type, total),
     Result = ?EXT_TRACE_CLIENT_AUTHZ_BACKEND(
         ?EXT_TRACE_ATTR(#{

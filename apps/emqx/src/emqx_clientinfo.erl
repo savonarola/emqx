@@ -138,9 +138,9 @@ trusted(ClientInfo) ->
     TrustedClientInfo = apply_exclusions(TrustedClientInfo0, Untrusted),
     case maps:get(authn, TrustedAttrs, #{}) of
         Authn when map_size(Authn) =:= 0 ->
-            TrustedClientInfo;
+            TrustedClientInfo#{trusted_attrs => #{clientinfo => Mask}};
         Authn ->
-            TrustedClientInfo#{trusted_attrs => #{authn => Authn}}
+            TrustedClientInfo#{trusted_attrs => #{authn => Authn, clientinfo => Mask}}
     end.
 
 %%------------------------------------------------------------------------------

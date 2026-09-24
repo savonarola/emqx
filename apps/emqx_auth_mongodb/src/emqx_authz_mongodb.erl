@@ -43,9 +43,17 @@ authorize(
     AuthzContext,
     Action,
     Topic,
-    #{filter_template := FilterTemplate} = State
+    #{filter_template := FilterTemplate, required_vars := RequiredVars} = State
 ) ->
     Vars = emqx_authz_utils:authz_vars(AuthzContext),
+    case emqx_authz_utils:check_required_vars(Vars, RequiredVars) of
+        ok ->
+            authorize_with_vars(Vars, Action, Topic, FilterTemplate, State);
+        {error, _Missing} ->
+            {matched, deny}
+    end.
+
+authorize_with_vars(Vars, Action, Topic, FilterTemplate, State) ->
     try emqx_auth_template:render_deep_for_json(FilterTemplate, Vars) of
         RenderedFilter ->
             authorize_with_filter(RenderedFilter, Vars, Action, Topic, State)
@@ -79,7 +87,8 @@ new_state(
         skip => Skip,
         limit => Limit,
         filter_template => FilterTemp,
-        cache_key_template => CacheKeyTemplate
+        cache_key_template => CacheKeyTemplate,
+        required_vars => Vars
     }).
 
 authorize_with_filter(RenderedFilter, AuthzContext, Action, Topic, #{

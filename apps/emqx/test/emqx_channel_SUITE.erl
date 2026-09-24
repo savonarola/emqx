@@ -810,8 +810,9 @@ t_process_publish_message_ingress(_) ->
         {ok, [], Msg}
     end),
     Publish = ?PUBLISH_PACKET(?QOS_1, <<"source">>, 1, <<"payload">>),
+    ClientInfo = emqx_clientinfo:set_trusted(clientinfo(), clientid, <<"clientid">>),
     {ok, {outgoing, ?PUBACK_PACKET(1, ?RC_NO_MATCHING_SUBSCRIBERS)}, _Channel} =
-        emqx_channel:process_publish(Publish, channel()),
+        emqx_channel:process_publish(Publish, channel(ClientInfo, #{})),
     receive
         {authorized, AuthzContext, #{qos := ?QOS_1, retain := false}, <<"target">>} ->
             ?assertMatch(#{clientid := <<"clientid">>}, AuthzContext)

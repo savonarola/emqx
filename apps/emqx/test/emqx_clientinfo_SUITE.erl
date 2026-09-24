@@ -97,7 +97,13 @@ t_trusted_projection(_) ->
             protocol => mqtt,
             clientid => <<"client">>,
             client_attrs => #{<<"tns">> => <<"tenant">>},
-            trusted_attrs => #{authn => #{is_superuser => false, acl => [rule]}}
+            trusted_attrs => #{
+                authn => #{is_superuser => false, acl => [rule]},
+                clientinfo => #{
+                    clientid => true,
+                    client_attrs => #{<<"tns">> => true}
+                }
+            }
         },
         emqx_clientinfo:trusted(ClientInfo)
     ),

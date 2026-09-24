@@ -535,7 +535,8 @@ publish_delayed_message_legacy(Msg, ClientId, Topic) ->
 
 publish_delayed_message_hardened(Msg, ClientId, Topic, Qos) ->
     case emqx_message:get_header(?DELAYED_HEADER, Msg, undefined) of
-        #{authz_context := AuthzContext} ->
+        #{authz_context := PersistedAuthzContext} ->
+            AuthzContext = emqx_authz_context:make(PersistedAuthzContext),
             Mountpoint = maps:get(mountpoint, AuthzContext, undefined),
             AuthzTopic = emqx_mountpoint:unmount(Mountpoint, Topic),
             maybe_publish_hardened(AuthzContext, AuthzTopic, Msg, ClientId, Topic, Qos);

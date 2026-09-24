@@ -110,7 +110,7 @@ t_response_handling(TCConfig) ->
 
     ?assertEqual(
         allow,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ),
 
     %% Not OK, get, no body
@@ -124,7 +124,7 @@ t_response_handling(TCConfig) ->
     ),
 
     deny = emqx_access_control:authorize(
-        emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>
+        authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>
     ),
 
     %% OK, get, 204
@@ -139,7 +139,7 @@ t_response_handling(TCConfig) ->
 
     ?assertEqual(
         allow,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ),
 
     %% Not OK, get, 400
@@ -154,7 +154,7 @@ t_response_handling(TCConfig) ->
 
     ?assertEqual(
         deny,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ),
 
     %% Not OK, get, 400 + body & headers
@@ -174,7 +174,7 @@ t_response_handling(TCConfig) ->
 
     ?assertEqual(
         deny,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ),
 
     %% The server cannot be reached; hardened mode should deny authorization.
@@ -184,7 +184,7 @@ t_response_handling(TCConfig) ->
         ?assertEqual(
             deny,
             emqx_access_control:authorize(
-                emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>
+                authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>
             )
         ),
         fun(Trace) ->
@@ -283,7 +283,7 @@ t_query_params(TCConfig) ->
     ?assertEqual(
         allow,
         emqx_access_control:authorize(
-            emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH(1, false), <<"t/1">>
+            authz_context(ClientInfo), ?AUTHZ_PUBLISH(1, false), <<"t/1">>
         )
     ).
 
@@ -341,7 +341,7 @@ t_path(TCConfig) ->
     ?assertEqual(
         allow,
         emqx_access_control:authorize(
-            emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH(1, false), <<"t/1">>
+            authz_context(ClientInfo), ?AUTHZ_PUBLISH(1, false), <<"t/1">>
         )
     ).
 
@@ -406,7 +406,7 @@ t_json_body(TCConfig) ->
     ?assertEqual(
         allow,
         emqx_access_control:authorize(
-            emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH(1, false), <<"t">>
+            authz_context(ClientInfo), ?AUTHZ_PUBLISH(1, false), <<"t">>
         )
     ).
 
@@ -561,7 +561,7 @@ t_placeholder_and_body(TCConfig) ->
         ?assertEqual(
             allow,
             emqx_access_control:authorize(
-                emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>
+                authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>
             )
         )
     end).
@@ -623,7 +623,7 @@ t_bad_response_content_type(TCConfig) ->
         ?assertEqual(
             deny,
             emqx_access_control:authorize(
-                emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>
+                authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>
             )
         ),
         fun(Trace) ->
@@ -657,7 +657,7 @@ t_bad_response_content_type_profile(TCConfig) ->
     ?assertEqual(
         Expected,
         emqx_access_control:authorize(
-            emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>
+            authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>
         )
     ).
 
@@ -705,7 +705,7 @@ t_bad_response(TCConfig) ->
     MetricsBefore = get_metrics(),
     ?assertEqual(
         deny,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ),
     {ExpectedIgnore, ExpectedDeny, ExpectedGlobalIncrements} =
         case ?config(security_profile, TCConfig) of
@@ -770,6 +770,11 @@ t_bad_response(TCConfig) ->
     ok.
 
 t_no_value_for_placeholder(TCConfig) ->
+    emqx_common_test_helpers:with_security_profile("legacy", fun() ->
+        do_t_no_value_for_placeholder(TCConfig)
+    end).
+
+do_t_no_value_for_placeholder(TCConfig) ->
     ok = setup_handler_and_config(
         TCConfig,
         fun(Req0, State) ->
@@ -807,8 +812,48 @@ t_no_value_for_placeholder(TCConfig) ->
 
     ?assertEqual(
         allow,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ).
+
+%% Verify that hardened authorization denies a request with a missing trusted placeholder.
+t_missing_trusted_placeholder(TCConfig) ->
+    TestPid = self(),
+    ok = setup_handler_and_config(
+        TCConfig,
+        fun(Req, State) ->
+            TestPid ! authz_request_received,
+            {ok, ?AUTHZ_HTTP_RESP(allow, Req), State}
+        end,
+        #{
+            <<"method">> => <<"post">>,
+            <<"body">> => #{<<"mountpoint">> => <<"${mountpoint}">>}
+        }
+    ),
+    ClientInfo = #{
+        clientid => <<"client id">>,
+        username => <<"user name">>,
+        peerhost => {127, 0, 0, 1},
+        protocol => <<"MQTT">>,
+        zone => default,
+        listener => 'tcp:default'
+    },
+    Result = emqx_access_control:authorize(
+        authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>
+    ),
+    case ?config(security_profile, TCConfig) of
+        legacy ->
+            ?assertEqual(allow, Result),
+            receive
+                authz_request_received -> ok
+            after 1_000 -> ct:fail(authz_request_missing)
+            end;
+        hardened ->
+            ?assertEqual(deny, Result),
+            receive
+                authz_request_received -> ct:fail(untrusted_authz_request)
+            after 100 -> ok
+            end
+    end.
 
 t_node_cache(TCConfig) ->
     ok = setup_handler_and_config(
@@ -844,11 +889,11 @@ t_node_cache(TCConfig) ->
     },
     ?assertEqual(
         allow,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ),
     ?assertEqual(
         allow,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ),
     ?assertMatch(
         #{hits := #{value := 1}, misses := #{value := 1}},
@@ -858,13 +903,13 @@ t_node_cache(TCConfig) ->
     ?assertEqual(
         deny,
         emqx_access_control:authorize(
-            emqx_authz_context:make(ClientInfo#{cn => <<"cn2">>}), ?AUTHZ_PUBLISH, <<"t">>
+            authz_context(ClientInfo#{cn => <<"cn2">>}), ?AUTHZ_PUBLISH, <<"t">>
         )
     ),
     ?assertEqual(
         deny,
         emqx_access_control:authorize(
-            emqx_authz_context:make(ClientInfo#{clientid => <<"clientid2">>}),
+            authz_context(ClientInfo#{clientid => <<"clientid2">>}),
             ?AUTHZ_PUBLISH,
             <<"t">>
         )
@@ -872,7 +917,7 @@ t_node_cache(TCConfig) ->
     ?assertEqual(
         deny,
         emqx_access_control:authorize(
-            emqx_authz_context:make(ClientInfo#{username => <<"username2">>}),
+            authz_context(ClientInfo#{username => <<"username2">>}),
             ?AUTHZ_PUBLISH,
             <<"t">>
         )
@@ -883,6 +928,11 @@ t_node_cache(TCConfig) ->
     ).
 
 t_disallowed_placeholders_preserved(TCConfig) ->
+    emqx_common_test_helpers:with_security_profile("legacy", fun() ->
+        do_t_disallowed_placeholders_preserved(TCConfig)
+    end).
+
+do_t_disallowed_placeholders_preserved(TCConfig) ->
     ok = setup_handler_and_config(
         TCConfig,
         fun(Req0, State) ->
@@ -916,7 +966,7 @@ t_disallowed_placeholders_preserved(TCConfig) ->
 
     ?assertEqual(
         allow,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ).
 
 t_disallowed_placeholders_path(TCConfig) ->
@@ -943,7 +993,7 @@ t_disallowed_placeholders_path(TCConfig) ->
     % % NOTE: disallowed placeholder left intact, which makes the URL invalid
     ?assertEqual(
         deny,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ).
 
 t_create_replace(TCConfig) ->
@@ -972,7 +1022,7 @@ t_create_replace(TCConfig) ->
 
     ?assertEqual(
         allow,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ),
 
     %% Changing to valid config
@@ -989,7 +1039,7 @@ t_create_replace(TCConfig) ->
 
     ?assertEqual(
         allow,
-        emqx_access_control:authorize(emqx_authz_context:make(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
+        emqx_access_control:authorize(authz_context(ClientInfo), ?AUTHZ_PUBLISH, <<"t">>)
     ),
 
     ?assertMatch(
@@ -1338,6 +1388,9 @@ templated_host_client_info() ->
         client_attrs => #{<<"tns">> => <<"localhost">>}
     }.
 
+authz_context(ClientInfo) ->
+    emqx_authz_context:make(ClientInfo#{trusted_attrs => #{clientinfo => true}}).
+
 templated_host_config_params(TCConfig) ->
     #{
         <<"url">> =>
@@ -1507,4 +1560,9 @@ setup_bad_response_content_type(TCConfig) ->
     ).
 
 profile_cases() ->
-    [t_bad_response_content_type_profile, t_bad_response, t_response_handling].
+    [
+        t_bad_response_content_type_profile,
+        t_bad_response,
+        t_response_handling,
+        t_missing_trusted_placeholder
+    ].

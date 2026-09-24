@@ -80,8 +80,14 @@ update_resource(OldResourceId, _State) ->
     %% Updated to a templated host URL: the old connector pool is no longer needed.
     emqx_authz_utils:remove_resource(OldResourceId).
 
-authorize(AuthzContext, Action, Topic, #{type := http} = State) ->
+authorize(AuthzContext, Action, Topic, #{type := http, required_vars := RequiredVars} = State) ->
     Values = authz_vars(AuthzContext, Action, Topic),
+    case emqx_authz_utils:check_required_vars(Values, RequiredVars) of
+        ok -> authorize_with_vars(Values, State);
+        {error, _Missing} -> {matched, deny}
+    end.
+
+authorize_with_vars(Values, State) ->
     case emqx_auth_http_utils:generate_request(State, Values) of
         {ok, Request} ->
             handle_response(query(Values, Request, State), State);
@@ -212,7 +218,8 @@ new_state(static, #{path := Path, query := Query} = UrlTemplate, ResourceId, Sou
     emqx_authz_utils:init_state(Source, StateBase#{
         resource_config => ResourceConfig,
         resource_id => ResourceId,
-        cache_key_template => emqx_auth_template:cache_key_template(Vars)
+        cache_key_template => emqx_auth_template:cache_key_template(Vars),
+        required_vars => Vars
     });
 new_state(
     dynamic,
@@ -233,7 +240,8 @@ new_state(
     },
     emqx_authz_utils:init_state(Source, StateBase#{
         one_off_base => OneOffBase,
-        cache_key_template => emqx_auth_template:cache_key_template(HostVars ++ Vars)
+        cache_key_template => emqx_auth_template:cache_key_template(HostVars ++ Vars),
+        required_vars => HostVars ++ Vars
     }).
 
 parse_host_template({static, Host}, _Source) ->

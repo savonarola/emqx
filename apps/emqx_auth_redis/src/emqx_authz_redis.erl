@@ -49,10 +49,37 @@ authorize(
         resource_id := ResourceId,
         cmd_template := CmdTemplate,
         cache_key_template := CacheKeyTemplate,
+        required_vars := RequiredVars,
         compatibility_mode := ACLCompatibilityMode
     }
 ) ->
     Vars = emqx_authz_utils:vars_for_rule_query(AuthzContext, Action),
+    case emqx_authz_utils:check_required_vars(Vars, RequiredVars) of
+        ok ->
+            authorize_with_vars(
+                AuthzContext,
+                Action,
+                Topic,
+                Vars,
+                CmdTemplate,
+                CacheKeyTemplate,
+                ResourceId,
+                ACLCompatibilityMode
+            );
+        {error, _Missing} ->
+            {matched, deny}
+    end.
+
+authorize_with_vars(
+    AuthzContext,
+    Action,
+    Topic,
+    Vars,
+    CmdTemplate,
+    CacheKeyTemplate,
+    ResourceId,
+    ACLCompatibilityMode
+) ->
     Cmd = emqx_auth_template:render_deep_for_raw(CmdTemplate, Vars),
     CacheKey = emqx_auth_template:cache_key(Vars, CacheKeyTemplate),
     case emqx_authz_utils:cached_simple_sync_query(CacheKey, ResourceId, {cmd, Cmd}) of
@@ -86,6 +113,7 @@ new_state(ResourceId, #{cmd := CmdStr} = Source) ->
         resource_id => ResourceId,
         cmd_template => CmdTemplate,
         cache_key_template => CacheKeyTemplate,
+        required_vars => Vars,
         compatibility_mode => ACLCompatibilityMode
     }).
 

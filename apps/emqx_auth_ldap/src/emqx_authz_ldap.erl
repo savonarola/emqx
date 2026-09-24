@@ -61,10 +61,39 @@ authorize(
         resource_id := ResourceId,
         cache_key_template := CacheKeyTemplate,
         base_dn_template := BaseDNTemplate,
-        filter_template := FilterTemplate
+        filter_template := FilterTemplate,
+        required_vars := RequiredVars
     } = State
 ) ->
     Vars = emqx_authz_utils:authz_vars(AuthzContext),
+    case emqx_authz_utils:check_required_vars(Vars, RequiredVars) of
+        ok ->
+            authorize_with_vars(
+                Vars,
+                Action,
+                Topic,
+                QueryTimeout,
+                ResourceId,
+                CacheKeyTemplate,
+                BaseDNTemplate,
+                FilterTemplate,
+                State
+            );
+        {error, _Missing} ->
+            {matched, deny}
+    end.
+
+authorize_with_vars(
+    Vars,
+    Action,
+    Topic,
+    QueryTimeout,
+    ResourceId,
+    CacheKeyTemplate,
+    BaseDNTemplate,
+    FilterTemplate,
+    State
+) ->
     AclAttrs = emqx_auth_ldap_acl:acl_attributes(State),
     CacheKey = emqx_auth_template:cache_key(Vars, CacheKeyTemplate),
     Query = fun() ->
@@ -135,6 +164,7 @@ new_state(ResourceId, #{base_dn := BaseDN, filter := Filter} = Source) ->
             cache_key_template => CacheKeyTemplate,
             base_dn_template => BaseDNTemplate,
             filter_template => FilterTemplate,
+            required_vars => BaseDNVars ++ FilterVars,
             resource_config => ResourceConfig,
             resource_id => ResourceId
         })

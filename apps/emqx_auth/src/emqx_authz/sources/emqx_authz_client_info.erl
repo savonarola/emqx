@@ -95,17 +95,20 @@ destroy(_Source) -> ok.
 %%        ...
 %%    ]
 %%
-authorize(#{acl := Acl} = AuthzContext, PubSub, Topic, _Source) ->
-    case check(AuthzContext, Acl) of
-        {ok, Rules} when ?IS_V2(Rules) ->
-            authorize_v2(AuthzContext, PubSub, Topic, Rules);
-        {ok, Rules} when ?IS_V1(Rules) ->
-            authorize_v1(AuthzContext, PubSub, Topic, Rules);
-        {error, MatchResult} ->
-            MatchResult
-    end;
-authorize(_AuthzContext, _PubSub, _Topic, _Source) ->
-    ignore.
+authorize(AuthzContext, PubSub, Topic, _Source) ->
+    case emqx_authz_context:get_authn(AuthzContext, acl, undefined) of
+        undefined ->
+            ignore;
+        Acl ->
+            case check(AuthzContext, Acl) of
+                {ok, Rules} when ?IS_V2(Rules) ->
+                    authorize_v2(AuthzContext, PubSub, Topic, Rules);
+                {ok, Rules} when ?IS_V1(Rules) ->
+                    authorize_v1(AuthzContext, PubSub, Topic, Rules);
+                {error, MatchResult} ->
+                    MatchResult
+            end
+    end.
 
 %%--------------------------------------------------------------------
 %% Internal functions

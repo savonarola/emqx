@@ -1561,11 +1561,11 @@ t_authn_superuser(_) ->
     meck:expect(
         emqx_access_control,
         authorize,
-        fun
-            (_ClientInfo = #{is_superuser := true}, _PubSub, _Topic) ->
-                allow;
-            (_ClientInfo, _PubSub, _Topic) ->
-                deny
+        fun(ClientInfo, _PubSub, _Topic) ->
+            case emqx_authz_context:get_authn(ClientInfo, is_superuser, false) of
+                true -> allow;
+                false -> deny
+            end
         end
     ),
 

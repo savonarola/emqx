@@ -48,10 +48,30 @@ authorize(
         resource_id := ResourceId,
         args_template := ArgsTemplate,
         query_timeout := QueryTimeout,
-        cache_key_template := CacheKeyTemplate
+        cache_key_template := CacheKeyTemplate,
+        required_vars := RequiredVars
     }
 ) ->
     Vars = emqx_authz_utils:vars_for_rule_query(AuthzContext, Action),
+    case emqx_authz_utils:check_required_vars(Vars, RequiredVars) of
+        ok ->
+            authorize_with_vars(
+                AuthzContext,
+                Action,
+                Topic,
+                Vars,
+                ArgsTemplate,
+                QueryTimeout,
+                CacheKeyTemplate,
+                ResourceId
+            );
+        {error, _Missing} ->
+            {matched, deny}
+    end.
+
+authorize_with_vars(
+    AuthzContext, Action, Topic, Vars, ArgsTemplate, QueryTimeout, CacheKeyTemplate, ResourceId
+) ->
     RenderedArgs = emqx_auth_template:render_sql_params(ArgsTemplate, Vars),
     CacheKey = emqx_auth_template:cache_key(Vars, CacheKeyTemplate),
     case
@@ -96,7 +116,8 @@ new_state(
         resource_id => ResourceId,
         args_template => ArgsTemplate,
         query_timeout => QueryTimeout,
-        cache_key_template => CacheKeyTemplate
+        cache_key_template => CacheKeyTemplate,
+        required_vars => Vars
     }).
 
 do_authorize(_AuthzContext, _Action, _Topic, _ColumnNames, []) ->

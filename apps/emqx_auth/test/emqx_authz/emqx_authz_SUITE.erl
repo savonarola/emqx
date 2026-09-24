@@ -121,6 +121,37 @@ t_client_info_acl_expire_uses_restricted_now_time(_) ->
         )
     end).
 
+%% Verify that hardened authorization cannot use a username omitted from the authn trust mask.
+t_untrusted_username(Config) ->
+    ClientInfo = #{
+        zone => default,
+        clientid => <<"authenticated-client">>,
+        username => <<"victim">>,
+        trusted_attrs => #{clientinfo => #{clientid => true}}
+    },
+    AuthzContext = emqx_authz_context:make(ClientInfo),
+    Rule = emqx_authz_rule:compile(
+        {allow, {username, <<"victim">>}, publish, [<<"foo/${username}/bar">>]}
+    ),
+    Result = emqx_authz_rule:match(AuthzContext, ?AUTHZ_PUBLISH, <<"foo/victim/bar">>, Rule),
+    case ?config(security_profile, Config) of
+        legacy -> ?assertEqual({matched, allow}, Result);
+        hardened -> ?assertEqual(nomatch, Result)
+    end.
+
+%% Verify that required authorization variables fail closed only when enforcement is enabled.
+t_required_authorization_vars(Config) ->
+    Vars = #{client_attrs => #{<<"tenant">> => <<"t1">>}},
+    ?assertEqual(
+        ok,
+        emqx_authz_utils:check_required_vars(Vars, ["client_attrs.tenant"])
+    ),
+    Result = emqx_authz_utils:check_required_vars(Vars, ["username"]),
+    case ?config(security_profile, Config) of
+        legacy -> ?assertEqual(ok, Result);
+        hardened -> ?assertEqual({error, [<<"username">>]}, Result)
+    end.
+
 -define(SOURCE_HTTP, #{
     <<"type">> => <<"http">>,
     <<"enable">> => true,
@@ -909,7 +940,7 @@ t_skipped_as_superuser(_Config) ->
         peerhost => {127, 0, 0, 1},
         zone => default,
         listener => 'tcp:default',
-        is_superuser => true
+        trusted_attrs => #{authn => #{is_superuser => true}}
     },
     AuthzContext = emqx_authz_context:make(ClientInfo),
     ?check_trace(
@@ -991,7 +1022,12 @@ t_skipped_as_superuser(_Config) ->
 Verifies that, when we set `authorization.include_mountpoint = true`, then authorization
 backends evaluate the original topics prefixed by `mountpoint`.
 """.
-t_mount_prefix_for_authz(_TCConfig) ->
+t_mount_prefix_for_authz(TCConfig) ->
+    emqx_common_test_helpers:with_security_profile("legacy", fun() ->
+        do_t_mount_prefix_for_authz(TCConfig)
+    end).
+
+do_t_mount_prefix_for_authz(_TCConfig) ->
     Mountpoint = <<"mountpoint/">>,
     ClientInfo = #{
         clientid => <<"clientid">>,
@@ -1104,7 +1140,9 @@ profile_cases() ->
         t_authorizer_crash,
         t_authz_backend_failure_setting,
         t_alias_prefix,
-        t_non_existing_attr
+        t_non_existing_attr,
+        t_untrusted_username,
+        t_required_authorization_vars
     ].
 
 expected_backup_code(Config) ->

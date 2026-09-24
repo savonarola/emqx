@@ -2885,6 +2885,7 @@ with_post_authn(#channel{clientinfo = ClientInfo} = Channel, Properties) ->
             log_auth_failure(Reason),
             {error, emqx_reason_codes:connack_error(Reason)};
         #{client_info := NewClientInfo} ->
+            ok = emqx_authz_cache:empty_authz_cache(),
             {ok, Properties, Channel#channel{clientinfo = NewClientInfo}}
     end.
 

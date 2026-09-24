@@ -4,7 +4,7 @@
 
 -module(emqx_authz_context).
 
--export([make/1, make_persist/1]).
+-export([make/1, make_persist/1, get_authn/3, require_trusted_attributes/0]).
 
 -export_type([
     t/0,
@@ -13,19 +13,15 @@
 ]).
 
 -type legacy() :: emqx_types:clientinfo().
-%% When trusted attributes are implemented,
-%% this will be the base context for restriction
 -type restricted() :: #{
-    zone := emqx_types:zone() | undefined,
-    protocol := emqx_types:protocol(),
-    peerhost := emqx_types:peerhost(),
-    sockport := non_neg_integer(),
+    zone => emqx_types:zone() | undefined,
+    protocol => emqx_types:protocol(),
+    peerhost => emqx_types:peerhost(),
+    sockport => non_neg_integer(),
     clientid => emqx_types:clientid(),
     username => emqx_types:username(),
-    is_bridge := boolean(),
-    is_superuser := boolean(),
+    is_bridge => boolean(),
     mountpoint := binary() | undefined,
-    acl => term(),
     anonymous => boolean(),
     cert_pem => binary(),
     client_attrs => emqx_types:client_attrs(),
@@ -34,7 +30,8 @@
     listener => atom(),
     now_time => non_neg_integer(),
     peername => emqx_types:peername(),
-    peerport => inet:port_number()
+    peerport => inet:port_number(),
+    trusted_attrs => emqx_clientinfo:trusted_attrs()
 }.
 -type t() :: legacy() | restricted().
 
@@ -56,27 +53,19 @@
     protocol,
     sockport,
     username,
-    zone
+    zone,
+    trusted_attrs
 ]).
-
--define(RESTRICTED_KEYS, [now_time | ?PERSIST_KEYS]).
 
 -doc """
 Create an authz context map from the client info.
 """.
 -spec make(emqx_types:clientinfo()) -> t().
--ifdef(TEST).
 make(ClientInfo) ->
-    case emqx_security_profile:policy(authz_context) of
-        legacy -> ClientInfo;
-        restricted -> make_restricted(ClientInfo)
+    case require_trusted_attributes() of
+        false -> ClientInfo;
+        true -> emqx_clientinfo:trusted(ClientInfo)
     end.
--else.
-%% In prod, we do not want to create a performance impact by creating authz context map.
-%% But if an authz backend relies on a restricted field any test trying to use it will fail.
-make(ClientInfo) ->
-    ClientInfo.
--endif.
 
 -doc """
 Limit authz context to the fields relevant for persistence
@@ -85,11 +74,28 @@ Limit authz context to the fields relevant for persistence
 make_persist(ClientInfo) ->
     maps:with(?PERSIST_KEYS, ClientInfo).
 
+-spec get_authn(t(), atom(), term()) -> term().
+get_authn(AuthzContext, Key, Default) ->
+    case require_trusted_attributes() of
+        true ->
+            case emqx_clientinfo:get_trusted(AuthzContext, Key) of
+                {ok, Value} -> Value;
+                error -> Default
+            end;
+        false ->
+            get_authn_legacy(AuthzContext, Key, Default)
+    end.
+
+-spec require_trusted_attributes() -> boolean().
+require_trusted_attributes() ->
+    Default = emqx_security_profile:policy(authz_context) =:= restricted,
+    emqx:get_config([authorization, require_trusted_attributes], Default).
+
 %%--------------------------------------------------------------------
 %% Internal functions
 %%--------------------------------------------------------------------
 
--ifdef(TEST).
-make_restricted(ClientInfo) ->
-    maps:with(?RESTRICTED_KEYS, ClientInfo).
--endif.
+get_authn_legacy(#{trusted_attrs := #{authn := Authn}} = AuthzContext, Key, Default) ->
+    maps:get(Key, Authn, maps:get(Key, AuthzContext, Default));
+get_authn_legacy(AuthzContext, Key, Default) ->
+    maps:get(Key, AuthzContext, Default).
