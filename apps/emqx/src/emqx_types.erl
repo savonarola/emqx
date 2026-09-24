@@ -178,7 +178,6 @@
     clientid := clientid(),
     username := username(),
     is_bridge := boolean(),
-    is_superuser := boolean(),
     mountpoint := option(binary()),
     ws_cookie => option(list()),
     password => option(binary()),

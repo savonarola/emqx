@@ -125,14 +125,14 @@ resume_clientinfo(NewClientInfo, OldClientInfo) ->
         username,
         password,
         auth_result,
-        auth_expire_at,
-        is_superuser,
+        trusted_attrs,
         mountpoint,
         dn,
         cn,
         client_attrs
     ],
-    maps:merge(NewClientInfo, maps:with(PreservedKeys, OldClientInfo)).
+    ClientInfo = maps:without([acl, auth_expire_at, is_superuser], NewClientInfo),
+    maps:merge(ClientInfo, maps:with(PreservedKeys, OldClientInfo)).
 
 replay(ClientInfo, Session = #{session := S}) ->
     wrap_result(emqx_session_mem:replay(ClientInfo, S), Session).

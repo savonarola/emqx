@@ -377,11 +377,17 @@ clientinfo(
         sockport => SockPort,
         protocol => stringfy(Protocol),
         mountpoint => option(Mountpoiont),
-        is_superuser => maps:get(is_superuser, ClientInfo, false),
+        is_superuser => trusted_value(ClientInfo, is_superuser, false),
         anonymous => maps:get(anonymous, ClientInfo, true),
         cn => option(maps:get(cn, ClientInfo, undefined)),
         dn => option(maps:get(dn, ClientInfo, undefined))
     }.
+
+trusted_value(ClientInfo, Key, Default) ->
+    case emqx_clientinfo:get_trusted(ClientInfo, Key) of
+        {ok, Value} -> Value;
+        error -> Default
+    end.
 
 message(#message{
     id = Id,

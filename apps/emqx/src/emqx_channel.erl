@@ -243,9 +243,9 @@ info(connected_at, #channel{conninfo = ConnInfo}) ->
 info(clientinfo, #channel{clientinfo = ClientInfo}) ->
     ClientInfo;
 info(is_superuser, #channel{clientinfo = ClientInfo}) ->
-    maps:get(is_superuser, ClientInfo, undefined);
+    trusted_value(ClientInfo, is_superuser);
 info(expire_at, #channel{clientinfo = ClientInfo}) ->
-    maps:get(expire_at, ClientInfo, undefined);
+    trusted_value(ClientInfo, auth_expire_at);
 info(zone, #channel{clientinfo = ClientInfo}) ->
     maps:get(zone, ClientInfo);
 info(listener, #channel{clientinfo = ClientInfo}) ->
@@ -282,6 +282,12 @@ info(impl, #channel{session = Session}) ->
     emqx_session:info(impl, Session);
 info(namespace, #channel{clientinfo = ClientInfo}) ->
     get_tenant_namespace(ClientInfo).
+
+trusted_value(ClientInfo, Key) ->
+    case emqx_clientinfo:get_trusted(ClientInfo, Key) of
+        {ok, Value} -> Value;
+        error -> undefined
+    end.
 
 inspect(#channel{} = Channel) ->
     lists:foldl(
@@ -505,10 +511,11 @@ handle_in(
                     connecting ->
                         post_process_connect(NProperties, NChannel);
                     _ ->
+                        ConnectedChannel = NChannel#channel{conn_state = connected},
                         handle_out(
                             auth,
                             {?RC_SUCCESS, NProperties},
-                            NChannel#channel{conn_state = connected}
+                            reschedule_connection_auth_expire(ConnectedChannel)
                         )
                 end;
             {continue, NProperties, NChannel} ->
@@ -2901,55 +2908,39 @@ log_auth_failure(Reason) ->
 %% 6. `zone_override': This result should override the current zone.
 %% 7. Maybe more non-standard fields used by hook callbacks
 merge_auth_result(ClientInfo0, AuthResult0) when is_map(ClientInfo0) andalso is_map(AuthResult0) ->
-    IsSuperuser = maps:get(is_superuser, AuthResult0, false),
-    ExpireAt = maps:get(expire_at, AuthResult0, undefined),
-    AuthResult = maps:without([client_attrs, expire_at], AuthResult0),
-    Attrs0 = maps:get(client_attrs, ClientInfo0, #{}),
-    Attrs1 = maps:get(client_attrs, AuthResult0, #{}),
-    Attrs = maps:merge(Attrs0, Attrs1),
-    ClientIdOverride = maps:get(clientid_override, AuthResult0, undefined),
-    ZoneOverride = maps:get(zone_override, AuthResult0, undefined),
-    ClientInfo1 =
-        case parse_zone_override(ZoneOverride) of
-            false ->
-                ClientInfo0;
-            {ok, NewZone} ->
-                OldZone = maps:get(zone, ClientInfo0, default),
-                ?TRACE("MQTT", "zone_overridden_by_authn", #{
-                    zone => NewZone,
-                    original_zone => OldZone
-                }),
-                ClientInfo0#{zone => NewZone, old_zone => OldZone}
-        end,
-    ClientInfo =
-        case is_binary(ClientIdOverride) andalso ClientIdOverride /= <<"">> of
-            true ->
-                ?TRACE("MQTT", "clientid_overridden_by_authn", #{
-                    clientid => ClientIdOverride,
-                    original_clientid => maps:get(clientid, ClientInfo1, undefined)
-                }),
-                ClientInfo1#{clientid => ClientIdOverride};
-            false ->
-                ClientInfo1
-        end,
-    maps:merge(
-        ClientInfo#{client_attrs => Attrs},
-        AuthResult#{
-            is_superuser => IsSuperuser,
-            auth_expire_at => ExpireAt
-        }
-    ).
+    ClientInfo1 = emqx_clientinfo:merge_authn_result(ClientInfo0, AuthResult0, merge),
+    ClientInfo2 = trace_clientid_override(ClientInfo0, AuthResult0, ClientInfo1),
+    trace_zone_override(ClientInfo0, AuthResult0, ClientInfo2).
 
-parse_zone_override(undefined) ->
-    false;
-parse_zone_override(ZoneOverride) when is_binary(ZoneOverride) ->
-    try emqx_config_zones:assert_zone_exists(ZoneOverride) of
-        ok -> {ok, binary_to_existing_atom(ZoneOverride, utf8)}
-    catch
-        throw:{unknown_zone, _} ->
+trace_clientid_override(ClientInfo0, #{clientid_override := ClientId}, ClientInfo) when
+    is_binary(ClientId) andalso ClientId =/= <<>>
+->
+    ?TRACE("MQTT", "clientid_overridden_by_authn", #{
+        clientid => ClientId,
+        original_clientid => maps:get(clientid, ClientInfo0, undefined)
+    }),
+    ClientInfo;
+trace_clientid_override(_ClientInfo0, _AuthResult, ClientInfo) ->
+    ClientInfo.
+
+trace_zone_override(ClientInfo0, #{zone_override := ZoneOverride}, ClientInfo) when
+    is_binary(ZoneOverride)
+->
+    OldZone = maps:get(zone, ClientInfo0, default),
+    NewZone = maps:get(zone, ClientInfo, default),
+    case atom_to_binary(NewZone, utf8) of
+        ZoneOverride ->
+            ?TRACE("MQTT", "zone_overridden_by_authn", #{
+                zone => NewZone,
+                original_zone => OldZone
+            }),
+            ClientInfo#{old_zone => OldZone};
+        _ ->
             ?TRACE("MQTT", "unknown_zone_override_in_authn", #{zone => ZoneOverride}),
-            false
-    end.
+            ClientInfo
+    end;
+trace_zone_override(_ClientInfo0, _AuthResult, ClientInfo) ->
+    ClientInfo.
 
 %%--------------------------------------------------------------------
 %% Process Topic Alias
@@ -3482,11 +3473,19 @@ ensure_connected(
         conn_state = connected
     }).
 
-schedule_connection_auth_expire(Channel = #channel{clientinfo = #{auth_expire_at := undefined}}) ->
-    Channel;
-schedule_connection_auth_expire(Channel = #channel{clientinfo = #{auth_expire_at := ExpireAt}}) ->
-    Interval = max(0, ExpireAt - erlang:system_time(millisecond)),
-    ensure_timer(connection_auth_expire, Interval, Channel).
+schedule_connection_auth_expire(Channel = #channel{clientinfo = ClientInfo}) ->
+    case emqx_clientinfo:get_trusted(ClientInfo, auth_expire_at) of
+        {ok, undefined} ->
+            Channel;
+        {ok, ExpireAt} ->
+            Interval = max(0, ExpireAt - erlang:system_time(millisecond)),
+            ensure_timer(connection_auth_expire, Interval, Channel);
+        error ->
+            Channel
+    end.
+
+reschedule_connection_auth_expire(Channel) ->
+    schedule_connection_auth_expire(clean_timer(connection_auth_expire, Channel)).
 
 trim_conninfo(ConnInfo) ->
     maps:without(
@@ -3827,9 +3826,12 @@ will_delay_interval(WillMsg) ->
     ).
 
 maybe_with_injected_now(
-    auth_expired, #channel{clientinfo = #{auth_expire_at := AuthExpiredAt}} = Channel, Fun
+    auth_expired, #channel{clientinfo = ClientInfo} = Channel, Fun
 ) ->
-    with_now(AuthExpiredAt, Channel, Fun);
+    case emqx_clientinfo:get_trusted(ClientInfo, auth_expire_at) of
+        {ok, AuthExpiredAt} -> with_now(AuthExpiredAt, Channel, Fun);
+        error -> Fun(Channel)
+    end;
 maybe_with_injected_now(_, Channel, Fun) ->
     Fun(Channel).
 

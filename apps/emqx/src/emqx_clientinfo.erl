@@ -5,6 +5,7 @@
 -module(emqx_clientinfo).
 
 -export([
+    merge_authn_result/3,
     get_trusted/2,
     set/3,
     set_trusted/3,
@@ -44,6 +45,41 @@
 %%------------------------------------------------------------------------------
 %% API
 %%------------------------------------------------------------------------------
+
+-spec merge_authn_result(
+    emqx_types:clientinfo(), emqx_access_control:authn_result(), merge | replace
+) -> emqx_types:clientinfo().
+merge_authn_result(ClientInfo0, AuthResult0, ClientAttrsMode) ->
+    TrustedMask0 = maps:get(trusted_attrs, AuthResult0, #{}),
+    {ClientInfo1, TrustedMask1} = merge_client_attrs(
+        ClientInfo0, AuthResult0, ClientAttrsMode, TrustedMask0
+    ),
+    {ClientInfo2, TrustedMask2} = apply_clientid_override(
+        ClientInfo1, AuthResult0, TrustedMask1
+    ),
+    {ClientInfo, TrustedMask} = apply_zone_override(ClientInfo2, AuthResult0, TrustedMask2),
+    ExpireAt = maps:get(expire_at, AuthResult0, undefined),
+    AuthnResult0 = maps:without(
+        [client_attrs, clientid_override, expire_at, trusted_attrs, zone_override],
+        AuthResult0
+    ),
+    AuthnResult = AuthnResult0#{
+        is_superuser => maps:get(is_superuser, AuthnResult0, false),
+        auth_expire_at => ExpireAt
+    },
+    TrustedAttrs0 = maps:get(trusted_attrs, ClientInfo, #{}),
+    Untrusted0 = maps:get(untrusted, TrustedAttrs0, #{}),
+    Untrusted = remove_trusted_mask(Untrusted0, TrustedMask),
+    ClientInfoWithoutAuthn = maps:without(
+        [acl, auth_expire_at, expire_at, is_superuser], ClientInfo
+    ),
+    ClientInfoWithoutAuthn#{
+        trusted_attrs => TrustedAttrs0#{
+            authn => AuthnResult,
+            clientinfo => TrustedMask,
+            untrusted => Untrusted
+        }
+    }.
 
 -spec get_trusted(emqx_types:clientinfo(), key_path()) -> {ok, term()} | error.
 get_trusted(ClientInfo, Key) ->
@@ -110,6 +146,79 @@ trusted(ClientInfo) ->
 %%------------------------------------------------------------------------------
 %% Private
 %%------------------------------------------------------------------------------
+
+merge_client_attrs(ClientInfo, #{client_attrs := Attrs}, merge, TrustedMask) ->
+    ExistingAttrs = maps:get(client_attrs, ClientInfo, #{}),
+    merge_returned_client_attrs(
+        ClientInfo#{client_attrs => maps:merge(ExistingAttrs, Attrs)}, Attrs, TrustedMask
+    );
+merge_client_attrs(ClientInfo, #{client_attrs := Attrs}, replace, TrustedMask) ->
+    merge_returned_client_attrs(ClientInfo#{client_attrs => Attrs}, Attrs, TrustedMask);
+merge_client_attrs(ClientInfo, _AuthResult, _Mode, TrustedMask) ->
+    {ClientInfo, TrustedMask}.
+
+merge_returned_client_attrs(ClientInfo, Attrs, TrustedMask) ->
+    AttrsMask = maps:map(fun(_Name, _Value) -> true end, Attrs),
+    {ClientInfo, merge_masks(TrustedMask, #{client_attrs => AttrsMask})}.
+
+apply_clientid_override(ClientInfo, #{clientid_override := ClientId}, TrustedMask) when
+    is_binary(ClientId) andalso ClientId =/= <<>>
+->
+    {ClientInfo#{clientid => ClientId}, put_mask([clientid], TrustedMask)};
+apply_clientid_override(ClientInfo, _AuthResult, TrustedMask) ->
+    {ClientInfo, TrustedMask}.
+
+apply_zone_override(ClientInfo, #{zone_override := Zone}, TrustedMask) when is_binary(Zone) ->
+    try emqx_config_zones:assert_zone_exists(Zone) of
+        ok ->
+            NewZone = binary_to_existing_atom(Zone, utf8),
+            {ClientInfo#{zone => NewZone}, put_mask([zone], TrustedMask)}
+    catch
+        throw:{unknown_zone, _} ->
+            {ClientInfo, TrustedMask}
+    end;
+apply_zone_override(ClientInfo, _AuthResult, TrustedMask) ->
+    {ClientInfo, TrustedMask}.
+
+merge_masks(true, _Mask) ->
+    true;
+merge_masks(_Mask, true) ->
+    true;
+merge_masks(Mask1, Mask2) ->
+    maps:fold(
+        fun(Key, Value2, Acc) ->
+            case maps:find(Key, Acc) of
+                {ok, Value1} -> Acc#{Key => merge_masks(Value1, Value2)};
+                error -> Acc#{Key => Value2}
+            end
+        end,
+        Mask1,
+        Mask2
+    ).
+
+remove_trusted_mask(_Untrusted, true) ->
+    #{};
+remove_trusted_mask(Untrusted, Trusted) when is_map(Untrusted), is_map(Trusted) ->
+    maps:fold(
+        fun
+            (Key, true, Acc) ->
+                maps:remove(Key, Acc);
+            (Key, SubMask, Acc) ->
+                case maps:find(Key, Acc) of
+                    {ok, Excluded} when is_map(Excluded) ->
+                        case remove_trusted_mask(Excluded, SubMask) of
+                            Empty when map_size(Empty) =:= 0 -> maps:remove(Key, Acc);
+                            Remaining -> Acc#{Key => Remaining}
+                        end;
+                    _ ->
+                        Acc
+                end
+        end,
+        Untrusted,
+        Trusted
+    );
+remove_trusted_mask(Untrusted, _Trusted) ->
+    Untrusted.
 
 key_path(Key) when is_atom(Key); is_binary(Key) ->
     [Key];

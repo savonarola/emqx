@@ -1943,6 +1943,56 @@ t_client_attrs_with_control_chars_dropped(_) ->
     ),
     ?assertEqual(#{<<"good">> => <<"tenant-a">>}, Attrs).
 
+%% Verify that MQTT authn composition merges attributes and relocates authn output.
+t_authn_result_composition(_) ->
+    ClientInfo0 = clientinfo(#{
+        clientid => <<"original">>,
+        client_attrs => #{<<"existing">> => <<"value">>}
+    }),
+    AuthResult = #{
+        is_superuser => true,
+        expire_at => 123,
+        client_attrs => #{<<"tenant">> => <<"t1">>},
+        clientid_override => <<"overridden">>,
+        zone_override => <<"default">>,
+        trusted_attrs => #{username => true}
+    },
+    ClientInfo = emqx_channel:merge_auth_result(ClientInfo0, AuthResult),
+    ?assertEqual(<<"overridden">>, maps:get(clientid, ClientInfo)),
+    ?assertEqual(
+        #{<<"existing">> => <<"value">>, <<"tenant">> => <<"t1">>},
+        maps:get(client_attrs, ClientInfo)
+    ),
+    ?assertEqual(false, maps:is_key(is_superuser, ClientInfo)),
+    ?assertEqual(false, maps:is_key(auth_expire_at, ClientInfo)),
+    ?assertEqual({ok, true}, emqx_clientinfo:get_trusted(ClientInfo, is_superuser)),
+    ?assertEqual({ok, 123}, emqx_clientinfo:get_trusted(ClientInfo, auth_expire_at)),
+    ?assertEqual({ok, <<"overridden">>}, emqx_clientinfo:get_trusted(ClientInfo, clientid)),
+    ?assertEqual({ok, <<"username">>}, emqx_clientinfo:get_trusted(ClientInfo, username)),
+    ?assertEqual(
+        {ok, <<"t1">>},
+        emqx_clientinfo:get_trusted(ClientInfo, [client_attrs, <<"tenant">>])
+    ),
+    ?assertEqual(
+        error,
+        emqx_clientinfo:get_trusted(ClientInfo, [client_attrs, <<"existing">>])
+    ).
+
+%% Verify that reauthentication replaces and cancels the connection expiry timer.
+t_reauthentication_replaces_expiry(_) ->
+    ExpireAt = erlang:system_time(millisecond) + 60_000,
+    ClientInfo0 = emqx_clientinfo:merge_authn_result(
+        clientinfo(), #{expire_at => ExpireAt}, merge
+    ),
+    Channel0 = channel(ClientInfo0, #{}),
+    Channel1 = emqx_channel:schedule_connection_auth_expire(Channel0),
+    ?assert(maps:is_key(connection_auth_expire, emqx_channel:info(timers, Channel1))),
+    ClientInfo = emqx_clientinfo:merge_authn_result(ClientInfo0, #{}, merge),
+    Channel2 = emqx_channel:set_field(clientinfo, ClientInfo, Channel1),
+    Channel = emqx_channel:reschedule_connection_auth_expire(Channel2),
+    ?assertEqual(false, maps:is_key(connection_auth_expire, emqx_channel:info(timers, Channel))),
+    ?assertEqual(undefined, emqx_channel:info(expire_at, Channel)).
+
 pp2_conn_info(PeerCert) ->
     #{
         socktype => tcp,

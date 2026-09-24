@@ -30,11 +30,13 @@
     is_superuser => boolean(),
     client_attrs => #{binary() => binary()},
     clientid_override => binary(),
+    zone_override => binary(),
     expire_at => non_neg_integer(),
     trusted_attrs => emqx_clientinfo:trusted_mask(),
     %% Authentication may return ACL rules that will reside in client info
     %% for the later use in authorizers. See emqx_authz_client_info module.
-    acl => term()
+    acl => term(),
+    atom() => term()
 }.
 
 %% Returned as 'Authentication-Data' property to the client.

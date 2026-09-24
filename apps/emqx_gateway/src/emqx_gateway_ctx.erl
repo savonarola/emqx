@@ -63,7 +63,7 @@
     {ok, emqx_types:clientinfo()}
     | {error, any()}.
 authenticate(#{gwname := GwName}, ClientInfo0) ->
-    ClientInfo = ClientInfo0#{zone => default},
+    ClientInfo = emqx_clientinfo:set_trusted(ClientInfo0, zone, default),
     case emqx_access_control:authenticate(ClientInfo) of
         {ok, AuthResult} ->
             handle_auth_result(GwName, ClientInfo, AuthResult);
@@ -73,10 +73,12 @@ authenticate(#{gwname := GwName}, ClientInfo0) ->
 
 -spec connection_expire_interval(context(), emqx_types:clientinfo()) ->
     undefined | non_neg_integer().
-connection_expire_interval(_Ctx, #{auth_expire_at := undefined}) ->
-    undefined;
-connection_expire_interval(_Ctx, #{auth_expire_at := ExpireAt}) ->
-    max(0, ExpireAt - erlang:system_time(millisecond)).
+connection_expire_interval(_Ctx, ClientInfo) ->
+    case emqx_clientinfo:get_trusted(ClientInfo, auth_expire_at) of
+        {ok, undefined} -> undefined;
+        {ok, ExpireAt} -> max(0, ExpireAt - erlang:system_time(millisecond));
+        error -> undefined
+    end.
 
 %% @doc Register the session to the cluster.
 %%
@@ -209,11 +211,11 @@ eval_mountpoint(ClientInfo = #{mountpoint := undefined}) ->
     ClientInfo;
 eval_mountpoint(ClientInfo = #{mountpoint := MountPoint}) ->
     MountPoint1 = emqx_mountpoint:replvar(MountPoint, ClientInfo),
-    ClientInfo#{mountpoint := MountPoint1}.
+    emqx_clientinfo:set(ClientInfo, mountpoint, MountPoint1).
 
 handle_auth_result(GwName, ClientInfo, AuthResult0) ->
     AuthResult = maybe_drop_clientid_override(GwName, ClientInfo, AuthResult0),
-    ClientInfo1 = merge_auth_result(ClientInfo, AuthResult),
+    ClientInfo1 = emqx_clientinfo:merge_authn_result(ClientInfo, AuthResult, replace),
     {ok, eval_mountpoint(ClientInfo1)}.
 
 maybe_drop_clientid_override(GwName, ClientInfo, AuthResult) ->
@@ -229,9 +231,3 @@ maybe_drop_clientid_override(GwName, ClientInfo, AuthResult) ->
         error ->
             AuthResult
     end.
-
-merge_auth_result(ClientInfo, AuthResult0) when is_map(ClientInfo) andalso is_map(AuthResult0) ->
-    IsSuperuser = maps:get(is_superuser, AuthResult0, false),
-    ExpireAt = maps:get(expire_at, AuthResult0, undefined),
-    AuthResult1 = maps:without([expire_at], AuthResult0),
-    maps:merge(ClientInfo#{auth_expire_at => ExpireAt}, AuthResult1#{is_superuser => IsSuperuser}).

@@ -410,17 +410,18 @@ t_channel_takeover_resume_enriches_clientinfo(_) ->
         token = <<"local-token">>,
         clientinfo = (BaseChannel#channel.clientinfo)#{
             clientid => <<"local-client">>,
-            username => undefined,
-            is_superuser => false,
-            auth_expire_at => undefined
+            username => undefined
         }
     },
-    ResumeClientInfo = #{
-        clientid => ReqClientId,
-        username => <<"admin">>,
-        is_superuser => true,
-        auth_expire_at => ExpireAt
-    },
+    ResumeClientInfo = emqx_clientinfo:merge_authn_result(
+        #{clientid => ReqClientId, username => <<"admin">>},
+        #{
+            is_superuser => true,
+            expire_at => ExpireAt,
+            trusted_attrs => #{username => true, clientid => true}
+        },
+        replace
+    ),
     Req = #coap_message{
         type = con,
         method = put,
@@ -458,8 +459,10 @@ t_channel_takeover_resume_enriches_clientinfo(_) ->
             ) ->
                 ?assertEqual(ReqClientId, maps:get(clientid, ClientInfo)),
                 ?assertEqual(<<"admin">>, maps:get(username, ClientInfo)),
-                ?assertEqual(true, maps:get(is_superuser, ClientInfo)),
-                ?assertEqual(ExpireAt, maps:get(auth_expire_at, ClientInfo)),
+                ?assertEqual({ok, true}, emqx_clientinfo:get_trusted(ClientInfo, is_superuser)),
+                ?assertEqual(
+                    {ok, ExpireAt}, emqx_clientinfo:get_trusted(ClientInfo, auth_expire_at)
+                ),
                 {ok, #{session => emqx_coap_session:new(), present => true}};
             (Ctx, CleanStart, ClientInfo, ConnInfo0, CreateSessionFun, SessionMod) ->
                 meck:passthrough([
@@ -479,8 +482,14 @@ t_channel_takeover_resume_enriches_clientinfo(_) ->
         ?assertEqual(connected, Channel1#channel.conn_state),
         ?assertEqual(ReqToken, Channel1#channel.token),
         ?assertEqual(<<"admin">>, maps:get(username, Channel1#channel.clientinfo)),
-        ?assertEqual(true, maps:get(is_superuser, Channel1#channel.clientinfo)),
-        ?assertEqual(ExpireAt, maps:get(auth_expire_at, Channel1#channel.clientinfo)),
+        ?assertEqual(
+            {ok, true},
+            emqx_clientinfo:get_trusted(Channel1#channel.clientinfo, is_superuser)
+        ),
+        ?assertEqual(
+            {ok, ExpireAt},
+            emqx_clientinfo:get_trusted(Channel1#channel.clientinfo, auth_expire_at)
+        ),
         ?assertEqual(<<"CoAP">>, maps:get(proto_name, Channel1#channel.conninfo)),
         ?assertEqual(<<"1">>, maps:get(proto_ver, Channel1#channel.conninfo)),
         ?assertMatch(#{connection_expire_timer := _}, Channel1#channel.timers)

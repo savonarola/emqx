@@ -29,7 +29,14 @@ init_per_suite(Conf) ->
             (#{clientid := <<"original-clientid">>}) ->
                 {ok, #{clientid_override => <<"overridden-clientid">>}};
             (#{clientid := <<"client-with-auth-attrs">>}) ->
-                {ok, #{client_attrs => #{<<"tenant">> => <<"tenant-1">>}}};
+                {ok, #{
+                    client_attrs => #{<<"tenant">> => <<"tenant-1">>},
+                    trusted_attrs => #{username => true}
+                }};
+            (#{clientid := <<"expiring">>}) ->
+                {ok, #{expire_at => erlang:system_time(millisecond) + 10_000}};
+            (#{clientid := <<"zone-override">>}) ->
+                {ok, #{zone_override => <<"default">>, custom_authn => value}};
             (_) ->
                 {ok, #{}}
         end
@@ -50,15 +57,19 @@ t_authenticate(_) ->
         mountpoint => undefined,
         clientid => <<"user1">>
     },
-    NInfo1 = default_result(Info1),
-    ?assertMatch({ok, NInfo1}, emqx_gateway_ctx:authenticate(Ctx, Info1)),
+    {ok, NInfo1} = emqx_gateway_ctx:authenticate(Ctx, Info1),
+    ?assertEqual(default, maps:get(zone, NInfo1)),
+    ?assertEqual(false, maps:is_key(is_superuser, NInfo1)),
+    ?assertEqual(false, maps:is_key(auth_expire_at, NInfo1)),
+    ?assertEqual({ok, false}, emqx_clientinfo:get_trusted(NInfo1, is_superuser)),
+    ?assertEqual({ok, undefined}, emqx_clientinfo:get_trusted(NInfo1, auth_expire_at)),
 
     Info2 = #{
         mountpoint => <<"mqttsn/${clientid}/">>,
         clientid => <<"user1">>
     },
-    NInfo2 = default_result(Info2#{mountpoint => <<"mqttsn/user1/">>}),
-    ?assertMatch({ok, NInfo2}, emqx_gateway_ctx:authenticate(Ctx, Info2)),
+    {ok, NInfo2} = emqx_gateway_ctx:authenticate(Ctx, Info2),
+    ?assertEqual(<<"mqttsn/user1/">>, maps:get(mountpoint, NInfo2)),
 
     Info3 = #{
         mountpoint => <<"mqttsn/${clientid}/">>,
@@ -71,7 +82,16 @@ t_authenticate(_) ->
         mountpoint => undefined,
         clientid => admin
     },
-    ?assertMatch({ok, #{is_superuser := true}}, emqx_gateway_ctx:authenticate(Ctx, Info4)),
+    {ok, NInfo4} = emqx_gateway_ctx:authenticate(Ctx, Info4),
+    ?assertEqual(false, maps:is_key(is_superuser, NInfo4)),
+    ?assertEqual({ok, true}, emqx_clientinfo:get_trusted(NInfo4, is_superuser)),
+
+    Info5 = #{mountpoint => undefined, clientid => <<"zone-override">>},
+    {ok, NInfo5} = emqx_gateway_ctx:authenticate(Ctx, Info5),
+    ?assertEqual(default, maps:get(zone, NInfo5)),
+    ?assertEqual(false, maps:is_key(zone_override, NInfo5)),
+    ?assertEqual(false, maps:is_key(custom_authn, NInfo5)),
+    ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(NInfo5, custom_authn)),
     ok.
 
 t_clientid_override_ignored(_) ->
@@ -84,7 +104,8 @@ t_clientid_override_ignored(_) ->
         {ok, NInfo} = emqx_gateway_ctx:authenticate(Ctx, Info),
         ?assertEqual(<<"original-clientid">>, maps:get(clientid, NInfo)),
         ?assertEqual(<<"mqttsn/original-clientid/">>, maps:get(mountpoint, NInfo)),
-        ?assertEqual(false, maps:is_key(clientid_override, NInfo))
+        ?assertEqual(false, maps:is_key(clientid_override, NInfo)),
+        ?assertEqual(error, emqx_clientinfo:get_trusted(NInfo, clientid))
     end),
     ?assertMatch(
         [
@@ -103,15 +124,28 @@ t_mountpoint_after_authn(_) ->
     Ctx = #{gwname => mqttsn, cm => self()},
     Info = #{
         mountpoint => <<"mqttsn/${client_attrs.tenant}/${clientid}/">>,
-        clientid => <<"client-with-auth-attrs">>
+        clientid => <<"client-with-auth-attrs">>,
+        username => <<"user">>,
+        client_attrs => #{<<"old">> => <<"value">>}
     },
-    ?assertMatch(
-        {ok, #{
-            clientid := <<"client-with-auth-attrs">>,
-            mountpoint := <<"mqttsn/tenant-1/client-with-auth-attrs/">>
-        }},
-        emqx_gateway_ctx:authenticate(Ctx, Info)
+    {ok, NInfo} = emqx_gateway_ctx:authenticate(Ctx, Info),
+    ?assertEqual(
+        <<"mqttsn/tenant-1/client-with-auth-attrs/">>,
+        maps:get(mountpoint, NInfo)
+    ),
+    ?assertEqual(#{<<"tenant">> => <<"tenant-1">>}, maps:get(client_attrs, NInfo)),
+    ?assertEqual({ok, <<"user">>}, emqx_clientinfo:get_trusted(NInfo, username)),
+    ?assertEqual(
+        {ok, <<"tenant-1">>},
+        emqx_clientinfo:get_trusted(NInfo, [client_attrs, <<"tenant">>])
     ),
     ok.
 
-default_result(Info) -> Info#{zone => default, is_superuser => false, auth_expire_at => undefined}.
+%% Verify that gateway expiry reads the relocated trusted authn value.
+t_connection_expire_interval(_) ->
+    Ctx = #{gwname => mqttsn, cm => self()},
+    Info = #{mountpoint => undefined, clientid => <<"expiring">>},
+    {ok, NInfo} = emqx_gateway_ctx:authenticate(Ctx, Info),
+    Interval = emqx_gateway_ctx:connection_expire_interval(Ctx, NInfo),
+    ?assert(Interval > 0),
+    ?assert(Interval =< 10_000).
