@@ -184,6 +184,7 @@
     password => option(binary()),
     auth_result => auth_result(),
     anonymous => boolean(),
+    trusted_attrs => emqx_clientinfo:trusted_attrs(),
     cn => binary(),
     dn => binary(),
     %% Extra client attributes, commented out for bpapi spec backward compatibility.
