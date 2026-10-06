@@ -47,13 +47,20 @@ unhook() ->
 
 on_subscribe(#{clientid := ClientId}, _Properties, Filters) ->
     %% TODO: Require declarations in the connection's first SUBSCRIBE packet.
-    Allowed = gen_server:call(?MODULE, {subscribe, self(), ClientId, Filters}),
-    {ok, Allowed}.
+    case gen_server:call(?MODULE, {subscribe, self(), ClientId, Filters}) of
+        {error, Reason} ->
+            {stop,
+                {error, ?RC_IMPLEMENTATION_SPECIFIC_ERROR, #{
+                    'Reason-String' => atom_to_binary(Reason)
+                }}};
+        Allowed ->
+            {ok, Allowed}
+    end.
 
 on_unsubscribed(_ClientInfo, Topic, _Options) ->
     gen_server:call(?MODULE, {unsubscribed, self(), Topic}).
 
-on_publish(Msg = #message{topic = <<"$control/", _/binary>>}) ->
+on_publish(Msg = #message{topic = <<"demo/", _/binary>>}) ->
     ok = debug_message(received, self(), Msg),
     {ok, Msg};
 on_publish(Msg = #message{topic = Topic}) ->
@@ -82,9 +89,13 @@ handle_call(cleanup_results, _From, State = #{cleanup_results := Results}) ->
     {reply, Results, State};
 handle_call({subscribe, Pid, ClientId, Filters}, _From, State) ->
     debug_subscription(subscribe_requested, Pid, Filters),
-    {Allowed, Next} = subscribe_request(Pid, ClientId, Filters, State),
-    debug_subscription(subscribe_allowed, Pid, Allowed),
-    {reply, Allowed, Next};
+    case subscribe_request(Pid, ClientId, Filters, State) of
+        {{error, Reason}, Next} ->
+            {reply, {error, Reason}, Next};
+        {Allowed, Next} ->
+            debug_subscription(subscribe_allowed, Pid, Allowed),
+            {reply, Allowed, Next}
+    end;
 handle_call({unsubscribed, Pid, Topic}, _From, State) ->
     emqx_mqtt_components_debug:subscription(unsubscribed, Pid, [Topic]),
     {reply, ok, unsubscribed(Pid, Topic, State)};
@@ -180,13 +191,11 @@ subscribe_request(Pid, ClientId, Filters, State) ->
             [] ->
                 {ok, State};
             _ ->
-                subscribe(Pid, [events_topic(ClientId)]),
                 declare(Pid, ClientId, Declarations, State)
         end,
     case Declared of
         {error, Reason} ->
-            event(Pid, ClientId, #{event => error, reason => Reason}),
-            {[], State};
+            {{error, Reason}, State};
         {ok, Next0} ->
             Next = activate_waiting(Next0),
             #{components := Components} = Next,
@@ -292,6 +301,7 @@ declare(Pid, ClientId, Declarations, State = #{components := Components}) ->
         NewComponents = Components#{Pid => Component},
         check(not cyclic(Pid, NewComponents, []), dependency_cycle),
         Ref = monitor(process, Pid),
+        subscribe(Pid, [events_topic(ClientId)]),
         {ok, put_component(Pid, Component#{monitor => Ref}, State)}
     catch
         throw:Reason -> {error, Reason}

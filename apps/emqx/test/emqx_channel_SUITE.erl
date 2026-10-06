@@ -95,6 +95,8 @@ internal_subscribe_test_profile(t_internal_subscribe_checks_authz_and_runs_hook)
     "hardened";
 internal_subscribe_test_profile(t_internal_subscribe_checks_caps) ->
     "hardened";
+internal_subscribe_test_profile(t_internal_subscribe_hook_rejection) ->
+    "hardened";
 internal_subscribe_test_profile(t_handle_info_subscribe_honors_disconnect_deny_action) ->
     "hardened";
 internal_subscribe_test_profile(_) ->
@@ -594,6 +596,42 @@ t_handle_in_subscribe(_) ->
     Subscribe = ?SUBSCRIBE_PACKET(1, #{}, TopicFilters),
     Replies = [{outgoing, ?SUBACK_PACKET(1, [?QOS_0])}, {event, updated}],
     {ok, Replies, _Chan} = emqx_channel:handle_in(Subscribe, Channel).
+
+%% Hook rejection preserves authorization failures and installs no subscriptions.
+t_subscribe_hook_rejection(_Config) ->
+    Props = #{'Reason-String' => <<"invalid_declaration">>},
+    ok = emqx_hooks:add(
+        'client.subscribe', {?MODULE, reject_client_subscribe, [Props]}, ?HP_LOWEST
+    ),
+    on_exit(fun() -> emqx_hooks:del('client.subscribe', {?MODULE, reject_client_subscribe}) end),
+    ok = meck:expect(emqx_access_control, authorize, fun
+        (_, _, <<"denied">>) -> deny;
+        (_, _, _) -> allow
+    end),
+    Topics = [{T, ?DEFAULT_SUBOPTS} || T <- [<<"first">>, <<"denied">>, <<"last">>]],
+    Packet = ?SUBSCRIBE_PACKET(1, #{}, Topics),
+    Codes = [
+        ?RC_IMPLEMENTATION_SPECIFIC_ERROR, ?RC_NOT_AUTHORIZED, ?RC_IMPLEMENTATION_SPECIFIC_ERROR
+    ],
+    ?assertMatch(
+        {ok, [{outgoing, ?SUBACK_PACKET(1, Props, Codes)}, {event, updated}], _},
+        emqx_channel:handle_in(Packet, channel())
+    ),
+    ?assertNot(meck:called(emqx_session, subscribe, '_')).
+
+%% MQTT 3.1.1 receives failure codes without MQTT 5 SUBACK properties.
+t_subscribe_hook_rejection_v4(_Config) ->
+    Props = #{'Reason-String' => <<"invalid_declaration">>},
+    ok = emqx_hooks:add(
+        'client.subscribe', {?MODULE, reject_client_subscribe, [Props]}, ?HP_LOWEST
+    ),
+    on_exit(fun() -> emqx_hooks:del('client.subscribe', {?MODULE, reject_client_subscribe}) end),
+    Packet = ?SUBSCRIBE_PACKET(1, #{}, [{<<"rejected">>, ?DEFAULT_SUBOPTS}]),
+    ?assertMatch(
+        {ok, [{outgoing, ?SUBACK_PACKET(1, #{}, [16#80])}, {event, updated}], _},
+        emqx_channel:handle_in(Packet, v4(channel()))
+    ),
+    ?assertNot(meck:called(emqx_session, subscribe, '_')).
 
 t_handle_in_unsubscribe(_) ->
     ok = meck:expect(
@@ -1155,6 +1193,19 @@ t_handle_call_unexpected(_) ->
 t_handle_info_subscribe(_) ->
     ok = meck:expect(emqx_session, subscribe, fun(_, _, _, Session) -> {ok, Session} end),
     {ok, _Chan} = emqx_channel:handle_info({subscribe, topic_filters()}, channel()).
+
+%% Internal subscriptions honor hook rejection without installing filters.
+t_internal_subscribe_hook_rejection(_Config) ->
+    ok = emqx_hooks:add(
+        'client.subscribe', {?MODULE, reject_client_subscribe, [#{}]}, ?HP_LOWEST
+    ),
+    on_exit(fun() -> emqx_hooks:del('client.subscribe', {?MODULE, reject_client_subscribe}) end),
+    Channel = channel(),
+    ?assertEqual(
+        {ok, Channel},
+        emqx_channel:handle_info({subscribe, [{<<"rejected">>, ?DEFAULT_SUBOPTS}]}, Channel)
+    ),
+    ?assertNot(meck:called(emqx_session, subscribe, '_')).
 
 t_internal_subscribe_bypasses_checks_in_legacy(_) ->
     TestPid = self(),
@@ -1914,6 +1965,9 @@ authenticate_continue(Credential, _DefaultRes, TestRunnerPid, Agent) ->
 on_client_subscribe(_ClientInfo, Properties, TopicFilters, TestPid) ->
     TestPid ! {client_subscribe, Properties, TopicFilters},
     {ok, TopicFilters}.
+
+reject_client_subscribe(_ClientInfo, _Properties, _TopicFilters, Props) ->
+    {stop, {error, ?RC_IMPLEMENTATION_SPECIFIC_ERROR, Props}}.
 
 channel_subscriptions(ChannelPid) ->
     #{session := #{subscriptions := Subscriptions}} = emqx_connection:info(ChannelPid),

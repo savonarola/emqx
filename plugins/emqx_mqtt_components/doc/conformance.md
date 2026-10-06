@@ -106,8 +106,10 @@ against a replacement provider.
   installed topics before activation. State unsubscription completes through
   `session.unsubscribed`. Polling handles absent subscriptions and disconnected clients.
   Replacing fixed-interval checks has a TODO. Lifecycle subscriptions have no
-  completion check. The subscribe hook cannot supply per-filter SUBACK errors;
-  rejection uses a lifecycle error and prevents the packet's installations.
+  completion check. Declaration rejection uses SUBACK failure codes and an MQTT 5
+  Reason String. It prevents the packet's installations and sends no lifecycle error.
+  Other managed-subscription rejection still uses `subscription_not_allowed`
+  on the lifecycle topic.
 - State writes and deletes use synchronous retainer APIs. They are not atomic
   with in-memory coordinator metadata across crashes. State support requires
   an enabled retainer. An accepted client subscription records its inverse
@@ -115,7 +117,7 @@ against a replacement provider.
   unsubscribe action.
 - TODO: Validate a whole subscription packet before committing declarations or
   sending initialization notifications. A rejected mixed packet currently
-  retains the declaration and can start activation. See README's deferred fixes.
+  retains the declaration and can start activation. See [deferred fixes](readme.md#deferred-fixes).
 - TODO: Check retained-state mutations rather than treating every retainer `ok`
   as confirmation. A full table can skip a write, and a disabled backend can
   skip deletion. These cases do not yet satisfy the EIP's state completion rule.

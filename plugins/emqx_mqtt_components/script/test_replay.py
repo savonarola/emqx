@@ -100,8 +100,7 @@ with sync_playwright() as playwright:
     expect(page.locator('#node-control')).to_be_visible()
     page.evaluate('commandEvent(6)')
     expect(packet).to_be_visible()
-    expect(page.locator('#packet-topic')).to_have_text(
-        page.evaluate("control + '/workerA/connect'"))
+    expect(page.locator('#packet-topic')).to_have_text('demo/workerA/connect')
     page.wait_for_function('!playing && queue.length === 0')
     animate_commands.uncheck()
     expect(page.locator('#node-control')).to_be_hidden()
@@ -124,7 +123,7 @@ with sync_playwright() as playwright:
     expect(packet).to_be_visible()
     expect(page.locator('#packet-label')).to_contain_text('SUBSCRIBE · declarations')
     expect(page.locator('#packet-topic')).to_have_text(
-        page.evaluate("declarationEvent.topics.slice(1).join('\\n')"))
+        '$provide/service/reg-route\n$consume/service/cache')
     assert page.evaluate("pidNames.get('new-router')") == 'router'
     page.wait_for_function('!playing && queue.length === 0')
     expect(page.locator('#event-log li').first).to_contain_text('$provide/service/')
@@ -175,7 +174,7 @@ with sync_playwright() as playwright:
         ('$component/reply/258', 'received', 'error', '{"event":"application data"}', 'effect'),
         ('$component/retracted/258', 'received', 'retracted', '', 'effect'),
         ('$component/cleanup_complete', 'received', None, '', 'control'),
-        (page.evaluate("control + '/observer/reply'"), 'received', '200', '{"handler":"workerA"}', 'control'),
+        (page.evaluate("control + '/observer/reply'"), 'received', '200', '{"handler":"workerA"}', 'application'),
     ]
     response_cases += [
         (lifecycle_topic, 'sent', event, '', kind)
@@ -205,7 +204,7 @@ with sync_playwright() as playwright:
         })
         expect(packet).to_be_visible()
         expect(page.locator('#packet-label')).to_have_text('Control · ' + event)
-        expect(page.locator('#packet-topic')).to_have_text(lifecycle_topic)
+        expect(page.locator('#packet-topic')).to_have_text('$component/router/events')
         page.wait_for_function('!playing && queue.length === 0')
     page.evaluate("""observe('$component/debug', JSON.stringify({
         event: 'message', component_id: 'new-router', direction: 'received',
@@ -223,6 +222,119 @@ with sync_playwright() as playwright:
     pause.click()
     page.wait_for_function('!playing && queue.length === 0')
     expect(sequence).to_have_text('#32')
+
+    # Lamp and route rows appear when apply reaches the provider and follow cleanup replay.
+    for tab, provider, owner, list_id, effect_id in [
+        ('iot', 'switch', 'lamp1', 'lamp-registrations', 'lamp-replay'),
+        ('web', 'router', 'workerA', 'routes', 'route-replay'),
+    ]:
+        page.locator('#tab-' + tab).click()
+        page.evaluate('''({provider, owner, id}) => {
+            $('duration').value = 800;
+            $('delay').value = 0;
+            pidNames.set('replay-provider', provider);
+            pidNames.set('replay-owner', owner);
+            effects.set(id, {owner: 'replay-owner', provider: 'replay-provider'});
+            window.registrationBody = provider === 'switch'
+                ? {name: owner, command_topic: control + '/' + owner + '/light', token: '1', override: null}
+                : {path_prefix: '/replay', handle_topic: control + '/' + owner + '/handle'};
+            window.registrationTopic = provider === 'switch' ? lampService : service;
+            const actor = actors.get(provider);
+            (provider === 'switch' ? actor.lamps : actor.routes).set(id, registrationBody);
+            renderLighting(); renderRoutes();
+        }''', {'provider': provider, 'owner': owner, 'id': effect_id})
+        rows = page.locator(f'#{list_id} li[data-effect-id="{effect_id}"]')
+        expect(rows).to_have_count(0)
+
+        # Pause before and during apply; the entry appears when the message arrives.
+        pause.click()
+        page.evaluate('''id => observe('$component/debug', JSON.stringify({
+            event: 'message', component_id: 'replay-provider', direction: 'sent',
+            topic: registrationTopic + '/apply/' + id,
+            payload: JSON.stringify(registrationBody), sequence: 40
+        }))''', effect_id)
+        expect(page.locator('#backlog')).to_contain_text('1 queued')
+        expect(rows).to_have_count(0)
+        pause.click()
+        expect(packet).to_be_visible()
+        pause.click()
+        expect(rows).to_have_count(0)
+        page.wait_for_timeout(900)
+        expect(rows).to_have_count(0)
+        pause.click()
+        page.wait_for_function('!playing && queue.length === 0')
+        expect(rows).to_have_count(1)
+
+        # The response animation starts with the registration already displayed.
+        page.evaluate('''id => observe('$component/debug', JSON.stringify({
+            event: 'message', component_id: 'replay-provider', direction: 'received',
+            topic: '$component/reply/' + id, payload: '', sequence: 41,
+            properties: {'User-Property': [{key: 'component-status', value: 'ok'}]}
+        }))''', effect_id)
+        expect(packet).to_be_visible()
+        expect(rows).to_have_count(1)
+        page.wait_for_function('!playing && queue.length === 0')
+
+        # Lamp indicators wait for on/off message arrival, including while replay is paused.
+        if provider == 'switch':
+            page.evaluate('''applyEvent({event: 'component_changed', component_id: 'replay-owner',
+                previous: null, current: {clientid: session + '-lamp1', connected: true,
+                    state: 'active', activation_block: 'none'}, sequence: 41})''')
+            light = page.locator('#node-lamp1 .lamp-light')
+            for on in [True, False, True]:
+                pause.click()
+                page.evaluate('''on => {
+                    actors.get('lamp1').status = 'active';
+                    actors.get('lamp1').desiredLight = on;
+                    renderLighting();
+                    observe('$component/debug', JSON.stringify({event: 'message',
+                        component_id: 'replay-provider', direction: 'received',
+                        topic: control + '/lamp1/light', payload: JSON.stringify({on, token: '1'}), sequence: 41}));
+                }''', on)
+                expect(light).to_have_attribute('data-on', str(not on).lower())
+                pause.click()
+                expect(packet).to_be_visible()
+                pause.click()
+                page.wait_for_timeout(900)
+                expect(light).to_have_attribute('data-on', str(not on).lower())
+                pause.click()
+                page.wait_for_function('!playing && queue.length === 0')
+                expect(light).to_have_attribute('data-on', str(on).lower())
+
+            # Live deactivation does not turn the displayed lamp off ahead of replay.
+            pause.click()
+            page.evaluate('''() => {
+                actors.get('lamp1').status = 'stopping';
+                actors.get('lamp1').desiredLight = false;
+                renderLighting();
+                observe('$component/debug', JSON.stringify({event: 'component_changed',
+                    component_id: 'replay-owner', previous: null,
+                    current: {clientid: session + '-lamp1', connected: true,
+                        state: 'stopping', activation_block: 'none'}, sequence: 41}));
+            }''')
+            expect(light).to_have_attribute('data-on', 'true')
+            pause.click()
+            page.wait_for_function('!playing && queue.length === 0')
+            expect(light).to_have_attribute('data-on', 'false')
+
+        # Live removal must not remove the row while the cleanup event is queued.
+        pause.click()
+        page.evaluate('''({provider, id}) => {
+            const actor = actors.get(provider);
+            (provider === 'switch' ? actor.lamps : actor.routes).delete(id);
+            renderLighting(); renderRoutes();
+            observe('$component/debug', JSON.stringify({
+                event: 'effect_changed', effect_id: id,
+                previous: {owner: 'replay-owner', cleanup: 'requested'},
+                current: {owner: 'replay-owner', cleanup: 'retracted'}, sequence: 42
+            }));
+        }''', {'provider': provider, 'id': effect_id})
+        expect(rows).to_have_count(1)
+        if provider == 'switch':
+            expect(rows.get_by_role('button', name='On', exact=True)).to_be_disabled()
+        pause.click()
+        page.wait_for_function('!playing && queue.length === 0')
+        expect(rows).to_have_count(0)
     assert not errors, errors
     browser.close()
 print('Replay checks passed: pause before replay, freeze mid-animation, preserve delay, queue order, and cancel while paused.')

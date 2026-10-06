@@ -180,6 +180,7 @@ when
 
 -callback 'client.subscribe'(emqx_types:clientinfo(), emqx_types:properties(), TopicFilters) ->
     fold_callback_result(TopicFilters)
+    | {stop, {error, emqx_types:reason_code(), emqx_types:properties()}}
 when
     TopicFilters :: list({emqx_types:topic(), map()}).
 

@@ -5,6 +5,44 @@ the MQTT Component Model proposal. One coordinator holds all metadata in
 memory on one broker node. Hooks call the coordinator synchronously.
 Components use MQTT 5 and clean sessions.
 
+## Diagram images for slides
+
+Run from the repository root:
+
+```sh
+make -C plugins/emqx_mqtt_components/doc
+```
+
+This exports the Mermaid diagrams in [client_flows.md](client_flows.md) to
+`doc/images/` as SVG and 3× PNG images. Use SVG for scalable slide graphics.
+The theme uses a white background, blue component headers, teal notes, and large
+labels. The diagrams keep their natural aspect ratio.
+Backtick-delimited labels use a monospace font. PNG exports use the formatted SVGs.
+
+The diagrams use the slugs below with the `client_flows-` prefix.
+
+| Filename slug | Diagram |
+| --- | --- |
+| `connect-and-declare` | Connect and declare resources |
+| `activate` | Activate |
+| `deactivate-and-clean-up` | Deactivate and clean up |
+| `interrupt-initialization` | Divert initialization |
+| `handle-dependent-loss` | Deactivation or loss of a dependent |
+
+Install Node.js 20 or newer and npm before running Make. The first run downloads
+the pinned Mermaid CLI and its Chromium browser. Later runs use the npm cache.
+The browser also needs the usual Chromium system libraries.
+
+Use `make svg` or `make png` from `doc/` to export one format. Set `SCALE=4`
+for larger PNGs or `BACKGROUND=transparent` for transparent images. Set
+`PUPPETEER_EXECUTABLE_PATH` to use an existing Chrome or Chromium executable.
+The default Puppeteer configuration supports headless rendering without a
+browser sandbox. Set `PUPPETEER_CONFIG` to select another configuration file.
+Use `make clean` to remove generated images.
+
+Edit `mermaid.json` and `slides.css` to adjust the diagram theme. Edit the
+Mermaid blocks in `client_flows.md` to change diagram content.
+
 ## Development
 
 Build the EMQX release and plugin package, then install and start the plugin:
@@ -34,7 +72,8 @@ The page uses the dashboard's plugin API authentication.
 
 Enter the broker's MQTT WebSocket URL and optional MQTT credentials, then click
 Connect. The observer subscribes to `$component/debug` before components start.
-Click Connect components to open six independent MQTT.js connections in the page:
+Select a demo tab, then click Connect on each component to connect its client.
+The Web services tab opens six independent MQTT.js connections:
 
 - Cache provides a service. Router consumes the cache service.
 - Router provides route registration. All workers consume it.
@@ -43,7 +82,7 @@ Click Connect components to open six independent MQTT.js connections in the page
   Each request contains `handle_topic` and `path_prefix`. The worker waits for
   the registration response before sending `ready`.
 
-Each tab uses its own client IDs and resource topics. All component and controller
+Each browser page uses its own client IDs and resource topics. All component and controller
 clients run in JavaScript. The plugin serves the page and coordinates the protocol.
 The Erlang router and handler remain test fixtures only.
 
@@ -56,16 +95,19 @@ shows how far the scene trails the live clients.
 Pause replay freezes the current animation and the delay between events.
 Incoming debug events stay queued. Resume replay continues from the same point.
 Component clients and command buttons remain live while replay is paused.
-Animated requests and notifications show their full topic. Responses show
+Animated topics omit the page's `scene-...` namespace and client ID prefix.
+Responses show
 `Response:` and their result instead of the response topic. This includes apply,
 retract, readiness, administrative, and ordinary request/reply responses.
 The debug log keeps the original topics. Orange marks administrative commands
-and responses. Blue marks control and lifecycle messages. Green marks service
-and effect cleanup messages. The scene includes a color legend.
-Animate control commands is off by default. Enable it to show the `$control`
+and responses. Blue marks control and lifecycle messages. Green marks service,
+state, and effect cleanup messages under Effect / State. Pink marks Application
+messages outside the plugin protocol, including lamp commands and route requests.
+The scene includes a color legend.
+Animate control commands is off by default. Enable it to show the `demo`
 node and animate its commands and request/reply traffic. Unchecking it hides
 the node and its animations. Messages remain in the debug log.
-Separate virtual nodes represent `$control/...` and `$component/...`.
+Separate virtual nodes represent `demo/...` and `$component/...`.
 The control node handles demo commands and request/reply traffic. The component
 node handles declarations, lifecycle messages, and `$component-admin/...` commands.
 Effect animations connect the participating components.
@@ -74,7 +116,7 @@ the virtual `$component/...` node.
 Their labels list the `$provide/...` and `$consume/...` topics. This animation
 does not depend on Animate control commands.
 
-Buttons send `$control/<session>/<component>/<action>` messages. The browser
+Buttons send `demo/<session>/<component>/<action>` messages. The browser
 controller receives them and connects, disconnects, disables, enables, or aborts
 the target component. The plugin copies control messages to the debug topic and
 routes them through ordinary MQTT. Commands act immediately on the live clients;
@@ -99,14 +141,55 @@ route. Router loss stops all workers. Cache loss stops workers before router
 cleanup. DB loss stops only workerA. Reconnection or enablement reinitializes
 eligible dependents and registers fresh routes.
 
-Disconnect all closes every browser client. Closing or reloading the page also
-ends the connections. The debug stream has no initial snapshot; use a new scene
+### IoT lighting
+
+The IoT lighting tab contains an occupancy sensor, a switch, and three lamps.
+Each device has its own MQTT connection:
+
+- Sensor provides `$state/<session>/occupancy` and publishes retained JSON
+  containing `occupied`.
+- Switch consumes that state and subscribes during each initialization. It waits
+  for the initial state before becoming ready.
+- Switch provides `$service/<session>/register-lamp`. Each lamp registers its
+  command topic during initialization. The switch stores the registration under
+  its effect ID and sends the current occupancy-driven on/off command immediately.
+- Occupancy changes send on/off commands to every registered lamp. Commands use
+  ordinary `demo/<session>/...` topics. An activation token prevents an old command from
+  changing a lamp after reinitialization.
+
+Use Room occupied to change the sensor state. A newly connected lamp receives
+the current state without waiting for another occupancy change. Lamps remain
+off until active and turn off when deactivated or disconnected.
+
+The switch lists registered lamps and their effect IDs. Each row has exclusive
+Auto, On, and Off buttons. On and Off override occupancy for that lamp. Auto
+immediately applies the current occupancy state. Overrides belong to the
+registration and reset to Auto when the lamp registers again. Override commands
+use ordinary MQTT application messages. Deactivation still turns lamps off.
+
+Disable the sensor to observe dependent-first cleanup. Lamps turn off and their
+registrations are retracted while the switch is stopping. The switch preserves
+its registration table until all lamps finish. It then completes local cleanup,
+and the broker removes its occupancy subscription. Sensor cleanup deletes the
+retained value. Enable the sensor to initialize the chain again.
+
+Lamp and route entries appear when the apply animation reaches the provider,
+before the registration response animation.
+They disappear when cleanup or provider disconnection is replayed. Pausing replay
+also pauses these list changes. Light indicators change when the on/off animation
+reaches the lamp. They turn off when deactivation is replayed. Override controls
+act on live clients. Controls for registrations that have already ended are disabled.
+Lifecycle colors and message animations follow the debug replay. Switching demo tabs
+preserves existing connections.
+
+Reload the page to reset the demo. Closing or reloading ends all connections.
+The debug stream has no initial snapshot; use a new scene
 to observe the complete lifecycle.
 
 The default WebSocket URL uses `box2` and port 8083 for HTTP, or
 8084 for HTTPS. The page loads MQTT.js 5 from unpkg. The broker must permit the
-component, debug, and control topics. The browser demo uses only service
-resources and does not require the retainer.
+component, debug, and control topics. The Web services tab does not require the
+retainer. Enable the retainer for the IoT lighting tab.
 
 Run the browser e2e test against a running broker with Python Playwright and
 Chromium installed:
@@ -121,7 +204,22 @@ Use `--chromium` to select an existing Chromium executable. The test covers all
 three routes, requests, dependency cleanup, reconnect, held initialization,
 abort, and playback timing.
 
+Run the IoT browser test against a broker with the plugin and retainer enabled:
+
+```sh
+python3 plugins/emqx_mqtt_components/script/test_iot.py \
+  --mqtt-url ws://localhost:8083/mqtt
+```
+
+This test loads the demo page from the source tree. It checks occupancy changes,
+late lamp registration, retained replay, ordered cleanup, reconnect, and abort.
+It requires a broker that permits anonymous MQTT connections.
+
 ## Protocol
+
+See [Component client lifecycle flows](client_flows.md) for client responsibilities
+and sequence diagrams covering connection, activation, deactivation, and diverted
+initialization.
 
 Declare resources in one SUBSCRIBE packet:
 
@@ -212,10 +310,14 @@ has unknown local cleanup unless it already confirmed completion. Failed and
 unknown retractions remain in these reports. They count as finished attempts,
 not confirmed rollback. Reports remain in memory until the coordinator stops.
 
-Invalid declarations and operations return `component-status=error` and
-`component-reason=<reason>` with an empty payload.
-Declaration errors use the lifecycle topic. SUBACK and PUBACK acknowledge MQTT
-transport only. They do not confirm component admission or service completion.
+Invalid declarations return SUBACK failure code `0x83` (Implementation specific
+error) for each filter passed to the plugin. The MQTT 5 Reason String contains
+the rejection reason, such as `provider_conflict`. No separate lifecycle error
+is sent. A successful declaration SUBACK confirms acceptance. The component must
+still wait for `initialize` before using managed resources.
+Invalid operations return `component-status=error` and
+`component-reason=<reason>` with an empty payload. PUBACK acknowledges MQTT
+transport only. It does not confirm service completion.
 Any provider response completes the request from the coordinator's perspective.
 The caller interprets the opaque response and decides whether it can send `ready`.
 
@@ -246,7 +348,7 @@ providers use the same IDs.
 Message directions are `received` for requests entering the coordinator, `sent`
 for direct forwards and replies, and `broadcast` for accepted state publications.
 Messages include lifecycle and administrative commands, service applies,
-responses, retractions, state writes, and publications to `$control/...`.
+responses, retractions, state writes, and publications to `demo/...`.
 Control topics keep ordinary MQTT routing and subscription behavior. A `received` event does not mean the
 request was accepted. Ordinary application traffic and individual deliveries of
 retained state are not copied. Automatic state deletion appears as a
@@ -399,7 +501,7 @@ Abort and retry tests cover delayed cleanup, state deletion and unsubscription,
 fresh activations, missing dependencies, administrative disablement, invalid
 states, and opaque application error responses.
 
-See [CONFORMANCE.md](CONFORMANCE.md) for the comparison with both the EIP and
+See [conformance.md](conformance.md) for the comparison with both the EIP and
 the original paper.
 
 ```sh
@@ -434,9 +536,9 @@ subscriptions and disconnected clients.
 A TODO calls for completion checks without fixed-interval polling. Lifecycle
 subscription commands remain asynchronous. Another TODO calls for enforcing
 declarations in the first SUBSCRIBE packet; currently only later declarations
-are rejected. The plugin does not isolate ordinary MQTT topics, change broker
-internals, or coordinate nodes. Retained writes and coordinator records are not
-a shared crash-safe transaction.
+are rejected. The plugin does not isolate ordinary MQTT topics or coordinate
+nodes. The broker subscription hook supports rejection through SUBACK. Retained
+writes and coordinator records are not a shared crash-safe transaction.
 
 ## Deferred fixes
 

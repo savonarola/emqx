@@ -1021,11 +1021,16 @@ process_subscribe(SubPkt = ?SUBSCRIBE_PACKET(PacketId, _Properties, TopicFilters
     Operation0 = subscribe_operation(SubPkt),
     case prepare_subscribe(Operation0, Channel0) of
         {ok, Operation = #subscribe_operation{topic_filters = TFChecked}, Channel} ->
-            {TFSubedWithNRC, NChannel} = post_process_subscribe(
-                run_sub_hooks(Operation, Channel), Channel
-            ),
-            ReasonCodes = gen_reason_codes(TFChecked, TFSubedWithNRC),
-            handle_out(suback, {PacketId, ReasonCodes}, NChannel);
+            case run_sub_hooks(Operation, Channel) of
+                {error, RC, Properties} ->
+                    Rejected = [{Filter, RC} || {Filter, ?RC_SUCCESS} <- TFChecked],
+                    ReasonCodes = gen_reason_codes(TFChecked, Rejected),
+                    handle_out(suback, {PacketId, ReasonCodes, Properties}, Channel);
+                TopicFilters ->
+                    {TFSubedWithNRC, NChannel} = post_process_subscribe(TopicFilters, Channel),
+                    ReasonCodes = gen_reason_codes(TFChecked, TFSubedWithNRC),
+                    handle_out(suback, {PacketId, ReasonCodes}, NChannel)
+            end;
         {error, {disconnect, RC}, Channel} ->
             %% funcs in pipeline almost always cause action: `disconnect`
             %% And Only one ReasonCode in DISCONNECT packet
@@ -1555,9 +1560,11 @@ handle_out(pubcomp, {PacketId, ReasonCode}, Channel) ->
         ?PUBCOMP_PACKET(PacketId, ReasonCode)
     ),
     {ok, ?REPLY_OUTGOING(Packet), Channel};
-handle_out(suback, {PacketId, ReasonCodes}, Channel = ?IS_MQTT_V5) ->
-    return_sub_unsub_ack(?SUBACK_PACKET(PacketId, ReasonCodes), Channel);
 handle_out(suback, {PacketId, ReasonCodes}, Channel) ->
+    handle_out(suback, {PacketId, ReasonCodes, #{}}, Channel);
+handle_out(suback, {PacketId, ReasonCodes, Properties}, Channel = ?IS_MQTT_V5) ->
+    return_sub_unsub_ack(?SUBACK_PACKET(PacketId, Properties, ReasonCodes), Channel);
+handle_out(suback, {PacketId, ReasonCodes, _Properties}, Channel) ->
     ReasonCodes1 = [emqx_reason_codes:compat(suback, RC) || RC <- ReasonCodes],
     return_sub_unsub_ack(?SUBACK_PACKET(PacketId, ReasonCodes1), Channel);
 handle_out(unsuback, {PacketId, ReasonCodes}, Channel = ?IS_MQTT_V5) ->
@@ -1867,10 +1874,15 @@ handle_info({subscribe, TopicFilters}, Channel) ->
                     Operation = subscribe_operation(TopicFilters),
                     case prepare_subscribe(Operation, Channel) of
                         {ok, NOperation, Channel1} ->
-                            {_TopicFiltersWithRC, Channel2} = post_process_subscribe(
-                                run_sub_hooks(NOperation, Channel1), Channel1
-                            ),
-                            {ok, Channel2};
+                            case run_sub_hooks(NOperation, Channel1) of
+                                {error, _RC, _Properties} ->
+                                    {ok, Channel1};
+                                NTopicFilters ->
+                                    {_TopicFiltersWithRC, Channel2} = post_process_subscribe(
+                                        NTopicFilters, Channel1
+                                    ),
+                                    {ok, Channel2}
+                            end;
                         {error, {disconnect, RC}, Channel1} ->
                             handle_out(disconnect, RC, Channel1)
                     end;

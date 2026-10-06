@@ -1,0 +1,23 @@
+.actor {
+  stroke-width: 1.5px;
+}
+text.actor {
+  font-weight: 600;
+}
+.actor-line {
+  stroke-width: 1.5px;
+  stroke-dasharray: 5 5;
+}
+.messageLine0, .messageLine1 {
+  stroke-width: 2px;
+}
+.loopLine {
+  stroke-width: 1.2px;
+}
+.labelText, .loopText {
+  font-weight: 600;
+}
+.labelText {
+  dominant-baseline: auto;
+  alignment-baseline: auto;
+}

@@ -10,6 +10,7 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("emqx/include/asserts.hrl").
 -include_lib("emqx/include/emqx.hrl").
+-include_lib("emqx/include/emqx_mqtt.hrl").
 
 all() ->
     emqx_common_test_helpers:all(?MODULE).
@@ -109,22 +110,30 @@ t_longest_prefix(_Config) ->
     ?assertMatch({200, #{<<"handler">> := <<"general">>}}, http(Port, get, "/api/other", <<>>)),
     ?assertMatch({200, #{<<"handler">> := <<"specific">>}}, http(Port, get, "/api/items/1", <<>>)).
 
+%% Declaration failures use SUBACK with a reason and do not emit lifecycle errors.
 t_declaration_validation(_Config) ->
     P = client(<<"provider">>, [<<"$provide/service/a">>]),
     event(P, initialize),
-    Conflict = client(<<"conflict">>, [<<"$provide/service/a">>]),
-    error_event(Conflict, provider_conflict),
-    Self = client(<<"self">>, [<<"$provide/service/b">>, <<"$consume/service/b">>]),
-    error_event(Self, self_dependency),
-    Wildcard = client(<<"wildcard">>, [<<"$provide/service/+">>]),
-    error_event(Wildcard, invalid_service),
-    Unsupported = client(<<"unsupported">>, [<<"$provide/unknown/a">>]),
-    error_event(Unsupported, unsupported_declaration),
-    {ok, _, _} = emqtt:subscribe(P, <<"$provide/service/new">>, 1),
-    error_event(P, already_declared),
+    Conflict = client(<<"conflict">>, [<<"$provide/service/a">>], {error, provider_conflict}),
+    _Self = client(
+        <<"self">>, [<<"$provide/service/b">>, <<"$consume/service/b">>], {error, self_dependency}
+    ),
+    _Wildcard = client(<<"wildcard">>, [<<"$provide/service/+">>], {error, invalid_service}),
+    _Unsupported = client(
+        <<"unsupported">>, [<<"$provide/unknown/a">>], {error, unsupported_declaration}
+    ),
+    rejected_subscription(P, [<<"$provide/service/new">>], already_declared),
     A = client(<<"cycle-a">>, [<<"$provide/service/x">>, <<"$consume/service/y">>]),
-    B = client(<<"cycle-b">>, [<<"$provide/service/y">>, <<"$consume/service/x">>]),
-    error_event(B, dependency_cycle),
+    _B = client(
+        <<"cycle-b">>,
+        [<<"$provide/service/y">>, <<"$consume/service/x">>],
+        {error, dependency_cycle}
+    ),
+    %% A rejected declaration installs no subscriptions and can be corrected.
+    ?assertNot(subscribed(<<"conflict">>, <<"$provide/service/a">>)),
+    ?assertNot(subscribed(<<"conflict">>, <<"$component/conflict/events">>)),
+    ?assertMatch({ok, _, [?QOS_1]}, emqtt:subscribe(Conflict, <<"$provide/service/other">>, 1)),
+    event(Conflict, initialize),
     publish(A, <<"$component/ready">>, <<>>),
     error_event(A, invalid_state_or_operation).
 
@@ -493,8 +502,7 @@ t_dependency_chain(_Config) ->
     ok = emqtt:disconnect(P),
     event(Leaf, deactivated),
     event(Middle, deactivated),
-    Conflict = client(<<"replacement">>, [<<"$provide/service/a">>]),
-    error_event(Conflict, provider_conflict),
+    _Conflict = client(<<"replacement">>, [<<"$provide/service/a">>], {error, provider_conflict}),
     publish(Middle, <<"$component/ready">>, <<>>),
     error_event(Middle, invalid_state_or_operation),
     cleanup_complete(Leaf),
@@ -567,8 +575,7 @@ t_diamond_initialization_disconnect(_Config) ->
     event(A, stopped),
     event(B, cleanup_requested),
     event(D, cleanup_requested),
-    Conflict = client(<<"replacement">>, [<<"$provide/service/c">>]),
-    error_event(Conflict, provider_conflict),
+    _Conflict = client(<<"replacement">>, [<<"$provide/service/c">>], {error, provider_conflict}),
     lists:foreach(
         fun(P) ->
             publish(P, <<"$component/ready">>, <<>>),
@@ -636,8 +643,7 @@ t_delayed_transitive_retractions(_Config) ->
     assert_effects(EService, [BE, DE, AE]),
     publish(B, <<"$component/cleanup_complete">>, <<>>),
     error_event(B, invalid_state_or_operation),
-    Conflict = client(<<"replacement">>, [<<"$provide/service/c">>]),
-    error_event(Conflict, provider_conflict),
+    Conflict = client(<<"replacement">>, [<<"$provide/service/c">>], {error, provider_conflict}),
     ok = emqx_mqtt_components_test_service:complete(EService, RD, retracted),
     event(D, stopped),
     cleanup_result(<<"d">>),
@@ -657,8 +663,7 @@ t_delayed_transitive_retractions(_Config) ->
     ?assertEqual(retract_topic(BE), maps:get(topic, RBE)),
     assert_effects(BService, []),
     assert_effects(EService, [BE]),
-    {ok, _, _} = emqtt:subscribe(Conflict, <<"$provide/service/c">>, 1),
-    error_event(Conflict, provider_conflict),
+    rejected_subscription(Conflict, [<<"$provide/service/c">>], provider_conflict),
     ok = emqx_mqtt_components_test_service:complete(EService, RBE, retracted),
     event(B, stopped),
     cleanup_result(<<"c">>),
@@ -1427,10 +1432,10 @@ t_debug_state_cleanup(_Config) ->
     ok = emqtt:disconnect(Watch).
 
 t_debug_control_pass_through(_Config) ->
-    Receiver = client(<<"controller">>, [<<"$control/browser/+/+">>]),
+    Receiver = client(<<"controller">>, [<<"demo/browser/+/+">>]),
     Sender = client(<<"buttons">>, []),
     Watch = client(<<"watch">>, [<<"$component/debug">>]),
-    Topic = <<"$control/browser/workerA/connect">>,
+    Topic = <<"demo/browser/workerA/connect">>,
     publish(Sender, Topic, <<"{}">>),
     ?assertMatch(#{topic := Topic, payload := <<"{}">>}, mqtt(Receiver)),
     ?assertMatch(
@@ -1702,8 +1707,7 @@ transitive_initialization(Disconnect) ->
     %% B must preserve its service until A finishes cleanup.
     publish(B, <<"$component/cleanup_complete">>, <<>>),
     error_event(B, invalid_state_or_operation),
-    Conflict = client(<<"replacement">>, [<<"$provide/service/c">>]),
-    error_event(Conflict, provider_conflict),
+    Conflict = client(<<"replacement">>, [<<"$provide/service/c">>], {error, provider_conflict}),
     no_mqtt(B),
     no_mqtt(E),
     %% D can finish while A's first inverse is still blocked.
@@ -1724,8 +1728,7 @@ transitive_initialization(Disconnect) ->
     cleanup_complete(B),
     RBE = mqtt(E),
     ?assertEqual(retract_topic(BE), maps:get(topic, RBE)),
-    {ok, _, _} = emqtt:subscribe(Conflict, <<"$provide/service/c">>, 1),
-    error_event(Conflict, provider_conflict),
+    rejected_subscription(Conflict, [<<"$provide/service/c">>], provider_conflict),
     no_mqtt(B),
     respond_status(E, RBE, retracted),
     event(B, stopped),
@@ -1836,6 +1839,9 @@ http(Port, Method, Path, Body) ->
     end.
 
 client(Id, Topics) ->
+    client(Id, Topics, ok).
+
+client(Id, Topics, Expected) ->
     Owner = self(),
     {ok, C} = emqtt:start_link([
         {clientid, Id},
@@ -1844,8 +1850,23 @@ client(Id, Topics) ->
     ]),
     {ok, _} = emqtt:connect(C),
     All = [<<"test/", Id/binary, "/reply">>, <<"$component/", Id/binary, "/events">> | Topics],
-    {ok, _, _} = emqtt:subscribe(C, [{T, 1} || T <- All]),
+    case Expected of
+        ok ->
+            {ok, _, Codes} = emqtt:subscribe(C, [{T, 1} || T <- All]),
+            ?assertEqual(lists:duplicate(length(All), ?QOS_1), Codes);
+        {error, Reason} ->
+            rejected_subscription(C, All, Reason)
+    end,
     C.
+
+rejected_subscription(C, Topics, Reason) ->
+    ReasonString = atom_to_binary(Reason),
+    Codes = lists:duplicate(length(Topics), ?RC_IMPLEMENTATION_SPECIFIC_ERROR),
+    ?assertMatch(
+        {ok, #{'Reason-String' := ReasonString}, Codes},
+        emqtt:subscribe(C, [{T, 1} || T <- Topics])
+    ),
+    no_mqtt(C).
 
 provider(Id, Topic) ->
     C = client(Id, [Topic]),

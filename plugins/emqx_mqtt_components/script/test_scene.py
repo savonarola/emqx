@@ -59,7 +59,8 @@ with sync_playwright() as playwright:
                 if (topic === '$component/debug') sceneTrace.push(JSON.parse(payload.toString()));
             });
         }''')
-        page.locator('#start').click()
+        for name in ['cache', 'router', 'workerA', 'workerB', 'workerC', 'db']:
+            action(name, 'connect')
         all_active()
         assert page.evaluate('[...actors.values()].every(a => a.client.connected && a.client.options.protocolVersion === 5)')
         assert page.locator('.dependency').count() == 5

@@ -38,13 +38,16 @@
     .node small { display: block; color: #bdc8d3; margin: 6px 0 10px; }
     .buttons { display: flex; flex-wrap: wrap; gap: 5px; } .buttons button { font-size: 12px; padding: 5px 7px; }
     #node-router { min-height: 265px; }
-    #routes { padding: 0; list-style: none; margin: 8px 0 0; font: 12px ui-monospace, monospace; }
-    #routes li { padding: 4px 0; overflow-wrap: anywhere; }
+    #routes, #lamp-registrations { padding: 0; list-style: none; margin: 8px 0 0; font: 12px ui-monospace, monospace; }
+    #routes li, #lamp-registrations li { padding: 4px 0; overflow-wrap: anywhere; }
+    #lamp-registrations .buttons { margin-top: 5px; }
+    #lamp-registrations button[aria-pressed="true"] { background: #f0a6d5; color: #101722; border-color: #f0a6d5; }
     .virtual-node { min-height: 88px; border-color: #91a7ef; background: #242b44; width: 260px; }
     .virtual-node h2 { font: 17px ui-monospace, monospace; }
     [data-message-kind="administrative"] { --message-color: #ffc078; }
     [data-message-kind="control"] { --message-color: #b9c8ff; }
     [data-message-kind="effect"] { --message-color: #78dfbd; }
+    [data-message-kind="application"] { --message-color: #f0a6d5; }
     .message-key, #packet { background: var(--message-color); color: #101722; }
     .message-key { padding: 4px 9px; border-radius: 12px; font-size: 12px; }
     #packet { position: absolute; z-index: 3; pointer-events: none; border-radius: 10px; padding: 8px 12px; font: 12px ui-monospace, monospace; width: max-content; max-width: 360px; overflow-wrap: anywhere; transform: translate(-50%, -50%); box-shadow: 0 0 16px #0006; }
@@ -55,21 +58,26 @@
     #event-log { max-height: 210px; overflow: auto; font: 12px ui-monospace, monospace; padding-left: 24px; }
     #event-log li { padding: 4px; overflow-wrap: anywhere; } #request-result { white-space: pre-wrap; overflow-wrap: anywhere; }
     output { min-width: 65px; } #path { width: 180px; } #body { flex: 1; min-width: 120px; }
+    [role="tab"][aria-selected="true"] { border-color: #7ee2b8; color: #7ee2b8; }
+    .lamp-light { display: block; margin: 10px 0; padding: 8px; border-radius: 6px; background: #101722; color: #9ba8b7; }
+    .lamp-light[data-on="true"] { background: #ffe08a; color: #302400; box-shadow: 0 0 18px #ffe08a66; }
     @media (max-width: 600px) { main { padding: 0 12px; } #broker-url { width: 100%; } .row label { flex-wrap: wrap; } }
   </style>
 </head>
 <body>
 <main>
   <div class="row"><h1>MQTT Components Demo</h1><span id="status" role="status">Disconnected</span></div>
-  <p>Six browser clients. Arrows point to providers. The scene replays the broker’s debug stream.</p>
+  <p id="scenario-description">Six browser clients. Arrows point to providers. The scene replays the broker’s debug stream.</p>
+  <div class="row" role="tablist" aria-label="Demo scenario">
+    <button id="tab-web" role="tab" aria-selected="true" aria-controls="viewport">Web services</button>
+    <button id="tab-iot" role="tab" aria-selected="false" aria-controls="viewport">IoT lighting</button>
+  </div>
   <section>
     <form id="connection-form" class="row">
       <input id="broker-url" type="url" aria-label="WebSocket URL" placeholder="ws://box2:8083/mqtt" required spellcheck="false">
       <input id="username" placeholder="Username (optional)" aria-label="Username" autocomplete="username">
       <input id="password" type="password" placeholder="Password (optional)" aria-label="Password" autocomplete="current-password">
       <button id="connect" class="primary">Connect</button>
-      <button id="disconnect" type="button" disabled>Disconnect all</button>
-      <button id="start" type="button" disabled>Connect components</button>
     </form>
     <p id="detail" aria-live="polite">Connect the observer, then connect the components.</p>
   </section>
@@ -84,7 +92,8 @@
   <div class="row" aria-label="Message colors">
     <span class="message-key" data-message-kind="administrative">Administrative</span>
     <span class="message-key" data-message-kind="control">Control</span>
-    <span class="message-key" data-message-kind="effect">Effect</span>
+    <span class="message-key" data-message-kind="effect">Effect / State</span>
+    <span class="message-key" data-message-kind="application">Application</span>
   </div>
   <section id="viewport" aria-label="Component scene">
     <button id="pause-replay" type="button" aria-pressed="false">Pause replay</button>
@@ -92,12 +101,12 @@
       <svg id="wires" viewBox="0 0 1120 710" aria-label="Dependencies">
         <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#73889c"/></marker></defs>
       </svg>
-      <article id="node-control" class="node virtual-node" style="left:560px;top:550px" hidden><h2>$control/...</h2><small>Control commands · request/reply</small></article>
+      <article id="node-control" class="node virtual-node" style="left:560px;top:550px" hidden><h2>demo/...</h2><small>Demo commands · request/reply</small></article>
       <article id="node-component" class="node virtual-node" style="left:840px;top:550px"><h2>$component/...</h2><small>Declarations · lifecycle · administration</small></article>
       <div id="packet" hidden><strong id="packet-label"></strong><code id="packet-topic"></code></div>
     </div>
   </section>
-  <section>
+  <section id="route-request">
     <h2>Route request</h2>
     <form id="request-form" class="row">
       <select id="verb" aria-label="Verb"><option>GET</option><option>POST</option></select>
@@ -115,7 +124,10 @@
 const $ = id => document.getElementById(id);
 const session = 'scene-' + Math.random().toString(16).slice(2, 10);
 const service = '$service/' + session + '/reg-route';
-const control = '$control/' + session;
+const control = 'demo/' + session;
+const occupancyTopic = '$state/' + session + '/occupancy';
+const lampService = '$service/' + session + '/register-lamp';
+let scenario = 'web';
 const definitions = {
   cache: {x: 860, y: 255, provides: ['service/cache'], consumes: [], dependencies: []},
   router: {x: 580, y: 180, provides: ['service/reg-route'], consumes: ['service/cache'], dependencies: ['cache']},
@@ -124,12 +136,20 @@ const definitions = {
   workerC: {x: 300, y: 470, path: '/c', provides: [], consumes: ['service/reg-route'], dependencies: ['router']},
   db: {x: 20, y: 40, provides: ['service/db'], consumes: [], dependencies: []},
 };
+const iotDefinitions = {
+  sensor: {x: 860, y: 255, provides: ['state/occupancy'], consumes: [], dependencies: [], description: 'Provides retained occupancy state'},
+  switch: {x: 580, y: 255, provides: ['service/register-lamp'], consumes: ['state/occupancy'], dependencies: ['sensor'], description: 'Registers lamps and sends on/off commands'},
+  lamp1: {x: 260, y: 10, provides: [], consumes: ['service/register-lamp'], dependencies: ['switch'], lamp: true, description: 'Registers with the room switch'},
+  lamp2: {x: 260, y: 290, provides: [], consumes: ['service/register-lamp'], dependencies: ['switch'], lamp: true, description: 'Registers with the room switch'},
+  lamp3: {x: 260, y: 570, provides: [], consumes: ['service/register-lamp'], dependencies: ['switch'], lamp: true, description: 'Registers with the room switch'},
+};
 const actors = new Map();
 const pidNames = new Map();
 const components = new Map();
 const effects = new Map();
-const registrations = new Map();
 const installed = new Map();
+const installedLamps = new Map();
+const displayedLights = new Map();
 const queue = [];
 let observer = null;
 let playing = false;
@@ -194,6 +214,9 @@ class Component {
     this.generation = 0;
     this.pending = new Map();
     this.routes = new Map();
+    this.lamps = new Map();
+    this.occupancy = null;
+    this.desiredLight = false;
     this.commands = Promise.resolve();
   }
   async connect() {
@@ -220,6 +243,9 @@ class Component {
     this.status = 'disconnected';
     this.generation++;
     this.routes.clear();
+    this.lamps.clear();
+    this.desiredLight = false;
+    renderLighting();
     this.cancelRequests();
     updateButtons();
   }
@@ -249,11 +275,11 @@ class Component {
       return publish(this.client, '$component/ready');
     }
   }
-  request(topic, body) {
+  request(topic, body, options = {}) {
     const id = String(++commandNumber);
     return new Promise((resolve, reject) => {
       this.pending.set(id, {resolve, reject});
-      publish(this.client, topic, body, {properties: {responseTopic: control + '/' + this.name + '/reply', correlationData: encoder.encode(id)}})
+      publish(this.client, topic, body, {...options, properties: {responseTopic: control + '/' + this.name + '/reply', correlationData: encoder.encode(id)}})
         .catch(error => { this.pending.delete(id); reject(error); });
     });
   }
@@ -262,6 +288,21 @@ class Component {
     this.status = 'starting';
     this.initialized = false;
     const held = $('hold').checked;
+    if (this.name === 'sensor') {
+      const result = await this.request(occupancyTopic, {occupied: $('occupied').checked}, {retain: true});
+      if (result.status !== 'state_written') throw new Error('Occupancy publication failed');
+    } else if (this.name === 'switch') {
+      this.occupancy = null;
+      const initialState = new Promise((resolve, reject) => this.pending.set('occupancy', {resolve, reject}));
+      await Promise.all([subscribe(this.client, [occupancyTopic]), initialState]);
+    } else if (this.definition.lamp) {
+      this.desiredLight = false;
+      this.registrationToken = String(generation);
+      const result = await this.request(lampService, {
+        name: this.name, command_topic: control + '/' + this.name + '/light', token: this.registrationToken,
+      });
+      if (result.status !== 'ok') throw new Error('Lamp registration failed');
+    }
     if (this.definition.path) {
       const result = await this.request(service, {handle_topic: control + '/' + this.name + '/handle', path_prefix: this.definition.path});
       if (result.status !== 'ok') throw new Error('Route registration failed');
@@ -288,9 +329,10 @@ class Component {
         }
         case 'activated': this.status = 'active'; break;
         case 'deactivated':
-          this.status = 'stopping'; this.initialized = false; this.generation++; this.cancelRequests(); break;
+          this.status = 'stopping'; this.initialized = false; this.generation++; this.desiredLight = false; this.cancelRequests(); break;
         case 'cleanup_requested':
           if (this.routes.size) throw new Error('Router cleanup requested before routes were retracted');
+          if (this.lamps.size) throw new Error('Switch cleanup requested before lamps were retracted');
           await publish(this.client, '$component/cleanup_complete'); break;
         case 'stopped': case 'aborted': this.status = 'inactive'; break;
         case 'error': report(new Error(this.name + ': ' + componentProperty(packet, 'reason'))); break;
@@ -300,6 +342,33 @@ class Component {
       const id = correlation(packet);
       const pending = this.pending.get(id);
       if (pending) { this.pending.delete(id); pending.resolve(responseData(payload, packet)); }
+    } else if (this.name === 'switch' && topic === occupancyTopic) {
+      if (!['starting', 'active'].includes(this.status) || typeof data.occupied !== 'boolean') return;
+      this.occupancy = data.occupied;
+      const pending = this.pending.get('occupancy');
+      if (pending) { this.pending.delete('occupancy'); pending.resolve(); }
+      await Promise.all([...this.lamps.values()].map(lamp => this.setLamp(lamp)));
+    } else if (this.name === 'switch' && topic.startsWith(lampService + '/apply/')) {
+      data.override = null;
+      this.lamps.set(topic.split('/').pop(), data);
+      renderLighting();
+      await this.setLamp(data);
+      await response(this.client, packet, 'ok');
+    } else if (this.name === 'switch' && topic.startsWith(lampService + '/retract/')) {
+      this.lamps.delete(topic.split('/').pop());
+      renderLighting();
+      await response(this.client, packet, 'retracted');
+    } else if (this.name === 'switch' && topic === control + '/switch/override') {
+      const lamp = this.lamps.get(data.effect_id);
+      if (this.status !== 'active' || !lamp || ![true, false, null].includes(data.on)) return;
+      lamp.override = data.on;
+      renderLighting();
+      await this.setLamp(lamp);
+    } else if (this.definition.lamp && topic === control + '/' + this.name + '/light') {
+      if (['starting', 'active'].includes(this.status) && data.token === this.registrationToken) {
+        this.desiredLight = data.on === true;
+        renderLighting();
+      }
     } else if (this.name === 'router' && topic.startsWith(service + '/apply/')) {
       this.routes.set(topic.split('/').pop(), data);
       await response(this.client, packet, 'ok');
@@ -319,18 +388,25 @@ class Component {
       else await response(this.client, packet, 503, 'Worker is not active');
     }
   }
+  setLamp(lamp) {
+    return publish(this.client, lamp.command_topic, {on: this.status === 'active' && (lamp.override ?? this.occupancy) === true, token: lamp.token});
+  }
 }
 
-function buildScene() {
+function buildScene(entries = definitions) {
   const svg = $('wires');
-  for (const [name, def] of Object.entries(definitions)) {
+  for (const [name, def] of Object.entries(entries)) {
     actors.set(name, new Component(name));
     const node = document.createElement('article');
     node.id = 'node-' + name; node.className = 'node'; node.dataset.state = 'disconnected';
     node.style.left = def.x + 'px'; node.style.top = def.y + 'px';
     node.innerHTML = '<h2></h2><div class="node-status">Disconnected</div><small></small><div class="buttons"></div>';
     node.querySelector('h2').textContent = name;
-    node.querySelector('small').textContent = def.path ? 'L-Iter: register ' + def.path : name === 'router' ? 'Provides route registration' : 'Provides ' + name + ' service';
+    node.querySelector('small').textContent = def.description || (def.path ? 'L-Iter: register ' + def.path : name === 'router' ? 'Provides route registration' : 'Provides ' + name + ' service');
+    if (def.lamp) {
+      const light = document.createElement('output'); light.className = 'lamp-light'; light.textContent = 'Light off'; light.dataset.on = 'false';
+      node.append(light);
+    }
     for (const action of ['connect', 'disconnect', 'disable', 'abort', 'enable', 'ready']) {
       const button = document.createElement('button');
       button.textContent = action[0].toUpperCase() + action.slice(1); button.dataset.action = action;
@@ -342,6 +418,22 @@ function buildScene() {
       const routes = document.createElement('ul'); routes.id = 'routes';
       node.append(title, routes);
     }
+    if (name === 'switch') {
+      const title = document.createElement('small'); title.textContent = 'Registered lamps';
+      const lamps = document.createElement('ul'); lamps.id = 'lamp-registrations';
+      node.append(title, lamps);
+    }
+    if (name === 'sensor') {
+      const label = document.createElement('label');
+      label.style.marginTop = '12px';
+      const occupied = document.createElement('input');
+      occupied.type = 'checkbox'; occupied.id = 'occupied'; occupied.disabled = true;
+      occupied.addEventListener('change', () => {
+        actors.get('sensor').request(occupancyTopic, {occupied: occupied.checked}, {retain: true})
+          .then(result => { if (result.status !== 'state_written') throw new Error('Occupancy publication failed'); }).catch(report);
+      });
+      label.append(occupied, ' Room occupied'); node.append(label);
+    }
     $('scene').append(node);
     for (const dependency of def.dependencies) {
       const target = definitions[dependency];
@@ -351,6 +443,7 @@ function buildScene() {
       let d = `M ${def.x + 216} ${sy} C ${mid} ${sy}, ${mid} ${ty}, ${target.x} ${ty}`;
       if (name === 'workerA' && dependency === 'db') d = `M ${def.x} ${sy} L ${target.x + 216} ${ty}`;
       path.setAttribute('d', d); path.setAttribute('class', 'dependency'); path.setAttribute('marker-end', 'url(#arrow)');
+      path.dataset.scenario = name in iotDefinitions ? 'iot' : 'web';
       svg.append(path);
     }
   }
@@ -358,16 +451,67 @@ function buildScene() {
 }
 function updateButtons() {
   const connected = !!observer?.connected;
-  $('start').disabled = !connected;
   $('send-request').disabled = !connected || actors.get('router').status !== 'active';
   for (const [name, actor] of actors) {
-    for (const button of $('node-' + name).querySelectorAll('button')) {
+    for (const button of $('node-' + name).querySelectorAll('button[data-action]')) {
       const action = button.dataset.action;
       button.disabled = !connected || (action === 'connect' ? actor.status !== 'disconnected' : !actor.client);
       if (action === 'abort') button.disabled ||= actor.status !== 'starting';
       if (action === 'ready') button.disabled ||= actor.status !== 'starting' || !actor.initialized;
     }
   }
+  if ($('occupied')) $('occupied').disabled = !connected || actors.get('sensor').status !== 'active';
+  renderLighting();
+}
+function renderLighting() {
+  for (const [name, actor] of actors) {
+    if (!actor.definition.lamp) continue;
+    const light = $('node-' + name)?.querySelector('.lamp-light');
+    if (!light) continue;
+    const on = $('node-' + name).dataset.state === 'active' && displayedLights.get(name) === true;
+    light.dataset.on = String(on); light.textContent = on ? 'Light on' : 'Light off';
+  }
+  const list = $('lamp-registrations');
+  if (!list) return;
+  const actor = actors.get('switch');
+  list.replaceChildren();
+  for (const [id, lamp] of installedLamps) {
+    const live = actor.lamps.get(id);
+    const li = document.createElement('li'); li.dataset.effectId = id; li.dataset.lamp = lamp.name;
+    li.textContent = `${lamp.name} · #${id}`;
+    const buttons = document.createElement('div'); buttons.className = 'buttons';
+    buttons.setAttribute('role', 'group'); buttons.setAttribute('aria-label', lamp.name + ' override');
+    for (const [label, value] of [['Auto', null], ['On', true], ['Off', false]]) {
+      const button = document.createElement('button'); button.textContent = label;
+      button.dataset.mode = label.toLowerCase();
+      button.setAttribute('aria-pressed', String(!!live && live.override === value));
+      button.disabled = !observer?.connected || actor.status !== 'active' || !live;
+      button.addEventListener('click', () => publish(observer, control + '/switch/override', {effect_id: id, on: value}).catch(report));
+      buttons.append(button);
+    }
+    li.append(buttons); list.append(li);
+  }
+  if (!installedLamps.size) { const li = document.createElement('li'); li.textContent = 'No lamps'; list.append(li); }
+}
+function selectScenario(value) {
+  scenario = value;
+  const height = value === 'iot' ? 850 : 710;
+  $('scene').style.height = height + 'px';
+  $('wires').setAttribute('viewBox', `0 0 1120 ${height}`);
+  for (const name of ['control', 'component']) $('node-' + name).style.top = (value === 'iot' ? 740 : 550) + 'px';
+  if (value === 'iot' && !actors.has('sensor')) {
+    Object.assign(definitions, iotDefinitions);
+    buildScene(iotDefinitions);
+  }
+  for (const name of actors.keys()) $('node-' + name).hidden = (name in iotDefinitions) !== (value === 'iot');
+  for (const wire of document.querySelectorAll('.dependency')) wire.style.display = wire.dataset.scenario === value ? '' : 'none';
+  for (const tab of ['web', 'iot']) $('tab-' + tab).setAttribute('aria-selected', String(tab === value));
+  $('route-request').hidden = value !== 'web';
+  $('packet').hidden = true;
+  $('scenario-description').textContent = value === 'iot'
+    ? 'Three lamps depend on a switch. The switch depends on a retained occupancy sensor. Arrows point to providers.'
+    : 'Six browser clients. Arrows point to providers. The scene replays the broker’s debug stream.';
+  updateButtons();
 }
 function sendCommand(name, action) { return publish(observer, control + '/' + name + '/' + action, {}); }
 function renderRoutes() {
@@ -394,21 +538,36 @@ function applyEvent(event) {
       ? labels[state.state] + (state.activation_block !== 'none' ? ' · ' + state.activation_block : '')
       : state ? 'Disconnected · cleanup pending' : 'Disconnected';
     if (name === 'router' && (!state || !state.connected)) { installed.clear(); renderRoutes(); }
+    if (name === 'switch' && (!state || !state.connected)) { installedLamps.clear(); renderLighting(); }
+    if (definitions[name].lamp) {
+      if (!connected || !['starting', 'active'].includes(state.state)) displayedLights.delete(name);
+      renderLighting();
+    }
   } else if (event.event === 'effect_changed') {
     if (event.current) effects.set(event.effect_id, event.current); else effects.delete(event.effect_id);
     if (!event.current || ['retracted', 'unknown'].includes(event.current.cleanup)) {
-      installed.delete(event.effect_id); registrations.delete(event.effect_id); renderRoutes();
+      installed.delete(event.effect_id); renderRoutes();
+      installedLamps.delete(event.effect_id); renderLighting();
     }
   } else if (event.event === 'message') {
     const apply = event.topic.match(/\/apply\/([^/]+)$/);
     if (event.direction === 'sent' && apply && event.topic.startsWith(service + '/')) {
       const route = parse(event.payload);
       const effect = effects.get(apply[1]);
-      registrations.set(apply[1], {...route, worker: pidNames.get(effect?.owner)});
+      installed.set(apply[1], {...route, worker: pidNames.get(effect?.owner)});
+      renderRoutes();
     }
-    const reply = event.topic.match(/^\$component\/reply\/(.+)$/);
-    if (event.direction === 'received' && reply && componentProperty(event, 'status') === 'ok' && registrations.has(reply[1])) {
-      installed.set(reply[1], registrations.get(reply[1])); renderRoutes();
+    if (event.direction === 'sent' && apply && event.topic.startsWith(lampService + '/')) {
+      installedLamps.set(apply[1], parse(event.payload));
+      renderLighting();
+    }
+    if (event.direction === 'received' && event.topic.startsWith(control + '/')) {
+      const [name, action] = event.topic.slice(control.length + 1).split('/');
+      const data = parse(event.payload);
+      if (action === 'light' && [...installedLamps.values()].some(lamp => lamp.name === name && lamp.token === data.token)) {
+        displayedLights.set(name, data.on === true);
+        renderLighting();
+      }
     }
   }
   $('last-sequence').textContent = '#' + event.sequence;
@@ -453,6 +612,7 @@ function endpoints(event) {
       return $('animate-control-commands').checked ? ['control', target, action] : null;
     }
     if (action === 'request') return ['control', target, action];
+    if (action === 'light') return ['switch', target, parse(event.payload).on ? 'Turn on' : 'Turn off'];
     return [name || 'control', target, action];
   }
   const match = event.topic.match(/\/(apply|retract)\/([^/]+)$/);
@@ -466,7 +626,8 @@ function endpoints(event) {
     return [name || 'router', pidNames.get(effect?.owner) || 'component', reply[1] + ' #' + reply[2]];
   }
   // Forwarded service legs already represent these requests and responses.
-  if (event.topic === service || event.topic.endsWith('/reply')) return null;
+  if (event.topic === service || event.topic === lampService || event.topic.endsWith('/reply')) return null;
+  if (event.topic === occupancyTopic) return event.direction === 'broadcast' ? ['sensor', 'switch', parse(event.payload).occupied ? 'Occupied' : 'Vacant'] : null;
   const label = componentProperty(event, 'status') || parse(event.payload).event || event.topic.split('/').pop();
   return event.direction === 'received' ? [name || 'component', 'component', label] : ['component', name || 'component', label];
 }
@@ -475,10 +636,10 @@ function messageKind(event) {
   const topic = event.topic;
   const result = componentProperty(event, 'status');
   if (topic.startsWith('$component-admin/') || ['enabled', 'disabled'].includes(result)) return 'administrative';
-  if (topic.startsWith('$service/') ||
+  if (topic.startsWith('$service/') || topic.startsWith('$state/') ||
       /^\$component\/(reply|retracted|release)\//.test(topic) ||
       result === 'released') return 'effect';
-  return 'control';
+  return topic.startsWith('$component/') ? 'control' : 'application';
 }
 function isResponse(event) {
   if (event.event !== 'message') return false;
@@ -519,6 +680,10 @@ function replayWait(duration, run, update = () => {}) {
     frame();
   });
 }
+function displayTopic(topic) {
+  return topic.split('/').filter(part => part !== session)
+    .map(part => part.startsWith(session + '-') ? part.slice(session.length + 1) : part).join('/');
+}
 async function animate(event, run) {
   const edge = endpoints(event);
   if (!edge || !Number($('duration').value)) return;
@@ -528,14 +693,15 @@ async function animate(event, run) {
   const packet = $('packet');
   packet.dataset.control = String(source === 'control' || target === 'control');
   const kind = messageKind(event);
+  const kindLabel = kind === 'effect' ? 'Effect / State' : kind[0].toUpperCase() + kind.slice(1);
   packet.dataset.messageKind = kind;
   const response = isResponse(event);
   $('packet-label').textContent = response ? 'Response: ' + (componentProperty(event, 'status') || label)
-    : kind[0].toUpperCase() + kind.slice(1) + ' · ' + label;
+    : kindLabel + ' · ' + label;
   $('packet-topic').textContent = response
     ? [componentProperty(event, 'reason'), componentProperty(event, 'cleanup-status'),
       typeof event.payload === 'string' ? event.payload : JSON.stringify(event.payload)].filter(Boolean).join('\n')
-    : event.topic || declarationTopics(event).join('\n');
+    : event.topic ? displayTopic(event.topic) : declarationTopics(event).map(displayTopic).join('\n');
   packet.hidden = false;
   await replayWait(Number($('duration').value), run, t => {
     packet.hidden = a.hidden || b.hidden;
@@ -582,13 +748,14 @@ async function disconnectAll() {
   if (current) current.end(true);
   epoch++; queue.length = 0;
   setReplayPaused(false);
-  components.clear(); effects.clear(); installed.clear(); registrations.clear(); pidNames.clear();
+  components.clear(); effects.clear(); installed.clear(); pidNames.clear();
+  installedLamps.clear(); displayedLights.clear();
   renderRoutes();
   for (const name of actors.keys()) {
     const node = $('node-' + name); node.dataset.state = 'disconnected'; node.dataset.block = 'none';
     node.querySelector('.node-status').textContent = 'Disconnected';
   }
-  $('status').textContent = 'Disconnected'; $('connect').disabled = false; $('disconnect').disabled = true;
+  $('status').textContent = 'Disconnected'; $('connect').disabled = false;
   updateButtons();
 }
 $('connection-form').addEventListener('submit', async event => {
@@ -608,22 +775,19 @@ $('connection-form').addEventListener('submit', async event => {
     const current = observer;
     observer.on('close', () => { if (observer === current) disconnectAll().catch(report); });
     await subscribe(observer, ['$component/debug', control + '/+/+']);
-    $('status').textContent = 'Connected'; $('disconnect').disabled = false;
-    $('detail').textContent = 'Observer ready. Connect components to start. Session: ' + session;
+    $('status').textContent = 'Connected';
+    $('detail').textContent = 'Observer ready. Use Connect on each component. Reload the page to reset. Session: ' + session;
     updateButtons();
   } catch (error) {
     await disconnectAll(); $('status').textContent = 'Error'; report(error);
   }
 });
-$('disconnect').addEventListener('click', () => disconnectAll().catch(report));
 $('pause-replay').addEventListener('click', () => setReplayPaused(!paused));
 $('animate-control-commands').addEventListener('change', event => {
   $('node-control').hidden = !event.target.checked;
   if (!event.target.checked && $('packet').dataset.control === 'true') $('packet').hidden = true;
 });
-$('start').addEventListener('click', () => {
-  for (const [name, actor] of actors) if (actor.status === 'disconnected') sendCommand(name, 'connect').catch(report);
-});
+for (const tab of ['web', 'iot']) $('tab-' + tab).addEventListener('click', () => selectScenario(tab));
 $('request-form').addEventListener('submit', event => {
   event.preventDefault();
   $('request-result').textContent = 'Waiting for response…';
