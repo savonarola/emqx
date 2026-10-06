@@ -83,7 +83,8 @@ defmodule EMQXMQTTComponents.MixProject do
         compatibility: [
           emqx: "~> #{emqx_major_minor()}"
         ],
-        description: "MQTT component model proof of concept."
+        description: "MQTT component model proof of concept.",
+        index: "/ui"
       ]
     ]
   end

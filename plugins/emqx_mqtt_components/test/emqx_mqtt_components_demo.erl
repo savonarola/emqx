@@ -105,8 +105,15 @@ handle_info({publish, Msg = #{topic := Topic, payload := Payload}}, State = #{id
     Events = <<"$component/", Id/binary, "/events">>,
     Next =
         case Topic of
-            Events -> lifecycle(emqx_utils_json:decode(Payload), State);
-            _ -> mqtt_message(Msg, State)
+            Events ->
+                Data =
+                    case response_status(Msg) of
+                        undefined -> emqx_utils_json:decode(Payload);
+                        Status -> #{<<"event">> => Status}
+                    end,
+                lifecycle(Data, State);
+            _ ->
+                mqtt_message(Msg, State)
         end,
     {noreply, Next};
 handle_info({request_timeout, Id}, State = #{pending := Pending}) ->
@@ -184,7 +191,7 @@ mqtt_message(
     State = #{role := router, routes := Routes}
 ) ->
     Route = emqx_utils_json:decode(Payload),
-    respond(Msg, #{ok => true}, State),
+    respond(Msg, <<"ok">>, <<>>, State),
     notify({registered, Effect}, State),
     State#{routes := Routes#{Effect => Route}};
 mqtt_message(
@@ -192,27 +199,27 @@ mqtt_message(
     State = #{role := router, routes := Routes}
 ) ->
     Next = State#{routes := maps:remove(Effect, Routes)},
-    respond(Msg, #{status => retracted}, Next),
+    respond(Msg, <<"retracted">>, <<>>, Next),
     notify({retracted, Effect}, Next),
     Next;
 mqtt_message(
-    #{topic := Topic, properties := #{'Correlation-Data' := Id}, payload := Payload},
+    Msg = #{topic := Topic, properties := #{'Correlation-Data' := Id}, payload := Body},
     State = #{role := router, reply_topic := Topic, pending := Pending}
 ) ->
     case maps:take(Id, Pending) of
         {{From, Timer}, Rest} ->
             erlang:cancel_timer(Timer),
-            #{<<"status">> := Status, <<"body">> := Body} = emqx_utils_json:decode(Payload),
+            Status = binary_to_integer(response_status(Msg)),
             gen_server:reply(From, {Status, Body}),
             State#{pending := Rest};
         error ->
             State
     end;
 mqtt_message(
-    #{topic := Topic, payload := Payload, properties := #{'Correlation-Data' := <<"register">>}},
+    Msg = #{topic := Topic, properties := #{'Correlation-Data' := <<"register">>}},
     State = #{role := {handler, _}, reply_topic := Topic}
 ) ->
-    #{<<"ok">> := true} = emqx_utils_json:decode(Payload),
+    <<"ok">> = response_status(Msg),
     ready(State),
     State;
 mqtt_message(
@@ -220,7 +227,7 @@ mqtt_message(
 ) ->
     Request = emqx_utils_json:decode(Payload),
     Body = emqx_utils_json:encode(Request#{<<"handler">> => Id}),
-    respond(Msg, #{status => 200, body => Body}, State),
+    respond(Msg, <<"200">>, Body, State),
     State;
 mqtt_message(_Msg, State) ->
     State.
@@ -229,15 +236,19 @@ ready(#{mqtt := MQTT}) ->
     {ok, _} = emqtt:publish(MQTT, <<"$component/ready">>, <<>>, [{qos, 1}]),
     ok.
 
-respond(#{properties := Props = #{'Response-Topic' := Topic}}, Data, #{mqtt := MQTT}) ->
+respond(#{properties := Props = #{'Response-Topic' := Topic}}, Status, Body, #{mqtt := MQTT}) ->
+    ResponseProps = maps:with(['Correlation-Data'], Props),
     {ok, _} = emqtt:publish(
         MQTT,
         Topic,
-        maps:with(['Correlation-Data'], Props),
-        emqx_utils_json:encode(Data),
+        ResponseProps#{'User-Property' => [{<<"component-status">>, Status}]},
+        Body,
         [{qos, 1}]
     ),
     ok.
+
+response_status(#{properties := Props}) ->
+    proplists:get_value(<<"component-status">>, maps:get('User-Property', Props, [])).
 
 notify(Event, #{owner := Owner}) ->
     Owner ! {component, self(), Event},

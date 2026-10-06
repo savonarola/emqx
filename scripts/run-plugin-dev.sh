@@ -14,6 +14,7 @@ What it does (recommended flow):
 2) Start EMQX release node if needed
 3) Copy plugin .tar.gz to release plugins install_dir
 4) Run:
+   - emqx ctl plugins allow <name-vsn> sha256:<package-hash>
    - emqx ctl plugins install <name-vsn>
    - emqx ctl plugins enable <name-vsn>
    - emqx ctl plugins start <name-vsn>
@@ -67,6 +68,23 @@ canon_path() {
         (cd "$p" && pwd -P)
     fi
 }
+
+plugin_command() {
+    local output
+    output="$("$EMQX_BIN" ctl plugins "$@")"
+    printf '%s\n' "$output"
+    if ! jq -e '.result == "ok"' <<<"$output" >/dev/null; then
+        echo "Plugin command failed: $*" >&2
+        return 1
+    fi
+}
+
+for required_command in jq sha256sum; do
+    if ! command -v "$required_command" >/dev/null 2>&1; then
+        echo "Required command not found: $required_command" >&2
+        exit 1
+    fi
+done
 
 if [[ ! -x "$EMQX_BIN" ]]; then
     echo "EMQX release binary not found: $EMQX_BIN" >&2
@@ -157,12 +175,15 @@ rm -rf "${PLUGIN_INSTALL_DIR:?}/$NAME_VSN" "${PLUGIN_INSTALL_DIR:?}/$NAME_VSN.ta
 echo "Copying fresh package: $TAR_PATH -> $PLUGIN_INSTALL_DIR/"
 cp -f "$TAR_PATH" "$PLUGIN_INSTALL_DIR/"
 
+PACKAGE_SHA256="$(sha256sum "$PLUGIN_INSTALL_DIR/$NAME_VSN.tar.gz" | cut -d ' ' -f 1)"
+echo "Allowing plugin installation: $NAME_VSN"
+plugin_command allow "$NAME_VSN" "sha256:$PACKAGE_SHA256"
 echo "Installing plugin: $NAME_VSN"
-"$EMQX_BIN" ctl plugins install "$NAME_VSN"
+plugin_command install "$NAME_VSN"
 echo "Enabling plugin: $NAME_VSN"
-"$EMQX_BIN" ctl plugins enable "$NAME_VSN"
+plugin_command enable "$NAME_VSN"
 echo "Starting plugin: $NAME_VSN"
-"$EMQX_BIN" ctl plugins start "$NAME_VSN"
+plugin_command start "$NAME_VSN"
 
 echo "Plugin ready: $NAME_VSN"
 if [[ "$ATTACH" -eq 1 ]]; then

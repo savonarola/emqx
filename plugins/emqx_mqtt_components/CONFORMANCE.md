@@ -5,7 +5,7 @@ conformance with the EIP or prove arbitrary service inverses correct.
 
 Sources:
 
-- [MQTT Component Model EIP](../../../../20260909-mqtt-component-model/active/0046-mqtt-component-model.md):
+- [MQTT Component Model EIP](https://github.com/savonarola/eip/blob/20260909-mqtt-component-model/active/0046-mqtt-component-model.md):
   component transitions, service resources, withdrawal and cleanup, and invariants.
 - [A Programming Paradigm for Spatiotemporal Composability](https://arxiv.org/pdf/2608.25512):
   sections 4.2.2 and 4.4, and Algorithm 5 in section 5.1.3.
@@ -66,12 +66,23 @@ The EIP specifies unknown local cleanup after unconfirmed client disconnect.
 It also requires failed or unknown retractions to remain recorded when their
 provider cannot confirm rollback. `cleanup/3` records unreachable effects as
 unknown. `finish_cleanup/3` retains all outcomes in `cleanup_results/0`.
+Responses carry outcomes in the `component-status` MQTT User Property.
+Framework response payloads are empty. Apply response payloads remain opaque.
+`t_response_properties` checks status and payload forwarding, correlation,
+coordinator-assigned effect IDs, and a retract outcome with an opaque payload.
 
 `t_failed_and_unknown_retractions` verifies that failed inverses leave real
 provider effects present and reports those outcomes. It also verifies that the
 remaining inverses still run. `t_provider_disconnect_during_retraction` covers
 loss after a retract was sent, invalid acknowledgements, and a forged response.
 The two transitive initialization cases cover MQTT DISCONNECT and connection loss.
+Physical disconnect marks the component unreachable before withdrawing its
+dependents. It sends no deactivation or local cleanup request to that component.
+Connected dependents still finish ordered cleanup. Administrative disable keeps
+the target connected so it can serve retractions and acknowledge local cleanup.
+`t_physical_disconnect_debug` and `t_physical_connection_loss_debug` check this
+distinction after a disable/enable cycle. A prior activation's cleanup completion
+does not confirm cleanup for the disconnected activation.
 
 `t_activation_waits_for_subscriptions` checks that a provider becomes available
 only after its subscriptions appear. `t_subscription_installation_failure`

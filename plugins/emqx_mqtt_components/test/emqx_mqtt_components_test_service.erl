@@ -49,14 +49,19 @@ handle_call(
             {<<"retract">>, failed} -> Effects;
             {<<"retract">>, unknown} -> Effects
         end,
-    Response =
+    {Status, Response} =
         case Outcome of
-            applied -> <<"accepted">>;
-            _ -> emqx_utils_json:encode(#{status => Outcome})
+            applied -> {<<"ok">>, <<"accepted">>};
+            _ -> {atom_to_binary(Outcome), <<>>}
         end,
     #{'Response-Topic' := Reply} = Props,
+    ResponseProps = maps:with(['Correlation-Data'], Props),
     {ok, _} = emqtt:publish(
-        MQTT, Reply, maps:with(['Correlation-Data'], Props), Response, [{qos, 1}]
+        MQTT,
+        Reply,
+        ResponseProps#{'User-Property' => [{<<"component-status">>, Status}]},
+        Response,
+        [{qos, 1}]
     ),
     {reply, ok, State#{effects := NextEffects, pending := Rest}}.
 

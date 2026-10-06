@@ -9,7 +9,7 @@
 -include_lib("emqx/include/emqx_hooks.hrl").
 -include_lib("emqx/include/emqx_mqtt.hrl").
 
--export([start_link/0, hook/0, unhook/0, cleanup_results/0]).
+-export([start_link/0, hook/0, unhook/0, cleanup_results/0, debug_message/3]).
 -export([on_subscribe/3, on_unsubscribed/3, on_publish/1, on_disconnected/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
@@ -22,6 +22,9 @@ start_link() ->
 
 cleanup_results() ->
     gen_server:call(?MODULE, cleanup_results).
+
+debug_message(Direction, Pid, Msg) ->
+    gen_server:call(?MODULE, {debug_message, Direction, Pid, Msg}).
 
 hook() ->
     lists:foreach(
@@ -50,6 +53,9 @@ on_subscribe(#{clientid := ClientId}, _Properties, Filters) ->
 on_unsubscribed(_ClientInfo, Topic, _Options) ->
     gen_server:call(?MODULE, {unsubscribed, self(), Topic}).
 
+on_publish(Msg = #message{topic = <<"$control/", _/binary>>}) ->
+    ok = debug_message(received, self(), Msg),
+    {ok, Msg};
 on_publish(Msg = #message{topic = Topic}) ->
     case is_managed(Topic) of
         true ->
@@ -69,14 +75,21 @@ on_disconnected(_ClientInfo, _Reason, _ConnInfo) ->
 init([]) ->
     {ok, #{components => #{}, effects => #{}, cleanup_results => []}}.
 
+handle_call({debug_message, Direction, Pid, Msg}, _From, State) ->
+    emqx_mqtt_components_debug:message(Direction, Pid, Msg),
+    {reply, ok, State};
 handle_call(cleanup_results, _From, State = #{cleanup_results := Results}) ->
     {reply, Results, State};
 handle_call({subscribe, Pid, ClientId, Filters}, _From, State) ->
+    debug_subscription(subscribe_requested, Pid, Filters),
     {Allowed, Next} = subscribe_request(Pid, ClientId, Filters, State),
+    debug_subscription(subscribe_allowed, Pid, Allowed),
     {reply, Allowed, Next};
 handle_call({unsubscribed, Pid, Topic}, _From, State) ->
+    emqx_mqtt_components_debug:subscription(unsubscribed, Pid, [Topic]),
     {reply, ok, unsubscribed(Pid, Topic, State)};
 handle_call({publish, Pid, Msg}, _From, State) ->
+    emqx_mqtt_components_debug:message(received, Pid, Msg),
     {reply, ok, publish(Pid, Msg, State)};
 handle_call({disconnect, Pid}, _From, State) ->
     {reply, ok, disconnect(Pid, State)}.
@@ -115,12 +128,14 @@ handle_info({check_unsubscribe, Id, Attempts}, State = #{effects := Effects}) ->
                         lists:keymember(Key, 1, emqx_broker:subscriptions(Pid))
                 of
                     false ->
-                        settle_cleanup(State#{effects := Effects#{Id := E#{cleanup := retracted}}});
+                        settle_cleanup(
+                            put_effects(Effects#{Id := E#{cleanup := retracted}}, State)
+                        );
                     true when Attempts > 0 ->
                         erlang:send_after(10, self(), {check_unsubscribe, Id, Attempts - 1}),
                         State;
                     true ->
-                        settle_cleanup(State#{effects := Effects#{Id := E#{cleanup := failed}}})
+                        settle_cleanup(put_effects(Effects#{Id := E#{cleanup := failed}}, State))
                 end;
             _ ->
                 State
@@ -145,12 +160,18 @@ is_declaration(<<"$provide/", _/binary>>) -> true;
 is_declaration(<<"$consume/", _/binary>>) -> true;
 is_declaration(_) -> false.
 
-is_managed(#share{topic = Topic}) -> is_managed(Topic);
-is_managed(<<"$state/", _/binary>>) -> true;
-is_managed(<<"$component-admin/", _/binary>>) -> true;
-is_managed(<<"$component/", _/binary>>) -> true;
-is_managed(<<"$service/", _/binary>>) -> true;
-is_managed(Topic) -> is_declaration(Topic).
+is_managed(#share{topic = Topic}) ->
+    is_managed(Topic);
+is_managed(<<"$state/", _/binary>>) ->
+    true;
+is_managed(<<"$component-admin/", _/binary>>) ->
+    true;
+is_managed(<<"$component/", _/binary>>) ->
+    true;
+is_managed(<<"$service/", _/binary>>) ->
+    true;
+is_managed(Topic) ->
+    is_declaration(Topic).
 
 subscribe_request(Pid, ClientId, Filters, State) ->
     Declarations = [Topic || {Topic, _} <- Filters, is_declaration(Topic)],
@@ -192,7 +213,8 @@ subscription_allowed(_Pid, _ClientId, Topic = #share{}, _Components) ->
     not is_managed(Topic);
 subscription_allowed(Pid, ClientId, Topic, Components) ->
     case
-        Topic =:= events_topic(ClientId) orelse not is_managed(Topic) orelse is_declaration(Topic)
+        Topic =:= <<"$component/debug">> orelse Topic =:= events_topic(ClientId) orelse
+            not is_managed(Topic) orelse is_declaration(Topic)
     of
         true ->
             true;
@@ -242,7 +264,7 @@ unsubscribed(Pid, Topic, State = #{effects := Effects}) ->
         end,
         Effects
     ),
-    settle_cleanup(State#{effects := Next}).
+    settle_cleanup(put_effects(Next, State)).
 
 declare(Pid, ClientId, Declarations, State = #{components := Components}) ->
     try
@@ -270,7 +292,7 @@ declare(Pid, ClientId, Declarations, State = #{components := Components}) ->
         NewComponents = Components#{Pid => Component},
         check(not cyclic(Pid, NewComponents, []), dependency_cycle),
         Ref = monitor(process, Pid),
-        {ok, State#{components := NewComponents#{Pid := Component#{monitor => Ref}}}}
+        {ok, put_component(Pid, Component#{monitor => Ref}, State)}
     catch
         throw:Reason -> {error, Reason}
     end.
@@ -335,12 +357,14 @@ activate_waiting(State = #{components := Components}) ->
             ) ->
                 case lists:all(fun(K) -> maps:is_key(K, Providers) end, Keys) of
                     true ->
-                        event(Pid, ClientId, #{event => initialize}),
-                        C#{
+                        Starting = C#{
                             state := starting,
                             activation => erlang:unique_integer([positive, monotonic]),
                             bindings := maps:with(Keys, Providers)
-                        };
+                        },
+                        emqx_mqtt_components_debug:component(Pid, {ok, C}, {ok, Starting}),
+                        event(Pid, ClientId, #{event => initialize}),
+                        Starting;
                     false ->
                         C
                 end;
@@ -351,6 +375,9 @@ activate_waiting(State = #{components := Components}) ->
     ),
     State#{components := Next}.
 
+publish(Pid, Msg = #message{topic = <<"$component/debug">>}, State) ->
+    reply(Pid, Msg, #{event => error, reason => read_only_topic}),
+    State;
 publish(Pid, Msg = #message{topic = <<"$component-admin/", Action/binary>>}, State) ->
     admin(Pid, Action, Msg, State);
 publish(Pid, Msg = #message{topic = <<"$component/reply/", Id/binary>>}, State) ->
@@ -486,7 +513,7 @@ apply_service(
             Next = put_component(
                 Pid,
                 C#{effects := [Id | Ids]},
-                State#{effects := Effects#{Id => Effect}}
+                put_effects(Effects#{Id => Effect}, State)
             ),
             Forward = emqx_message:set_header(
                 properties,
@@ -543,7 +570,9 @@ local_effect(
                 cleanup => pending
             },
             {Id,
-                put_component(Pid, C#{effects := [Id | Ids]}, State#{effects := Effects#{Id => E}})}
+                put_component(
+                    Pid, C#{effects := [Id | Ids]}, put_effects(Effects#{Id => E}, State)
+                )}
     end.
 
 write_state(Pid, C = #{activation := Activation}, Key, Msg = #message{payload = Payload}, State) ->
@@ -555,6 +584,7 @@ write_state(Pid, C = #{activation := Activation}, Key, Msg = #message{payload = 
     case Result of
         ok ->
             {Id, Next} = local_effect(Pid, C, {Pid, Activation}, state_write, Key, State),
+            emqx_mqtt_components_debug:message(broadcast, Pid, Msg),
             _ = emqx_broker:publish(Msg, #{bypass_hook => true}),
             case emqx_message:get_header(properties, Msg, #{}) of
                 #{'Response-Topic' := _} ->
@@ -576,9 +606,9 @@ release(Pid, #{activation := Activation}, Id, Msg, State = #{effects := Effects}
                     reply(Pid, Msg, #{event => error, reason => release_pending}),
                     State;
                 _ ->
-                    progress_release(Id, State#{
-                        effects := Effects#{Id := E#{release_request => Msg}}
-                    })
+                    progress_release(
+                        Id, put_effects(Effects#{Id := E#{release_request => Msg}}, State)
+                    )
             end;
         _ ->
             reply(Pid, Msg, #{event => error, reason => effect_not_owned}),
@@ -602,7 +632,7 @@ finish_release(Id, State = #{effects := Effects}) ->
             case terminal(Result) of
                 true ->
                     reply(Owner, Msg, #{event => released, effect_id => Id, status => Result}),
-                    State#{effects := Effects#{Id := maps:remove(release_request, E)}};
+                    put_effects(Effects#{Id := maps:remove(release_request, E)}, State);
                 false ->
                     State
             end;
@@ -618,14 +648,14 @@ retract_effect(Id, State = #{effects := Effects}) ->
                 'Response-Topic' => <<"$component/retracted/", Id/binary>>
             }),
             deliver(Provider, <<Key/binary, "/retract/+">>, Msg),
-            State#{effects := Effects#{Id := E#{cleanup := requested}}};
+            put_effects(Effects#{Id := E#{cleanup := requested}}, State);
         {pending, #{type := state_write}} ->
             ok = emqx_retainer:delete(Key),
-            State#{effects := Effects#{Id := E#{cleanup := retracted}}};
+            put_effects(Effects#{Id := E#{cleanup := retracted}}, State);
         {pending, #{type := state_subscription, owner := Owner}} ->
-            Owner ! {unsubscribe, [{Key, #{}}]},
+            unsubscribe(Owner, [Key]),
             erlang:send_after(10, self(), {check_unsubscribe, Id, 100}),
-            State#{effects := Effects#{Id := E#{cleanup := requested}}};
+            put_effects(Effects#{Id := E#{cleanup := requested}}, State);
         _ ->
             State
     end.
@@ -689,17 +719,20 @@ service_reply(Pid, Id, Msg, State = #{effects := Effects, components := Componen
                 _ ->
                     ok
             end,
-            Next = State#{effects := Effects#{Id := E#{status := completed}}},
+            Next = put_effects(Effects#{Id := E#{status := completed}}, State),
             settle_cleanup(progress_release(Id, Next));
         _ ->
             State
     end.
 
-retract_reply(Pid, Id, #message{payload = Payload}, State = #{effects := Effects}) ->
+retract_reply(Pid, Id, Msg, State = #{effects := Effects}) ->
     case Effects of
         #{Id := E = #{provider := Pid, cleanup := requested}} ->
-            case emqx_utils_json:safe_decode(Payload) of
-                {ok, #{<<"status">> := Status}} when
+            Props = emqx_message:get_header(properties, Msg, #{}),
+            case
+                proplists:get_value(<<"component-status">>, maps:get('User-Property', Props, []))
+            of
+                Status when
                     Status =:= <<"retracted">>; Status =:= <<"failed">>; Status =:= <<"unknown">>
                 ->
                     Result = #{
@@ -707,9 +740,9 @@ retract_reply(Pid, Id, #message{payload = Payload}, State = #{effects := Effects
                         <<"failed">> => failed,
                         <<"unknown">> => unknown
                     },
-                    Next = State#{
-                        effects := Effects#{Id := E#{cleanup := maps:get(Status, Result)}}
-                    },
+                    Next = put_effects(
+                        Effects#{Id := E#{cleanup := maps:get(Status, Result)}}, State
+                    ),
                     settle_cleanup(finish_release(Id, Next));
                 _ ->
                     State
@@ -722,41 +755,43 @@ disconnect(Pid, State = #{components := Components}) ->
     case Components of
         #{Pid := #{monitor := Ref, state := inactive}} ->
             demonitor(Ref, [flush]),
-            State#{components := maps:remove(Pid, Components)};
-        #{Pid := #{monitor := Ref}} ->
+            remove_component(Pid, State);
+        #{Pid := C = #{monitor := Ref}} ->
             demonitor(Ref, [flush]),
-            Next = stop_component(Pid, State),
-            #{components := Stopped} = Next,
-            Stopping = maps:get(Pid, Stopped),
-            settle_cleanup(
-                put_component(
-                    Pid,
-                    disconnected(Stopping),
-                    Next
-                )
-            );
+            Next = put_component(Pid, disconnected(C), State),
+            settle_cleanup(stop_component(Pid, Next));
         _ ->
             State
     end.
 
-disconnected(C = #{local_cleanup := complete}) ->
+disconnected(C = #{state := stopping, local_cleanup := complete}) ->
     C#{connected := false};
 disconnected(C) ->
-    C#{connected := false, local_cleanup := unknown}.
+    C#{connected := false, local_cleanup => unknown}.
 
 stop_component(Pid, State = #{components := Components}) ->
-    C = #{state := Status, clientid := ClientId} = maps:get(Pid, Components),
+    C =
+        #{state := Status, clientid := ClientId, connected := Connected} = maps:get(
+            Pid, Components
+        ),
     case Status =:= starting orelse Status =:= active of
         false ->
             State;
         true ->
-            event(Pid, ClientId, #{event => deactivated}),
+            LocalCleanup =
+                case Connected of
+                    true ->
+                        event(Pid, ClientId, #{event => deactivated}),
+                        pending;
+                    false ->
+                        maps:get(local_cleanup, C)
+                end,
             Stopped = maps:remove(subscriptions_pending, C),
             Next = put_component(
                 Pid,
                 Stopped#{
                     state := stopping,
-                    local_cleanup => pending
+                    local_cleanup => LocalCleanup
                 },
                 State
             ),
@@ -813,7 +848,7 @@ cleanup(Pid, C = #{effects := Ids}, State = #{effects := Effects, components := 
         Ids
     ),
     Remaining = [Id || Id <- Ids, not terminal(maps:get(cleanup, maps:get(Id, NextEffects)))],
-    Next = lists:foldl(fun finish_release/2, State#{effects := NextEffects}, Ids),
+    Next = lists:foldl(fun finish_release/2, put_effects(NextEffects, State), Ids),
     case
         lists:any(fun(Id) -> maps:get(status, maps:get(Id, NextEffects)) =:= pending end, Remaining)
     of
@@ -842,7 +877,7 @@ cleanup_effects(Pid, C, [], State) ->
 finish_cleanup(
     Pid,
     C = #{provides := Provides, effects := Ids, clientid := ClientId},
-    State = #{components := Components, effects := Effects, cleanup_results := Results}
+    State = #{effects := Effects, cleanup_results := Results}
 ) ->
     Report0 = maps:merge(
         maps:with([clientid, activation, local_cleanup], C), #{
@@ -863,9 +898,9 @@ finish_cleanup(
             _ ->
                 Report0
         end,
-    Next = State#{effects := maps:without(Ids, Effects), cleanup_results := [Report | Results]},
+    Next = put_effects(maps:without(Ids, Effects), State#{cleanup_results := [Report | Results]}),
     Topics = lists:append([provider_filters(K) || K <- Provides]),
-    Pid ! {unsubscribe, [{Topic, #{}} || Topic <- Topics]},
+    unsubscribe(Pid, Topics),
     case C of
         #{connected := true} ->
             case C of
@@ -880,18 +915,36 @@ finish_cleanup(
                 Next
             );
         #{connected := false} ->
-            Next#{components := maps:remove(Pid, Components)}
+            remove_component(Pid, Next)
     end.
 
 put_component(Pid, C, State = #{components := Components}) ->
-    State#{components := Components#{Pid := C}}.
+    emqx_mqtt_components_debug:component(Pid, maps:find(Pid, Components), {ok, C}),
+    State#{components := Components#{Pid => C}}.
+
+remove_component(Pid, State = #{components := Components}) ->
+    emqx_mqtt_components_debug:component(Pid, maps:find(Pid, Components), error),
+    State#{components := maps:remove(Pid, Components)}.
+
+put_effects(Effects, State = #{effects := Previous}) ->
+    emqx_mqtt_components_debug:effects(Previous, Effects),
+    State#{effects := Effects}.
 
 provider_filters(<<"$state/", _/binary>> = Key) -> [Key];
 provider_filters(Key) -> [Key, <<Key/binary, "/apply/+">>, <<Key/binary, "/retract/+">>].
 
 subscribe(Pid, Topics) ->
+    emqx_mqtt_components_debug:subscription(subscribe_requested, Pid, Topics),
     Pid ! {force_subscribe, [{Topic, #{qos => 1}} || Topic <- Topics]},
     ok.
+
+unsubscribe(Pid, Topics) ->
+    emqx_mqtt_components_debug:subscription(unsubscribe_requested, Pid, Topics),
+    Pid ! {unsubscribe, [{Topic, #{}} || Topic <- Topics]},
+    ok.
+
+debug_subscription(Action, Pid, Filters) ->
+    emqx_mqtt_components_debug:subscription(Action, Pid, [Topic || {Topic, _} <- Filters]).
 
 %% TODO: Replace fixed-interval subscription polling with completion notifications.
 check_subscriptions(Pid, C = #{activation := Activation}, Topics, Msg, Attempts, State) ->
@@ -908,7 +961,7 @@ check_subscriptions(Pid, C = #{activation := Activation}, Topics, Msg, Attempts,
             ),
             put_component(Pid, C#{subscriptions_pending => true}, State);
         false ->
-            Pid ! {unsubscribe, [{Topic, #{}} || Topic <- Topics]},
+            unsubscribe(Pid, Topics),
             reply(Pid, Msg, #{event => error, reason => subscription_installation_failed}),
             put_component(Pid, maps:remove(subscriptions_pending, C), State)
     end.
@@ -916,6 +969,9 @@ check_subscriptions(Pid, C = #{activation := Activation}, Topics, Msg, Attempts,
 events_topic(ClientId) ->
     <<"$component/", ClientId/binary, "/events">>.
 
+event(Pid, ClientId, Data = #{event := Event}) when Event =:= error; Event =:= stopped ->
+    Topic = events_topic(ClientId),
+    deliver(Pid, Topic, response_message(Topic, Data, #{}));
 event(Pid, ClientId, Data) ->
     Topic = events_topic(ClientId),
     deliver(Pid, Topic, message(Topic, emqx_utils_json:encode(Data), #{})).
@@ -924,12 +980,29 @@ reply(Pid, Msg = #message{from = ClientId}, Data) ->
     Props = emqx_message:get_header(properties, Msg, #{}),
     Topic = maps:get('Response-Topic', Props, events_topic(ClientId)),
     ResponseProps = maps:with(['Correlation-Data'], Props),
-    deliver(Pid, Topic, message(Topic, emqx_utils_json:encode(Data), ResponseProps)).
+    deliver(Pid, Topic, response_message(Topic, Data, ResponseProps)).
+
+response_message(Topic, Data, Props) ->
+    UserProps = [
+        {response_property(Key), response_value(Value)}
+     || {Key, Value} <- maps:to_list(Data)
+    ],
+    message(Topic, <<>>, Props#{'User-Property' => UserProps}).
+
+response_property(event) -> <<"component-status">>;
+response_property(reason) -> <<"component-reason">>;
+response_property(effect_id) -> <<"component-effect-id">>;
+response_property(clientid) -> <<"component-clientid">>;
+response_property(status) -> <<"component-cleanup-status">>.
+
+response_value(Value) when is_atom(Value) -> atom_to_binary(Value);
+response_value(Value) when is_binary(Value) -> Value.
 
 message(Topic, Payload, Props) ->
     Msg = emqx_message:make(?MODULE, 1, Topic, Payload),
     emqx_message:set_header(properties, Props, Msg).
 
 deliver(Pid, Filter, Msg) ->
+    emqx_mqtt_components_debug:message(sent, Pid, Msg),
     Pid ! {deliver, Filter, Msg},
     ok.

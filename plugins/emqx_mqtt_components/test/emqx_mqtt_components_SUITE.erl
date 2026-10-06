@@ -242,8 +242,11 @@ t_abort_retry_cleanup(_Config) ->
     ?assertMatch(
         #{
             topic := <<"test/c/reply">>,
-            properties := #{'Correlation-Data' := <<"retry-1">>},
-            payload := <<"{\"event\":\"retry_accepted\"}">>
+            properties := #{
+                'Correlation-Data' := <<"retry-1">>,
+                'User-Property' := [{<<"component-status">>, <<"retry_accepted">>}]
+            },
+            payload := <<>>
         },
         mqtt(C)
     ),
@@ -666,7 +669,7 @@ t_delayed_transitive_retractions(_Config) ->
     ready(B),
     event(A, initialize),
     NewAE = request(A, <<"a">>, E, <<"e">>, <<"new-a-e">>),
-    respond(E, RA, <<"{\"status\":\"retracted\"}">>),
+    respond_status(E, RA, retracted),
     respond(E, AE, <<"late duplicate apply response">>),
     publish(A, <<"$component/ready">>, <<>>),
     error_event(A, initialization_pending),
@@ -829,9 +832,9 @@ t_provider_disconnect_during_retraction(_Config) ->
     Retract = mqtt(P),
     ?assertEqual(retract_topic(Apply), maps:get(topic, Retract)),
     Fake = client(<<"fake">>, []),
-    respond(Fake, Retract, <<"{\"status\":\"retracted\"}">>),
+    respond_status(Fake, Retract, retracted),
     respond(P, Retract, <<"not json">>),
-    respond(P, Retract, <<"{\"status\":\"applied\"}">>),
+    respond_status(P, Retract, applied),
     ?assertEqual([], emqx_mqtt_components:cleanup_results()),
     ok = emqtt:disconnect(P),
     #{effects := [#{cleanup := unknown}], local_cleanup := unknown} = cleanup_result(<<"c">>),
@@ -840,7 +843,7 @@ t_provider_disconnect_during_retraction(_Config) ->
     C2 = client(<<"c">>, [<<"$consume/service/p">>]),
     event(C2, initialize),
     New = request(C2, <<"c">>, P2, <<"p">>, <<"new effect">>),
-    respond(P2, Retract, <<"{\"status\":\"retracted\"}">>),
+    respond_status(P2, Retract, retracted),
     respond(P2, Apply, <<"stale">>),
     publish(C2, <<"$component/ready">>, <<>>),
     error_event(C2, initialization_pending),
@@ -910,9 +913,9 @@ t_state_initialization_and_empty_write(_Config) ->
     publish(P, <<"$component/ready">>, <<>>),
     Messages = [mqtt(P), mqtt(P)],
     ?assertEqual([<<"initial">>], [B || #{topic := T, payload := B} <- Messages, T =:= Topic]),
-    ?assertEqual([#{<<"event">> => <<"activated">>}], [
-        emqx_utils_json:decode(B)
-     || #{topic := T, payload := B} <- Messages, T =/= Topic
+    ?assertEqual([#{<<"component-status">> => <<"activated">>}], [
+        response_properties(M)
+     || M = #{topic := T} <- Messages, T =/= Topic
     ]),
     event(C, initialize),
     {ok, _, _} = emqtt:subscribe(C, Topic, 1),
@@ -1118,7 +1121,7 @@ t_release_during_pending_apply(_Config) ->
     cleanup_complete(C),
     R = mqtt(P),
     ?assertEqual(retract_topic(A), maps:get(topic, R)),
-    respond(P, R, <<"{\"status\":\"retracted\"}">>),
+    respond_status(P, R, retracted),
     released(C, Id, retracted),
     event(C, stopped),
     cleanup_result(<<"release-c">>),
@@ -1155,6 +1158,345 @@ t_admin_web_router(_Config) ->
     publish(Admin, <<"$component-admin/disable">>, <<"{\"clientid\":\"missing\"}">>),
     error_event(Admin, component_not_found).
 
+t_response_properties(_Config) ->
+    P = provider(<<"response-p">>, <<"$provide/service/response">>),
+    C = client(<<"response-c">>, [<<"$consume/service/response">>]),
+    event(C, initialize),
+    Apply = request(C, <<"response-c">>, P, <<"response">>, <<"request-id">>),
+    Id = effect_id(Apply),
+    Body = <<0, 255, "application data">>,
+    #{properties := #{'Response-Topic' := Reply}} = Apply,
+    UserProps = [
+        {<<"component-status">>, <<"error">>},
+        {<<"component-reason">>, <<"application refused">>},
+        {<<"component-effect-id">>, <<"provider-cannot-override">>},
+        {<<"application-tag">>, <<"kept">>}
+    ],
+    {ok, _} = emqtt:publish(
+        P,
+        Reply,
+        #{
+            'Correlation-Data' => <<"request-id">>, 'User-Property' => UserProps
+        },
+        Body,
+        [{qos, 1}]
+    ),
+    #{
+        payload := Body,
+        properties := #{'Correlation-Data' := <<"request-id">>, 'User-Property' := Forwarded}
+    } = mqtt(C),
+    ?assertEqual(
+        [{<<"component-effect-id">>, Id} | proplists:delete(<<"component-effect-id">>, UserProps)],
+        Forwarded
+    ),
+    ready(C),
+    publish(C, <<"$component/release/", Id/binary>>, <<>>),
+    Retract = mqtt(P),
+    respond(P, Retract, <<"failed">>, Body),
+    released(C, Id, failed),
+    ok = emqtt:disconnect(C),
+    ok = emqtt:disconnect(P).
+
+t_physical_disconnect_debug(_Config) ->
+    physical_disconnect_debug(fun emqtt:disconnect/1).
+
+t_physical_connection_loss_debug(_Config) ->
+    physical_disconnect_debug(fun(C) ->
+        unlink(C),
+        exit(C, kill),
+        ok
+    end).
+
+physical_disconnect_debug(Disconnect) ->
+    Admin = client(<<"admin">>, []),
+    P = provider(<<"disconnect-p">>, <<"$provide/service/disconnect">>),
+    admin(Admin, disable, <<"disconnect-p">>),
+    event(P, deactivated),
+    cleanup_complete(P),
+    event(P, stopped),
+    admin(Admin, enable, <<"disconnect-p">>),
+    event(P, initialize),
+    ready(P),
+    C = client(<<"disconnect-c">>, [<<"$consume/service/disconnect">>]),
+    event(C, initialize),
+    Apply = request(C, <<"disconnect-c">>, P, <<"disconnect">>, <<"effect">>),
+    complete_request(P, Apply, C),
+    ready(C),
+    Watch = client(<<"watch">>, [<<"$component/debug">>]),
+    ok = Disconnect(P),
+    event(C, deactivated),
+    event(C, cleanup_requested),
+    no_mqtt(C),
+    publish(C, <<"$component/cleanup_complete">>, <<>>),
+    event(C, stopped),
+    Events = debug_until_removed(Watch, <<"disconnect-p">>),
+    Changes = [
+        Current
+     || #{<<"event">> := <<"component_changed">>, <<"current">> := Current} <- Events,
+        is_map(Current),
+        maps:get(<<"clientid">>, Current) =:= <<"disconnect-p">>
+    ],
+    ?assertMatch([#{<<"connected">> := false} | _], Changes),
+    ?assert(lists:all(fun(#{<<"connected">> := Connected}) -> not Connected end, Changes)),
+    ?assertEqual([], debug_messages(Events, <<"sent">>, <<"$component/disconnect-p/events">>)),
+    ?assertMatch(#{local_cleanup := unknown}, cleanup_result(<<"disconnect-p">>)),
+    ?assertMatch(#{effects := [#{cleanup := unknown}]}, cleanup_result(<<"disconnect-c">>)),
+    ok = emqtt:disconnect(C),
+    ok = emqtt:disconnect(Admin),
+    ok = emqtt:disconnect(Watch).
+
+t_debug_service_lifecycle(_Config) ->
+    Watch = client(<<"watch">>, [<<"$component/debug">>]),
+    Admin = client(<<"admin">>, []),
+    P = provider(<<"debug-p">>, <<"$provide/service/debug">>),
+    C = client(<<"debug-c">>, [<<"$consume/service/debug">>]),
+    event(C, initialize),
+    Payload = <<255, 0, 128>>,
+    Apply = request(C, <<"debug-c">>, P, <<"debug">>, Payload),
+    Id = effect_id(Apply),
+    complete_request(P, Apply, C),
+    ready(C),
+    admin(Admin, disable, <<"debug-c">>),
+    event(C, deactivated),
+    cleanup_complete(C),
+    retract(P, Apply),
+    event(C, stopped),
+    ok = emqtt:disconnect(C),
+    Events = debug_until_removed(Watch, <<"debug-c">>),
+    Changes = [
+        {Before, After}
+     || #{
+            <<"event">> := <<"component_changed">>,
+            <<"previous">> := Before,
+            <<"current">> := After
+        } <- Events,
+        debug_client(Before, After) =:= <<"debug-c">>
+    ],
+    ?assertEqual(
+        [<<"inactive">>, <<"starting">>, <<"active">>, <<"stopping">>, <<"inactive">>, null],
+        [
+            debug_state(After)
+         || {Before, After} <- Changes, debug_state(Before) =/= debug_state(After)
+        ]
+    ),
+    ?assert(
+        lists:any(
+            fun
+                ({_, #{<<"activation_block">> := <<"disabled">>}}) -> true;
+                (_) -> false
+            end,
+            Changes
+        )
+    ),
+    ?assertEqual(
+        [<<"pending">>, <<"requested">>, <<"complete">>],
+        lists:uniq([Cleanup || {_, #{<<"local_cleanup">> := Cleanup}} <- Changes])
+    ),
+    ?assertEqual(
+        [
+            {<<"pending">>, <<"pending">>},
+            {<<"completed">>, <<"pending">>},
+            {<<"completed">>, <<"requested">>},
+            {<<"completed">>, <<"retracted">>},
+            null
+        ],
+        [
+            case Current of
+                null -> null;
+                #{<<"status">> := Status, <<"cleanup">> := Cleanup} -> {Status, Cleanup}
+            end
+         || #{
+                <<"event">> := <<"effect_changed">>,
+                <<"effect_id">> := EffectId,
+                <<"current">> := Current
+            } <- Events,
+            EffectId =:= Id
+        ]
+    ),
+    Encoded = #{<<"encoding">> => <<"base64">>, <<"data">> => base64:encode(Payload)},
+    ?assertMatch(
+        [
+            #{
+                <<"payload">> := Encoded,
+                <<"properties">> := #{<<"Correlation-Data">> := Encoded}
+            }
+        ],
+        debug_messages(Events, <<"received">>, <<"$service/debug">>)
+    ),
+    ?assertMatch(
+        [#{<<"payload">> := Encoded}],
+        debug_messages(Events, <<"sent">>, maps:get(topic, Apply))
+    ),
+    ?assertMatch(
+        [#{<<"payload">> := <<"accepted">>}],
+        debug_messages(Events, <<"received">>, <<"$component/reply/", Id/binary>>)
+    ),
+    ?assertMatch(
+        [#{<<"payload">> := <<"accepted">>}],
+        debug_messages(Events, <<"sent">>, <<"test/debug-c/reply">>)
+    ),
+    ?assertMatch([_], debug_messages(Events, <<"sent">>, retract_topic(Apply))),
+    ?assertMatch(
+        [_], debug_messages(Events, <<"received">>, <<"$component/retracted/", Id/binary>>)
+    ),
+    Sequences = [Seq || #{<<"sequence">> := Seq} <- Events],
+    ?assertEqual(lists:usort(Sequences), Sequences),
+    ok = emqtt:disconnect(P),
+    ok = emqtt:disconnect(Admin),
+    ok = emqtt:disconnect(Watch).
+
+t_debug_state_cleanup(_Config) ->
+    Watch = client(<<"watch">>, [<<"$component/debug">>]),
+    Admin = client(<<"admin">>, []),
+    Topic = <<"$state/debug">>,
+    P = provider(<<"debug-p">>, <<"$provide/state/debug">>),
+    C = client(<<"debug-c">>, [<<"$consume/state/debug">>]),
+    event(C, initialize),
+    {ok, _, _} = emqtt:subscribe(C, Topic, 1),
+    ready(C),
+    state_write(P, Topic, <<"one">>),
+    state_message(P, Topic, <<"one">>),
+    state_message(C, Topic, <<"one">>),
+    state_write(P, Topic, <<"two">>),
+    state_message(P, Topic, <<"two">>),
+    state_message(C, Topic, <<"two">>),
+    {ok, _, _} = emqtt:unsubscribe(C, Topic),
+    {ok, _, _} = emqtt:subscribe(C, Topic, 1),
+    state_message(C, Topic, <<"two">>),
+    admin(Admin, disable, <<"debug-p">>),
+    event(C, deactivated),
+    event(P, deactivated),
+    cleanup_complete(C),
+    event(C, stopped),
+    cleanup_complete(P),
+    event(P, stopped),
+    ?assertEqual({ok, []}, emqx_retainer:read_message(Topic)),
+    ok = emqtt:disconnect(P),
+    Events = debug_until_removed(Watch, <<"debug-p">>),
+    ?assertEqual(
+        [<<"one">>, <<"two">>],
+        [Payload || #{<<"payload">> := Payload} <- debug_messages(Events, <<"received">>, Topic)]
+    ),
+    ?assertEqual(
+        [<<"one">>, <<"two">>],
+        [Payload || #{<<"payload">> := Payload} <- debug_messages(Events, <<"broadcast">>, Topic)]
+    ),
+    ?assertMatch([_, _, _], [
+        Id
+     || #{
+            <<"event">> := <<"effect_changed">>,
+            <<"effect_id">> := Id,
+            <<"previous">> := null
+        } <- Events
+    ]),
+    ?assertMatch([_, _, _], [
+        Id
+     || #{
+            <<"event">> := <<"effect_changed">>,
+            <<"effect_id">> := Id,
+            <<"current">> := #{<<"cleanup">> := <<"retracted">>}
+        } <- Events
+    ]),
+    ?assert(
+        lists:any(
+            fun
+                (
+                    #{
+                        <<"event">> := <<"subscription">>,
+                        <<"action">> := <<"unsubscribe_requested">>,
+                        <<"topics">> := [Topic0]
+                    }
+                ) ->
+                    Topic0 =:= Topic;
+                (_) ->
+                    false
+            end,
+            Events
+        )
+    ),
+    ?assertEqual([<<"debug-c">>, <<"debug-p">>], [
+        ClientId
+     || #{
+            <<"event">> := <<"component_changed">>,
+            <<"previous">> := #{<<"state">> := <<"stopping">>},
+            <<"current">> := #{<<"state">> := <<"inactive">>, <<"clientid">> := ClientId}
+        } <- Events
+    ]),
+    ok = emqtt:disconnect(C),
+    ok = emqtt:disconnect(Admin),
+    ok = emqtt:disconnect(Watch).
+
+t_debug_control_pass_through(_Config) ->
+    Receiver = client(<<"controller">>, [<<"$control/browser/+/+">>]),
+    Sender = client(<<"buttons">>, []),
+    Watch = client(<<"watch">>, [<<"$component/debug">>]),
+    Topic = <<"$control/browser/workerA/connect">>,
+    publish(Sender, Topic, <<"{}">>),
+    ?assertMatch(#{topic := Topic, payload := <<"{}">>}, mqtt(Receiver)),
+    ?assertMatch(
+        #{
+            <<"event">> := <<"message">>,
+            <<"direction">> := <<"received">>,
+            <<"topic">> := Topic,
+            <<"payload">> := <<"{}">>
+        },
+        debug_event(Watch)
+    ),
+    no_mqtt(Watch),
+    no_mqtt(Sender),
+    ok = emqtt:disconnect(Watch),
+    ok = emqtt:disconnect(Sender),
+    ok = emqtt:disconnect(Receiver).
+
+t_debug_read_only_live_feed(_Config) ->
+    Watch = client(<<"watch">>, [<<"$component/debug">>]),
+    P = provider(<<"debug-p">>, <<"$provide/service/debug">>),
+    ok = emqtt:disconnect(P),
+    _ = debug_until_removed(Watch, <<"debug-p">>),
+    Late = client(<<"late">>, [<<"$component/debug">>]),
+    no_mqtt(Late),
+    ?assertEqual({ok, []}, emqx_retainer:read_message(<<"$component/debug">>)),
+    publish(Late, <<"ordinary/traffic">>, <<"not copied">>),
+    no_mqtt(Late),
+    state_write(Late, <<"$component/debug">>, <<"forged">>),
+    ?assertMatch(#{<<"event">> := <<"message">>, <<"direction">> := <<"sent">>}, debug_event(Late)),
+    error_event(Late, read_only_topic),
+    no_mqtt(Late),
+    ?assertEqual({ok, []}, emqx_retainer:read_message(<<"$component/debug">>)),
+    ok = emqtt:disconnect(Late),
+    ok = emqtt:disconnect(Watch).
+
+debug_event(C) ->
+    #{topic := <<"$component/debug">>, payload := Payload, retain := false, qos := 0} = mqtt(C),
+    emqx_utils_json:decode(Payload).
+
+debug_until_removed(C, ClientId) ->
+    Event = debug_event(C),
+    case Event of
+        #{
+            <<"event">> := <<"component_changed">>,
+            <<"previous">> := #{<<"clientid">> := ClientId},
+            <<"current">> := null
+        } ->
+            [Event];
+        _ ->
+            [Event | debug_until_removed(C, ClientId)]
+    end.
+
+debug_client(null, #{<<"clientid">> := ClientId}) -> ClientId;
+debug_client(#{<<"clientid">> := ClientId}, _) -> ClientId.
+
+debug_state(null) -> null;
+debug_state(#{<<"state">> := State}) -> State.
+
+debug_messages(Events, Direction, Topic) ->
+    [
+        E
+     || E = #{<<"event">> := <<"message">>, <<"direction">> := D, <<"topic">> := T} <- Events,
+        D =:= Direction,
+        T =:= Topic
+    ].
+
 %%------------------------------------------------------------------------------
 %% Helpers
 %%------------------------------------------------------------------------------
@@ -1184,20 +1526,19 @@ admin(C, Action, ClientId) ->
             enable -> <<"enabled">>;
             disable -> <<"disabled">>
         end,
-    #{payload := Payload} = mqtt(C),
     ?assertEqual(
-        #{<<"event">> => Event, <<"clientid">> => ClientId}, emqx_utils_json:decode(Payload)
+        #{<<"component-status">> => Event, <<"component-clientid">> => ClientId},
+        response_properties(mqtt(C))
     ).
 
 released(C, Id, Result) ->
-    #{payload := Payload} = mqtt(C),
     ?assertEqual(
         #{
-            <<"event">> => <<"released">>,
-            <<"effect_id">> => Id,
-            <<"status">> => atom_to_binary(Result)
+            <<"component-status">> => <<"released">>,
+            <<"component-effect-id">> => Id,
+            <<"component-cleanup-status">> => atom_to_binary(Result)
         },
-        emqx_utils_json:decode(Payload)
+        response_properties(mqtt(C))
     ).
 
 delay_subscription(Topic) ->
@@ -1366,7 +1707,7 @@ transitive_initialization(Disconnect) ->
     no_mqtt(B),
     no_mqtt(E),
     %% D can finish while A's first inverse is still blocked.
-    respond(E, RD, <<"{\"status\":\"retracted\"}">>),
+    respond_status(E, RD, retracted),
     retract(E, DE1),
     event(D, stopped),
     #{effects := DResults} = cleanup_result(<<"d">>),
@@ -1374,7 +1715,7 @@ transitive_initialization(Disconnect) ->
     ?assertEqual(effect_id(DC), maps:get(id, lists:last(DResults))),
     no_mqtt(D),
     %% A retracts across B and E in reverse acceptance order.
-    respond(E, RA, <<"{\"status\":\"retracted\"}">>),
+    respond_status(E, RA, retracted),
     retract(B, AB2),
     retract(E, AE1),
     retract(B, AB1),
@@ -1386,7 +1727,7 @@ transitive_initialization(Disconnect) ->
     {ok, _, _} = emqtt:subscribe(Conflict, <<"$provide/service/c">>, 1),
     error_event(Conflict, provider_conflict),
     no_mqtt(B),
-    respond(E, RBE, <<"{\"status\":\"retracted\"}">>),
+    respond_status(E, RBE, retracted),
     event(B, stopped),
     cleanup_result(<<"c">>),
     C2 = provider(<<"c">>, <<"$provide/service/c">>),
@@ -1439,7 +1780,7 @@ retract(C, Apply) ->
     Msg = mqtt(C),
     ?assertEqual(retract_topic(Apply), maps:get(topic, Msg)),
     ?assertEqual(<<>>, maps:get(payload, Msg)),
-    respond(C, Msg, <<"{\"status\":\"retracted\"}">>).
+    respond_status(C, Msg, retracted).
 
 no_mqtt(C) ->
     receive
@@ -1523,19 +1864,36 @@ mqtt(C) ->
     after 5000 -> ct:fail({missing_mqtt_message, C})
     end.
 
-event(C, Event) ->
+event(C, Event) when Event =:= initialize; Event =:= deactivated; Event =:= cleanup_requested ->
     #{payload := Payload} = mqtt(C),
-    ?assertEqual(#{<<"event">> => atom_to_binary(Event)}, emqx_utils_json:decode(Payload)).
+    ?assertEqual(#{<<"event">> => atom_to_binary(Event)}, emqx_utils_json:decode(Payload));
+event(C, Event) ->
+    ?assertEqual(#{<<"component-status">> => atom_to_binary(Event)}, response_properties(mqtt(C))).
 
 error_event(C, Reason) ->
-    #{payload := Payload} = mqtt(C),
     ?assertEqual(
-        #{<<"event">> => <<"error">>, <<"reason">> => atom_to_binary(Reason)},
-        emqx_utils_json:decode(Payload)
+        #{<<"component-status">> => <<"error">>, <<"component-reason">> => atom_to_binary(Reason)},
+        response_properties(mqtt(C))
     ).
 
-respond(C, #{properties := Props = #{'Response-Topic' := Topic}}, Payload) ->
-    {ok, _} = emqtt:publish(C, Topic, maps:with(['Correlation-Data'], Props), Payload, [{qos, 1}]),
+response_properties(#{payload := <<>>, properties := #{'User-Property' := Props}}) ->
+    maps:from_list(Props).
+
+respond(C, Msg, Payload) ->
+    respond(C, Msg, <<"ok">>, Payload).
+
+respond_status(C, Msg, Status) ->
+    respond(C, Msg, atom_to_binary(Status), <<>>).
+
+respond(C, #{properties := Props = #{'Response-Topic' := Topic}}, Status, Payload) ->
+    ResponseProps = maps:with(['Correlation-Data'], Props),
+    {ok, _} = emqtt:publish(
+        C,
+        Topic,
+        ResponseProps#{'User-Property' => [{<<"component-status">>, Status}]},
+        Payload,
+        [{qos, 1}]
+    ),
     ok.
 
 retract_topic(#{topic := Topic}) ->
