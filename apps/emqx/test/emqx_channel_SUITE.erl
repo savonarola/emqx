@@ -1984,7 +1984,7 @@ t_client_attrs_with_control_chars_dropped(_) ->
     ),
     ?assertEqual(#{<<"good">> => <<"tenant-a">>}, Attrs).
 
-%% Verify that MQTT authn composition merges attributes and relocates authn output.
+%% Verify that MQTT authn composition merges attributes and keeps known output at the top level.
 t_authn_result_composition(_) ->
     ClientInfo0 = clientinfo(#{
         clientid => <<"original">>,
@@ -2004,8 +2004,8 @@ t_authn_result_composition(_) ->
         #{<<"existing">> => <<"value">>, <<"tenant">> => <<"t1">>},
         maps:get(client_attrs, ClientInfo)
     ),
-    ?assertEqual(false, maps:is_key(is_superuser, ClientInfo)),
-    ?assertEqual(false, maps:is_key(auth_expire_at, ClientInfo)),
+    ?assertMatch(#{is_superuser := true, auth_expire_at := 123}, ClientInfo),
+    ?assertNot(maps:is_key(authn, maps:get(trusted_attrs, ClientInfo))),
     ?assertEqual({ok, true}, emqx_clientinfo:get_trusted(ClientInfo, is_superuser)),
     ?assertEqual({ok, 123}, emqx_clientinfo:get_trusted(ClientInfo, auth_expire_at)),
     ?assertEqual({ok, <<"overridden">>}, emqx_clientinfo:get_trusted(ClientInfo, clientid)),

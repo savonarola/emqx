@@ -47,7 +47,34 @@ Built-in authenticators report the non-secret template variables that they use. 
 not enter the trusted projection. Client attributes returned by authentication are trusted. Applied
 client ID and zone overrides are also trusted.
 
-Explicit anonymous access trusts all available client input fields.
+Explicit anonymous access returns `trusted_attrs => true`. When tracking is enabled, EMQX retains
+this as `clientinfo => true`.
+This mask trusts all client input, including later updates. EMQX does not expand it or track exclusions.
+
+## Client information layout
+
+Known authentication outputs remain at the top level. `is_superuser`, `auth_expire_at`, and `acl`
+are statically trusted, like `zone`. Authentication normalizes `expire_at` to `auth_expire_at`.
+It resets `is_superuser` and authentication expiry on each successful authentication. It removes
+the previous ACL when the new result does not return one.
+
+```erlang
+#{
+    zone => default,
+    clientid => <<"client">>,
+    is_superuser => false,
+    auth_expire_at => undefined,
+    trusted_attrs => #{clientinfo => #{clientid => true}}
+}.
+```
+
+`trusted_attrs.authn` contains only additional authentication outputs. EMQX omits it when empty.
+Reauthentication replaces this map and the input trust mask.
+
+When all three enforcement switches are disabled for the effective zone, EMQX skips input trust
+composition and omits `trusted_attrs` entirely. It applies zone overrides before checking the
+switches. Custom authentication outputs use the legacy top-level merge behavior in this mode.
+Without metadata, EMQX cannot identify and remove arbitrary custom outputs from an earlier result.
 
 ## Access API
 
@@ -63,10 +90,13 @@ end.
 Use `emqx_clientinfo:trusted/1` when a template or hook needs the complete trusted projection.
 
 Use `emqx_clientinfo:set_trusted/3` for a value derived from trusted input. Use
-`emqx_clientinfo:set/3` for other updates. The latter clears trust for the updated path.
+`emqx_clientinfo:set/3` for other updates. When the input trust mask is a map, `set/3` removes the
+updated path from that map. When `clientinfo => true`, both setters only update the value and
+preserve trust. EMQX-controlled fields remain statically trusted.
 
 Authentication output such as `is_superuser`, `acl`, and authentication expiry is available through
-`emqx_clientinfo:get_trusted/2`. Do not read compatibility copies from the top-level map.
+`emqx_clientinfo:get_trusted/2`. These top-level fields are authoritative, not compatibility copies.
+Both setters avoid creating trust metadata when all enforcement switches are disabled.
 
 ## Migration
 
@@ -81,7 +111,8 @@ Use one of these options during migration:
    consumer.
 3. Add a path to `mqtt.trusted_client_attributes` when another external control validates it.
 
-Disabling one enforcement switch does not make its derived values trusted for another consumer.
+Disabling one enforcement switch does not add trust to its derived values for another consumer.
+An existing unconditional trust mask remains unconditional after updates.
 
 Configuration changes affect existing connections at different times:
 
@@ -90,6 +121,11 @@ Configuration changes affect existing connections at different times:
 - Mountpoint rendering applies when a channel authenticates and establishes its mountpoint.
 - Limiter adjustment applies when EMQX creates or recreates a limiter container.
 - Changes to `mqtt.trusted_client_attributes` apply after authentication composes new trust metadata.
+
+When a connection authenticated with all enforcement switches disabled, enabling enforcement does
+not recover its discarded input trust. Consumers treat those inputs as untrusted until the client
+reauthenticates or reconnects. Known authentication outputs remain statically trusted.
+Disabling all switches removes retained metadata after the next successful authentication.
 
 Reconnect clients when a change must apply to every channel immediately.
 

@@ -1844,8 +1844,11 @@ t_post_auth_tns_expression_reads_client_attrs_tag(Config) ->
         ResultClientInfo, [client_attrs, <<"tns">>]
     ),
     case ?config(security_profile, Config) of
-        legacy -> ?assertEqual(error, TrustedTns);
-        hardened -> ?assertEqual({ok, <<"bypass_acme">>}, TrustedTns)
+        legacy ->
+            ?assertNot(maps:is_key(trusted_attrs, ResultClientInfo)),
+            ?assertEqual(error, TrustedTns);
+        hardened ->
+            ?assertEqual({ok, <<"bypass_acme">>}, TrustedTns)
     end.
 
 -doc "coalesce(client_attrs.tag, username) falls back to username when no tag.".

@@ -17,8 +17,8 @@ t_security_boundary(_) ->
         username => <<"user">>,
         password => <<"passwd">>,
         custom_authz_field => custom_value,
+        is_superuser => true,
         trusted_attrs => #{
-            authn => #{is_superuser => true},
             clientinfo => #{username => true}
         }
     },
@@ -31,7 +31,7 @@ t_security_boundary(_) ->
         ?assertEqual(<<"user">>, maps:get(username, Context)),
         ?assertNot(maps:is_key(password, Context)),
         ?assertNot(maps:is_key(custom_authz_field, Context)),
-        ?assertNot(maps:is_key(is_superuser, Context)),
+        ?assertEqual(true, maps:get(is_superuser, Context)),
         ?assertEqual(true, emqx_authz_context:get_authn(Context, is_superuser, false)),
         Persisted = emqx_authz_context:make_persist(Context),
         ?assertEqual(true, emqx_authz_context:get_authn(Persisted, is_superuser, false))

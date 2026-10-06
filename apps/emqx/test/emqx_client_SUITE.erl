@@ -900,7 +900,7 @@ t_namespace_as_mountpoint_enabled(init, Config) ->
         Config
     ).
 
-t_namespace_as_mountpoint_enabled(_) ->
+t_namespace_as_mountpoint_enabled(Config) ->
     Namespace = <<"n1">>,
     ClientId = <<"test-client-1">>,
     {ok, Client} = emqtt:start_link([
@@ -916,8 +916,16 @@ t_namespace_as_mountpoint_enabled(_) ->
         #{mountpoint := ExpectedMountpoint},
         ClientInfo
     ),
-    %% A mountpoint derived by this consumer must not become trusted implicitly.
-    ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, mountpoint)),
+    %% Legacy connections omit metadata; hardened anonymous connections retain unconditional trust.
+    case ?config(security_profile, Config) of
+        legacy ->
+            ?assertNot(maps:is_key(trusted_attrs, ClientInfo)),
+            ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, mountpoint));
+        hardened ->
+            ?assertEqual(
+                {ok, ExpectedMountpoint}, emqx_clientinfo:get_trusted(ClientInfo, mountpoint)
+            )
+    end,
     emqtt:disconnect(Client).
 
 t_namespace_as_mountpoint_trusted(init, Config) ->

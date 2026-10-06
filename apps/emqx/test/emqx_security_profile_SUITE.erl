@@ -210,11 +210,19 @@ assert_trusted_attribute_config(Profile) ->
         <<"username">>, <<"client_attrs.tns">>, <<"missing.path">>
     ]),
     TrustedClientInfo = emqx_clientinfo:merge_authn_result(ClientInfo, #{}, merge),
-    ?assertEqual({ok, <<"user">>}, emqx_clientinfo:get_trusted(TrustedClientInfo, username)),
-    ?assertEqual(
-        {ok, <<"tenant">>},
-        emqx_clientinfo:get_trusted(TrustedClientInfo, [client_attrs, <<"tns">>])
-    ),
+    case Profile of
+        legacy ->
+            ?assertNot(maps:is_key(trusted_attrs, TrustedClientInfo)),
+            ?assertEqual(error, emqx_clientinfo:get_trusted(TrustedClientInfo, username));
+        hardened ->
+            ?assertEqual(
+                {ok, <<"user">>}, emqx_clientinfo:get_trusted(TrustedClientInfo, username)
+            ),
+            ?assertEqual(
+                {ok, <<"tenant">>},
+                emqx_clientinfo:get_trusted(TrustedClientInfo, [client_attrs, <<"tns">>])
+            )
+    end,
     ?assertEqual(
         error,
         emqx_clientinfo:get_trusted(TrustedClientInfo, [client_attrs, <<"other">>])

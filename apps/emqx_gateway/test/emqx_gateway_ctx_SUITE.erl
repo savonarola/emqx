@@ -64,8 +64,8 @@ t_authenticate(_) ->
     },
     {ok, NInfo1} = emqx_gateway_ctx:authenticate(Ctx, Info1),
     ?assertEqual(default, maps:get(zone, NInfo1)),
-    ?assertEqual(false, maps:is_key(is_superuser, NInfo1)),
-    ?assertEqual(false, maps:is_key(auth_expire_at, NInfo1)),
+    ?assertMatch(#{is_superuser := false, auth_expire_at := undefined}, NInfo1),
+    ?assertNot(maps:is_key(authn, maps:get(trusted_attrs, NInfo1))),
     ?assertEqual({ok, false}, emqx_clientinfo:get_trusted(NInfo1, is_superuser)),
     ?assertEqual({ok, undefined}, emqx_clientinfo:get_trusted(NInfo1, auth_expire_at)),
 
@@ -88,7 +88,7 @@ t_authenticate(_) ->
         clientid => admin
     },
     {ok, NInfo4} = emqx_gateway_ctx:authenticate(Ctx, Info4),
-    ?assertEqual(false, maps:is_key(is_superuser, NInfo4)),
+    ?assertEqual(true, maps:get(is_superuser, NInfo4)),
     ?assertEqual({ok, true}, emqx_clientinfo:get_trusted(NInfo4, is_superuser)),
 
     Info5 = #{mountpoint => undefined, clientid => <<"zone-override">>},
@@ -160,8 +160,8 @@ t_mountpoint_missing_trusted_variable(_) ->
         emqx_gateway_ctx:authenticate(Ctx, Info)
     ).
 
-%% Verify that legacy gateway rendering clears inherited trust from the mountpoint.
-t_legacy_mountpoint_is_not_trusted(_) ->
+%% Verify that legacy gateway rendering does not retain disabled trust metadata.
+t_legacy_mountpoint_skips_trust_metadata(_) ->
     emqx_common_test_helpers:with_security_profile("legacy", fun() ->
         Ctx = #{gwname => mqttsn, cm => self()},
         Info = #{
@@ -170,10 +170,11 @@ t_legacy_mountpoint_is_not_trusted(_) ->
         },
         {ok, NInfo} = emqx_gateway_ctx:authenticate(Ctx, Info),
         ?assertEqual(<<"mqttsn/trusted-all/">>, maps:get(mountpoint, NInfo)),
+        ?assertNot(maps:is_key(trusted_attrs, NInfo)),
         ?assertEqual(error, emqx_clientinfo:get_trusted(NInfo, mountpoint))
     end).
 
-%% Verify that gateway expiry reads the relocated trusted authn value.
+%% Verify that gateway expiry reads the statically trusted authentication output.
 t_connection_expire_interval(_) ->
     Ctx = #{gwname => mqttsn, cm => self()},
     Info = #{mountpoint => undefined, clientid => <<"expiring">>},

@@ -393,7 +393,7 @@ t_check_no_expire(_Config) ->
 
 t_check_undefined_expire(_Config) ->
     Acl = #{expire => undefined, rules => #{<<"sub">> => [<<"a/b">>]}},
-    Client = #{trusted_attrs => #{authn => #{acl => Acl}}},
+    Client = #{acl => Acl},
 
     ?assertMatch(
         {matched, allow},

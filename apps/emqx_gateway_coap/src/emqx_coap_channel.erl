@@ -614,7 +614,7 @@ merge_takeover_clientinfo(ReqClientId, ClientInfo0, ResumeClientInfo) ->
             end
         end,
         BaseClientInfo,
-        [username, trusted_attrs, mountpoint, enable_authn]
+        [username, is_superuser, auth_expire_at, acl, trusted_attrs, mountpoint, enable_authn]
     ).
 
 invalid_token_reply(Msg, Channel) ->

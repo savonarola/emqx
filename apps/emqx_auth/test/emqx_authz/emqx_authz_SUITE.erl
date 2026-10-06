@@ -948,7 +948,7 @@ t_skipped_as_superuser(_Config) ->
         peerhost => {127, 0, 0, 1},
         zone => default,
         listener => 'tcp:default',
-        trusted_attrs => #{authn => #{is_superuser => true}}
+        is_superuser => true
     },
     AuthzContext = emqx_authz_context:make(ClientInfo),
     ?check_trace(

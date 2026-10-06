@@ -22,6 +22,9 @@ init_per_suite(Config) ->
         """
         listeners.tcp.default.bind = "127.0.0.1:~B"
         listeners.tcp.default.enable_authn = true
+        listeners.ssl.default.enable = false
+        listeners.ws.default.enable = false
+        listeners.wss.default.enable = false
         authorization.no_match = allow
         authorization.cache.enable = true
         mqtt.client_attrs_init = [

@@ -10,6 +10,17 @@ integration.
 | Pre-feature baseline | `37c9942c7f` |
 | Core API only | `218a6a97fd` |
 | Integrated implementation | `8e3f5672ac` |
+| Unconditional-trust cleanup | `e00a7c2f0b` plus removal of exclusion metadata |
+| Optimized authentication layout | Current worktree based on `e00a7c2f0b` |
+
+The results below use the optimized authentication layout. Known authentication outputs remain at
+the top level. Empty custom authentication output maps are absent. Disabled connections retain no
+trust metadata.
+
+The unconditional-trust cleanup retained 160 extra bytes per disabled or client-ID-only channel and
+328 bytes per several-attributes channel. The optimized layout removes the disabled overhead and
+saves another 48 bytes in each enabled case. The original integrated implementation retained another
+40 bytes per channel for the empty exclusion map and its metadata entry.
 
 The core API checkpoint had no runtime integration. Its retained terms matched the baseline byte for
 byte: 896 bytes for `ClientInfo`, 3,496 bytes for the channel record, and 4,072 bytes for the complete
@@ -53,7 +64,7 @@ Run one case with:
 EMQX_CLIENTINFO_MEMORY_SCENARIO=disabled \
 EMQX_CLIENTINFO_MEMORY_COUNT=1000 \
 EMQX_CLIENTINFO_MEMORY_RUNS=3 \
-EMQX_CLIENTINFO_MEMORY_OUTPUT=/tmp/clientinfo-memory.eterm \
+EMQX_CLIENTINFO_MEMORY_OUTPUT=/tmp/opencode/clientinfo-memory.eterm \
 TERM=dumb \
 SUITES=emqx_clientinfo_memory_SUITE \
 make apps/emqx-ct
@@ -67,17 +78,17 @@ API or the integrated implementation.
 
 All values are bytes. Sharing-aware and flat sizes were equal for these extracted terms.
 
-| Case | Term | Baseline | Integrated | Increase | Percent |
+| Case | Term | Baseline | Optimized layout | Increase | Percent |
 | --- | --- | ---: | ---: | ---: | ---: |
-| Disabled | `ClientInfo` | 896 | 1,096 | +200 | +22.32% |
-| Disabled | Channel record | 3,496 | 3,696 | +200 | +5.72% |
-| Disabled | Connection state | 4,072 | 4,272 | +200 | +4.91% |
-| Enabled, client ID only | `ClientInfo` | 896 | 1,096 | +200 | +22.32% |
-| Enabled, client ID only | Channel record | 3,496 | 3,696 | +200 | +5.72% |
-| Enabled, client ID only | Connection state | 4,072 | 4,272 | +200 | +4.91% |
-| Enabled, several attributes | `ClientInfo` | 896 | 1,264 | +368 | +41.07% |
-| Enabled, several attributes | Channel record | 3,496 | 3,864 | +368 | +10.53% |
-| Enabled, several attributes | Connection state | 4,072 | 4,440 | +368 | +9.04% |
+| Disabled | `ClientInfo` | 896 | 896 | 0 | 0% |
+| Disabled | Channel record | 3,496 | 3,496 | 0 | 0% |
+| Disabled | Connection state | 4,072 | 4,072 | 0 | 0% |
+| Enabled, client ID only | `ClientInfo` | 896 | 1,008 | +112 | +12.50% |
+| Enabled, client ID only | Channel record | 3,496 | 3,608 | +112 | +3.20% |
+| Enabled, client ID only | Connection state | 4,072 | 4,184 | +112 | +2.75% |
+| Enabled, several attributes | `ClientInfo` | 896 | 1,176 | +280 | +31.25% |
+| Enabled, several attributes | Channel record | 3,496 | 3,776 | +280 | +8.01% |
+| Enabled, several attributes | Connection state | 4,072 | 4,352 | +280 | +6.88% |
 
 The referenced binary payload did not increase. It remained 1,317 bytes for `ClientInfo` and 1,348
 bytes for the channel and connection-state terms in every case. The process dictionary remained
@@ -86,37 +97,45 @@ trusted projection in its cache.
 
 ## Channel-process memory
 
-The process allocator stayed in the same heap-size step in every case.
+All three optimized-layout cases stayed in the same median and p95 heap-size step as the baseline.
 
-| Case | Baseline median / p95 | Integrated median / p95 | Measured increase |
+| Case | Baseline median / p95 | Optimized layout median / p95 | Measured increase |
 | --- | ---: | ---: | ---: |
 | Disabled | 6,104 / 6,104 | 6,104 / 6,104 | 0 bytes, 0% |
 | Enabled, client ID only | 6,104 / 6,104 | 6,104 / 6,104 | 0 bytes, 0% |
 | Enabled, several attributes | 6,104 / 6,104 | 6,104 / 6,104 | 0 bytes, 0% |
 
-The per-run process-memory means ranged from 6,104.0 to 6,143.3 bytes across all baseline and
-integrated runs. Fewer than 5% of channels entered a larger heap allocation step, so the median and
-p95 remained stable. Referenced off-heap binary payload was 411 bytes per process in every run.
+The optimized-layout process-memory means ranged from 6,104.0 to 6,176.5 bytes in disabled mode and
+from 6,104.0 to 6,104.1 bytes in both enabled cases. Referenced off-heap binary payload was 411 bytes
+per process in every run.
 
-The retained term increase fits into existing process heap slack for this workload. It can still
-cause an earlier heap growth step with larger sessions or other channel state.
+Earlier unconditional-trust cleanup measurements showed heap-allocation variation in the
+several-attributes case. One execution used a 987-word heap for most channels, with a 9,120-byte
+median. A repeat used a 610-word heap, with a 6,104-byte median. Both retained the same term sizes.
+
+The retained increase can fit into existing process heap slack. Forced garbage collection does not
+guarantee the same heap allocation step across executions.
 
 ## Fleet projections
 
-The retained channel-record increase gives the stable payload projection. The measured process
-allocation projection is zero while channels remain in the same heap step.
+The retained channel-record increase gives the stable payload projection. Actual process allocation
+depends on the heap step. The earlier 3,016-byte step adds 287.63 MiB for 100,000 channels or
+2,876.28 MiB for 1,000,000 channels when all channels enter that larger step.
 
 | Case | Retained increase per channel | 100,000 channels | 1,000,000 channels |
 | --- | ---: | ---: | ---: |
-| Disabled | 200 bytes | 19.07 MiB | 190.73 MiB |
-| Enabled, client ID only | 200 bytes | 19.07 MiB | 190.73 MiB |
-| Enabled, several attributes | 368 bytes | 35.10 MiB | 350.95 MiB |
+| Disabled | 0 bytes | 0 MiB | 0 MiB |
+| Enabled, client ID only | 112 bytes | 10.68 MiB | 106.81 MiB |
+| Enabled, several attributes | 280 bytes | 26.70 MiB | 267.03 MiB |
 
 ## Overhead source
 
-The common 200-byte increase comes from the retained `trusted_attrs` metadata. It contains the
-sanitized authentication result, the client-information trust mask, and the exclusion mask. The
-nested mask for `client_attrs.tns` and the two additional attributes adds 168 bytes.
+The enabled client-ID-only case retains 112 extra bytes. The top-level metadata entry costs 16 bytes,
+the `trusted_attrs` map costs 48 bytes, and the client-ID mask costs 48 bytes. The nested mask for
+`client_attrs.tns` and the two additional attributes adds 168 bytes. Attribute values are not copied.
+
+There is no exclusion mask. Known authentication outputs remain at the top level, so the benchmark
+does not retain an `authn` submap. Custom authentication outputs would add that map only when present.
 
 The channel retains one `ClientInfo` term. The exact `ClientInfo` increase therefore propagates to
 the channel record and complete connection state without another retained copy. Attribute values are
@@ -124,10 +143,10 @@ not copied into the mask, and referenced binary payload remains unchanged. Trust
 by authorization and other consumers are temporary and are not retained in the measured channel or
 authorization cache.
 
-Disabled enforcement does not build a projection or traverse the mask in consumers. It still retains
-the 200-byte provenance metadata created at authentication. This metadata lets a later authorization
-configuration change enforce trust on an existing connection. Removing it would require clients to
-reauthenticate or reconnect before enforcement could be enabled safely.
+Disabled authentication skips input trust composition and retains no metadata. Disabled consumers
+do not build projections or traverse masks. Enabling enforcement on these existing connections
+treats discarded input trust as absent until reauthentication or reconnect. Known authentication
+outputs remain statically trusted.
 
 This benchmark measures retained memory, not execution time. It does not include session takeover,
 which remains outside this work.
