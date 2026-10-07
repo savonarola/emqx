@@ -12,11 +12,15 @@ integration.
 | Integrated implementation | `8e3f5672ac` |
 | Unconditional-trust cleanup | `e00a7c2f0b` plus removal of exclusion metadata |
 | Optimized authentication layout | `4317637eef` |
-| Direct trust mask and separate authn namespace | Current worktree based on `4317637eef` |
+| Direct trust mask and separate authn namespace before rebase | `1e914c57df` |
+| Three-scenario matrix after rebase | `1b175a0223` plus local shortcut and matrix changes |
 
 The results below use the direct trust mask and separate authn namespace. Known authentication
 outputs remain at the top level. Unknown outputs stay in top-level `authn`, which is absent when
 empty. `trusted_attrs` contains the input mask directly. Disabled connections retain no trust mask.
+
+The baseline comparison below was measured before the rebase onto updated `dev-70`. The
+post-rebase matrix results appear in the final section.
 
 The unconditional-trust cleanup retained 160 extra bytes per disabled or client-ID-only channel and
 328 bytes per several-attributes channel. The optimized layout removes the disabled overhead and
@@ -31,7 +35,8 @@ connection state. Its channel-process median was also unchanged at 6,104 bytes.
 ## Method
 
 The benchmark is `apps/emqx/test/emqx_clientinfo_memory_SUITE.erl`. It does not run during normal CT
-runs unless `EMQX_CLIENTINFO_MEMORY_SCENARIO` is set.
+runs unless `EMQX_CLIENTINFO_MEMORY=1` is set. It runs a Common Test matrix with `disabled`,
+`clientid_only`, and `several_attrs` scenarios.
 
 Each measurement used:
 
@@ -60,21 +65,21 @@ The suite measured the following values:
 - `process_info/2` memory, heap, message queue, and referenced binaries after garbage collection.
 - The process dictionary term that contains the authorization cache.
 
-Run one case with:
+Run all three scenarios with:
 
 ```sh
-EMQX_CLIENTINFO_MEMORY_SCENARIO=disabled \
+EMQX_CLIENTINFO_MEMORY=1 \
 EMQX_CLIENTINFO_MEMORY_COUNT=1000 \
 EMQX_CLIENTINFO_MEMORY_RUNS=3 \
-EMQX_CLIENTINFO_MEMORY_OUTPUT=/tmp/opencode/clientinfo-memory.eterm \
 TERM=dumb \
 SUITES=emqx_clientinfo_memory_SUITE \
 make apps/emqx-ct
 ```
 
-Use `clientid_only` or `several_attrs` for the other cases. Copy the suite unchanged into a detached
-baseline worktree to repeat the comparison. The suite detects whether the worktree contains the core
-API or the integrated implementation.
+The suite prints each scenario's measurements with `ct:print/2`. It does not write a separate
+results file. Use `GROUPS=disabled`, `GROUPS=clientid_only`, or `GROUPS=several_attrs` to run one
+scenario. Copy the suite unchanged into a detached baseline worktree to repeat the comparison.
+The suite detects whether the worktree contains the core API or the integrated implementation.
 
 ## Retained term sizes
 
@@ -154,3 +159,22 @@ outputs remain statically trusted.
 
 This benchmark measures retained memory, not execution time. It does not include session takeover,
 which remains outside this work.
+
+## Matrix after the dev-70 rebase
+
+The matrix ran all three scenarios in one suite invocation on the branch rebased onto `dev-70`
+at `5e835e904c`. Each scenario used three runs of 1,000 channels. All three cases passed.
+
+All values below are bytes. Retained term sizes were identical across the three runs per scenario.
+The overhead column compares each channel record with the disabled case in this matrix. It does
+not compare the new runtime with the historical baseline above.
+
+| Scenario | `ClientInfo` | Channel record | Connection state | Overhead | Process median / p95 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Disabled | 728 | 2,936 | 3,520 | 0 | 6,104 / 6,104 |
+| Client ID only | 792 | 3,000 | 3,584 | 64 | 6,104 / 6,104 |
+| Several attributes | 960 | 3,168 | 3,752 | 232 | 6,104 / 6,104 |
+
+The process dictionary remained 1,128 heap bytes in every scenario. Referenced off-heap binary
+payload remained 411 bytes per process. The trust mask overhead remains 64 and 232 bytes for
+the enabled scenarios.

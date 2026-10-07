@@ -11,10 +11,13 @@
 -include_lib("emqx/include/emqx_hooks.hrl").
 
 all() ->
-    case os:getenv("EMQX_CLIENTINFO_MEMORY_SCENARIO") of
-        false -> [];
-        _ -> [t_measure]
+    case os:getenv("EMQX_CLIENTINFO_MEMORY") of
+        "1" -> emqx_common_test_helpers:all_with_matrix(?MODULE);
+        _ -> []
     end.
+
+groups() ->
+    emqx_common_test_helpers:groups_with_matrix(?MODULE).
 
 init_per_suite(Config) ->
     Port = emqx_common_test_helpers:select_free_port(tcp),
@@ -47,20 +50,24 @@ init_per_suite(Config) ->
 
 end_per_suite(Config) ->
     emqx_hooks:del('client.authenticate', {?MODULE, authenticate}),
+    persistent_term:erase({?MODULE, scenario}),
     emqx_cth_suite:stop(?config(apps, Config)).
 
-%% Measure stable MQTT channel terms and process memory for one trust scenario.
-t_measure(Config) ->
-    Scenario = scenario(),
+%% Measure stable MQTT channel terms and process memory for all three trust scenarios.
+t_measure() ->
+    [{matrix, true}].
+t_measure(matrix) ->
+    [[disabled], [clientid_only], [several_attrs]];
+t_measure(Config) when is_list(Config) ->
+    [Scenario] = emqx_common_test_helpers:group_path(Config),
     Count = env_integer("EMQX_CLIENTINFO_MEMORY_COUNT", 1_000),
     Runs = env_integer("EMQX_CLIENTINFO_MEMORY_RUNS", 3),
     persistent_term:put({?MODULE, scenario}, Scenario),
     configure_scenario(Scenario),
     Results = [measure_run(Run, Count, ?config(port, Config)) || Run <- lists:seq(1, Runs)],
-    Output = os:getenv("EMQX_CLIENTINFO_MEMORY_OUTPUT"),
-    ok = file:write_file(
-        Output,
-        io_lib:format("~p.~n", [
+    ct:print(
+        "Client-info memory matrix result:~n~p",
+        [
             #{
                 scenario => Scenario,
                 count => Count,
@@ -69,7 +76,7 @@ t_measure(Config) ->
                 word_size => erlang:system_info(wordsize),
                 implementation_stage => implementation_stage()
             }
-        ])
+        ]
     ),
     ok.
 
@@ -275,7 +282,7 @@ configure_scenario(Scenario) ->
     end.
 
 trusted_mask() ->
-    case scenario() of
+    case persistent_term:get({?MODULE, scenario}) of
         disabled ->
             #{clientid => true};
         clientid_only ->
@@ -289,13 +296,6 @@ trusted_mask() ->
                     <<"attr_b">> => true
                 }
             }
-    end.
-
-scenario() ->
-    case os:getenv("EMQX_CLIENTINFO_MEMORY_SCENARIO") of
-        "disabled" -> disabled;
-        "clientid_only" -> clientid_only;
-        "several_attrs" -> several_attrs
     end.
 
 implementation_stage() ->
