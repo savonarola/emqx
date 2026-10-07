@@ -219,7 +219,7 @@ eval_mountpoint(ClientInfo = #{mountpoint := MountPoint}) ->
         true ->
             case emqx_mountpoint:replvar_strict(MountPoint, MountpointClientInfo) of
                 {ok, MountPoint1} ->
-                    {ok, emqx_clientinfo:set(ClientInfo, mountpoint, MountPoint1)};
+                    {ok, emqx_clientinfo:set_trusted(ClientInfo, mountpoint, MountPoint1)};
                 {error, Reason} ->
                     {error, Reason}
             end

@@ -6,9 +6,13 @@
 
 -export([
     merge_authn_result/3,
+    get/2,
+    get/3,
     get_trusted/2,
     get_trusted/3,
+    is_trusted/2,
     maybe_trusted/2,
+    maybe_trusted_for_mqtt/1,
     mqtt_require_trusted_attributes/1,
     set/3,
     set_trusted/3,
@@ -86,6 +90,21 @@ merge_authn_result(ClientInfo0, AuthResult0, ClientAttrsMode) ->
             }
     end.
 
+-spec get(emqx_types:clientinfo(), key_path()) -> {ok, term(), boolean()} | error.
+get(ClientInfo, Key) ->
+    Path = key_path(Key),
+    case emqx_utils_maps:deep_find(Path, ClientInfo) of
+        {ok, Value} -> {ok, Value, is_trusted(ClientInfo, Path)};
+        {not_found, _, _} -> error
+    end.
+
+-spec get(emqx_types:clientinfo(), key_path(), term()) -> {term(), boolean()}.
+get(ClientInfo, Key, Default) ->
+    case get(ClientInfo, Key) of
+        {ok, Value, IsTrusted} -> {Value, IsTrusted};
+        error -> {Default, false}
+    end.
+
 -spec get_trusted(emqx_types:clientinfo(), key_path()) -> {ok, term()} | error.
 get_trusted(ClientInfo, Key) when
     Key =:= is_superuser; Key =:= auth_expire_at; Key =:= acl
@@ -106,11 +125,20 @@ get_trusted(ClientInfo, Key, Default) ->
         error -> Default
     end.
 
+-spec is_trusted(emqx_types:clientinfo(), key_path()) -> boolean().
+is_trusted(ClientInfo, Key) ->
+    Path = key_path(Key),
+    is_statically_trusted(Path) orelse is_input_trusted(ClientInfo, Path).
+
 -spec maybe_trusted(emqx_types:clientinfo(), boolean()) -> emqx_types:clientinfo().
 maybe_trusted(ClientInfo, false) ->
     ClientInfo;
 maybe_trusted(ClientInfo, true) ->
     trusted(ClientInfo).
+
+-spec maybe_trusted_for_mqtt(emqx_types:clientinfo()) -> emqx_types:clientinfo().
+maybe_trusted_for_mqtt(ClientInfo) ->
+    maybe_trusted(ClientInfo, mqtt_require_trusted_attributes(ClientInfo)).
 
 -spec mqtt_require_trusted_attributes(emqx_types:clientinfo()) -> boolean().
 mqtt_require_trusted_attributes(#{zone := Zone}) ->
@@ -120,28 +148,19 @@ mqtt_require_trusted_attributes(ClientInfo) when not is_map_key(zone, ClientInfo
     mqtt_require_trusted_attributes(#{zone => default}).
 
 -spec set(emqx_types:clientinfo(), key_path(), term()) -> emqx_types:clientinfo().
-set(#{trusted_attrs := true} = ClientInfo, Key, Value) ->
-    emqx_utils_maps:deep_force_put(key_path(Key), ClientInfo, Value);
-set(#{trusted_attrs := Mask0} = ClientInfo0, Key, Value) ->
-    Path = key_path(Key),
-    ClientInfo1 = emqx_utils_maps:deep_force_put(Path, ClientInfo0, Value),
-    ClientInfo1#{trusted_attrs := remove_mask(Path, Mask0)};
 set(ClientInfo, Key, Value) ->
-    emqx_utils_maps:deep_force_put(key_path(Key), ClientInfo, Value).
+    Path = key_path(Key),
+    case is_statically_trusted(Path) of
+        true -> error({statically_trusted_attribute, Path});
+        false -> do_set(ClientInfo, Path, Value)
+    end.
 
 -spec set_trusted(emqx_types:clientinfo(), key_path(), term()) -> emqx_types:clientinfo().
-set_trusted(#{trusted_attrs := true} = ClientInfo, Key, Value) ->
-    emqx_utils_maps:deep_force_put(key_path(Key), ClientInfo, Value);
-set_trusted(#{trusted_attrs := Mask0} = ClientInfo0, Key, Value) ->
+set_trusted(ClientInfo, Key, Value) ->
     Path = key_path(Key),
-    ClientInfo1 = emqx_utils_maps:deep_force_put(Path, ClientInfo0, Value),
-    ClientInfo1#{trusted_attrs := put_mask(Path, Mask0)};
-set_trusted(ClientInfo0, Key, Value) ->
-    Path = key_path(Key),
-    ClientInfo = emqx_utils_maps:deep_force_put(Path, ClientInfo0, Value),
-    case require_trusted_attributes(ClientInfo) of
-        false -> ClientInfo;
-        true -> ClientInfo#{trusted_attrs => put_mask(Path, #{})}
+    case is_statically_trusted(Path) of
+        true -> emqx_utils_maps:deep_force_put(Path, ClientInfo, Value);
+        false -> do_set_trusted(ClientInfo, Path, Value)
     end.
 
 -spec trusted(emqx_types:clientinfo()) -> map().
@@ -156,6 +175,34 @@ trusted(ClientInfo) ->
 %%------------------------------------------------------------------------------
 %% Private
 %%------------------------------------------------------------------------------
+
+is_statically_trusted([Key | _]) ->
+    lists:member(Key, ?STATIC_TRUSTED_KEYS).
+
+is_input_trusted(#{trusted_attrs := Mask}, Path) ->
+    is_mask_trusted(Path, Mask);
+is_input_trusted(_ClientInfo, _Path) ->
+    false.
+
+do_set(#{trusted_attrs := true} = ClientInfo, Path, Value) ->
+    emqx_utils_maps:deep_force_put(Path, ClientInfo, Value);
+do_set(#{trusted_attrs := Mask0} = ClientInfo0, Path, Value) ->
+    ClientInfo1 = emqx_utils_maps:deep_force_put(Path, ClientInfo0, Value),
+    ClientInfo1#{trusted_attrs := remove_mask(Path, Mask0)};
+do_set(ClientInfo, Path, Value) ->
+    emqx_utils_maps:deep_force_put(Path, ClientInfo, Value).
+
+do_set_trusted(#{trusted_attrs := true} = ClientInfo, Path, Value) ->
+    emqx_utils_maps:deep_force_put(Path, ClientInfo, Value);
+do_set_trusted(#{trusted_attrs := Mask0} = ClientInfo0, Path, Value) ->
+    ClientInfo1 = emqx_utils_maps:deep_force_put(Path, ClientInfo0, Value),
+    ClientInfo1#{trusted_attrs := put_mask(Path, Mask0)};
+do_set_trusted(ClientInfo0, Path, Value) ->
+    ClientInfo = emqx_utils_maps:deep_force_put(Path, ClientInfo0, Value),
+    case require_trusted_attributes(ClientInfo) of
+        false -> ClientInfo;
+        true -> ClientInfo#{trusted_attrs => put_mask(Path, #{})}
+    end.
 
 require_trusted_attributes(ClientInfo) ->
     Default = emqx_security_profile:policy(multi_tenancy_require_trusted_attributes),
@@ -313,6 +360,16 @@ apply_mask(Data, Mask) when is_map(Data), is_map(Mask) ->
     );
 apply_mask(_Data, _Mask) ->
     #{}.
+
+is_mask_trusted(_Path, true) ->
+    true;
+is_mask_trusted([Key | Rest], Mask) when is_map(Mask) ->
+    case Mask of
+        #{Key := SubMask} -> is_mask_trusted(Rest, SubMask);
+        _ -> false
+    end;
+is_mask_trusted(_Path, _Mask) ->
+    false.
 
 put_mask(_Path, true) ->
     true;

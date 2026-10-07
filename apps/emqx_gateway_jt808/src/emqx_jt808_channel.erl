@@ -857,7 +857,7 @@ maybe_fix_mountpoint(ClientInfo = #{mountpoint := Mountpoint}) ->
         true ->
             case emqx_mountpoint:replvar_strict(Mountpoint, MountpointClientInfo) of
                 {ok, Mountpoint1} ->
-                    {ok, emqx_clientinfo:set(ClientInfo, mountpoint, Mountpoint1)};
+                    {ok, emqx_clientinfo:set_trusted(ClientInfo, mountpoint, Mountpoint1)};
                 {error, _} = Error ->
                     Error
             end

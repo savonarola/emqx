@@ -10,8 +10,8 @@ The implementation centers on `emqx_clientinfo`, explicit trust metadata from au
 - Built-in authenticators mark all actually used input variables as trusted. Operators remain responsible for backend validation.
 - Returned `client_attrs` and applied client ID and zone overrides contribute to the final trusted attributes.
 - Custom authn hooks must explicitly mark other input fields as trusted.
-- `emqx_clientinfo` calculates trusted attributes and exposes `get_trusted(ClientInfo, Key)` and `set_trusted(ClientInfo, Key, Value)`.
-- `emqx_clientinfo:set(ClientInfo, Key, Value)` updates a field and removes its path from an explicit input trust map. Unconditional trust and static trust remain unchanged.
+- `emqx_clientinfo` calculates trusted attributes and exposes `get(ClientInfo, Key)`, `get_trusted(ClientInfo, Key)`, `is_trusted(ClientInfo, Key)`, and `set_trusted(ClientInfo, Key, Value)`.
+- `emqx_clientinfo:set(ClientInfo, Key, Value)` updates a non-static field and removes its path from an explicit input trust map. It preserves unconditional trust. It raises for statically trusted fields and paths under those fields.
 - Do not retain compatibility field duplicates.
 - Keep known authentication outputs at the top level and statically trusted. Store additional outputs in top-level `authn`, and omit it when empty. Store the input mask directly in `trusted_attrs`.
 - Omit all trust metadata and skip input trust composition when all consumer enforcement switches are disabled for the effective zone.
@@ -41,10 +41,10 @@ Responsibilities:
    - Input fields selected by the returned `trusted_attrs` mask.
    - Applied zone and client ID overrides.
    - Explicitly configured `mqtt.trusted_client_attributes`.
-2. Provide `get_trusted(ClientInfo, Key)`.
+2. Provide `get(ClientInfo, Key)` to return `{ok, Value, IsTrusted}` or `error` for a missing path. Provide `get/3` to return `{Value, IsTrusted}` or `{Default, false}`. These accessors read raw values without filtering or namespace fallback. Provide `get_trusted(ClientInfo, Key)`. Provide `is_trusted(ClientInfo, Key)` to check static trust and mask paths without reading values or allocating a projection.
 3. Provide a trusted projection for consumers that need a complete map, such as template evaluation.
-4. Provide `set_trusted(ClientInfo, Key, Value) -> NewClientInfo` to set or replace a trusted value. Use the same key format as `get_trusted/2`. Store the value as trusted and return the updated `ClientInfo`.
-5. Provide `set(ClientInfo, Key, Value) -> NewClientInfo` to update a field and remove its path from an explicit input trust map. When `trusted_attrs => true`, both setters only update the value. EMQX-controlled fields remain statically trusted. Use the same key format as `get_trusted/2`.
+4. Provide `set_trusted(ClientInfo, Key, Value) -> NewClientInfo` to set or replace a trusted value. Use the same key format as `get_trusted/2`. Updates to statically trusted fields and paths under those fields must not change trust metadata. Store other values as trusted and return the updated `ClientInfo`.
+5. Provide `set(ClientInfo, Key, Value) -> NewClientInfo` to update a non-static field and remove its path from an explicit input trust map. Preserve unconditional trust. Raise `{statically_trusted_attribute, Path}` for statically trusted fields and paths under those fields. Use the same key format as `get_trusted/2`.
 
 Keep the distinction between the mask returned by authn and the resulting trusted data in `ClientInfo` explicit.
 

@@ -84,6 +84,17 @@ switches. Custom authentication outputs remain in their separate `authn` map in 
 
 ## Access API
 
+Use `emqx_clientinfo:get/2` to read a value and its trust status by path. It returns
+`{ok, Value, IsTrusted}` or `error` when the path is missing. It does not filter values or allocate
+a trusted projection. It never falls back to the `authn` namespace.
+
+Use `emqx_clientinfo:get/3` to supply a default. It returns `{Value, IsTrusted}` for a present
+value and `{Default, false}` for a missing path.
+
+```erlang
+{Namespace, IsTrusted} = emqx_clientinfo:get(ClientInfo, [client_attrs, <<"tns">>], undefined).
+```
+
 Use `emqx_clientinfo:get_trusted/2` when a consumer needs one trusted value.
 
 ```erlang
@@ -99,7 +110,14 @@ Use `emqx_clientinfo:get_trusted/3` when a consumer needs a default for a missin
 emqx_clientinfo:get_trusted(ClientInfo, auth_expire_at, undefined).
 ```
 
+Use `emqx_clientinfo:is_trusted/2` to check path trust without reading the value or allocating a
+projection. It returns `true` for static fields and paths covered by a `true` mask. It does not
+check whether the value exists. A partial map mask does not trust the whole parent value.
+
 Use `emqx_clientinfo:trusted/1` when a template or hook needs the complete trusted projection.
+
+Use `emqx_clientinfo:maybe_trusted_for_mqtt/1` for consumers controlled by MQTT trust enforcement.
+It applies the effective zone setting and returns the original map when enforcement is disabled.
 
 Access custom authentication output through `authn.<key>`. For example, use
 `emqx_clientinfo:get_trusted(ClientInfo, [authn, custom_field])` for an explicit nested lookup.
@@ -107,9 +125,13 @@ Trusted projections and persisted authorization contexts retain the `authn` map.
 `custom_field` never falls back to `authn.custom_field`.
 
 Use `emqx_clientinfo:set_trusted/3` for a value derived from trusted input. Use
-`emqx_clientinfo:set/3` for other updates. When the input trust mask is a map, `set/3` removes the
-updated path from that map. When `trusted_attrs => true`, both setters only update the value and
-preserve trust. EMQX-controlled fields remain statically trusted.
+`emqx_clientinfo:set/3` for other updates to non-static fields. When the input trust mask is a map,
+`set/3` removes the updated path from that map. When `trusted_attrs => true`, both setters preserve
+unconditional trust for non-static fields.
+
+Use `set_trusted/3` to update statically trusted fields or paths under those fields, such as
+`[authn, custom_field]`. These updates do not add a mask or change an existing mask. `set/3` raises
+`{statically_trusted_attribute, Path}` for these paths, regardless of the enforcement settings.
 
 Use the trusted accessor for known authentication outputs `is_superuser`, `acl`, and `auth_expire_at`.
 These top-level fields are authoritative and always trusted. The accessor reads them without mask
@@ -133,6 +155,8 @@ Use one of these options during migration:
 3. Add a path to `mqtt.trusted_client_attributes` when another external control validates it.
 
 Disabling one enforcement switch does not add trust to its derived values for another consumer.
+Namespace mountpoints inherit retained trust from `client_attrs.tns`, even when MQTT enforcement
+is disabled. Deriving a mountpoint from an untrusted namespace does not establish trust.
 An existing unconditional trust mask remains unconditional after updates.
 
 Configuration changes affect existing connections at different times:

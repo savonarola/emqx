@@ -931,13 +931,16 @@ t_namespace_as_mountpoint_enabled(Config) ->
 t_namespace_as_mountpoint_trusted(init, Config) ->
     override_conf(
         #{
+            [authorization, require_trusted_attributes] => true,
+            [mqtt, require_trusted_attributes] => false,
             [mqtt, client_attrs_init] => [mk_client_attrs_init_tns("user_property.namespace")],
             [mqtt, namespace_as_mountpoint] => true
         },
         Config
     ).
 
-%% Verify that an explicitly trusted namespace selects the MQTT mountpoint.
+%% Verify that a trusted namespace produces a trusted mountpoint even
+%% when mqtt.require_trusted_attributes is false
 t_namespace_as_mountpoint_trusted(_) ->
     with_authentication_hook(trust_tns_authentication, fun() ->
         Namespace = <<"n2">>,
@@ -949,9 +952,13 @@ t_namespace_as_mountpoint_trusted(_) ->
             {properties, #{'User-Property' => [{<<"namespace">>, Namespace}]}}
         ]),
         {ok, _} = emqtt:connect(Client),
+        ClientInfo = maps:get(clientinfo, emqx_cm:get_chan_info(ClientId)),
         ?assertMatch(
             #{mountpoint := <<"n2/">>},
-            maps:get(clientinfo, emqx_cm:get_chan_info(ClientId))
+            ClientInfo
+        ),
+        ?assertEqual(
+            {ok, <<"n2/">>}, emqx_clientinfo:get_trusted(ClientInfo, mountpoint)
         ),
         emqtt:disconnect(Client)
     end).
@@ -959,6 +966,7 @@ t_namespace_as_mountpoint_trusted(_) ->
 t_namespace_as_mountpoint_untrusted(init, Config) ->
     override_conf(
         #{
+            [authorization, require_trusted_attributes] => true,
             [mqtt, client_attrs_init] => [mk_client_attrs_init_tns("user_property.namespace")],
             [mqtt, namespace_as_mountpoint] => true
         },
@@ -981,10 +989,12 @@ t_namespace_as_mountpoint_untrusted(_) ->
                 legacy -> <<"forged/">>;
                 hardened -> undefined
             end,
+        ClientInfo = maps:get(clientinfo, emqx_cm:get_chan_info(ClientId)),
         ?assertMatch(
             #{mountpoint := ExpectedMountpoint},
-            maps:get(clientinfo, emqx_cm:get_chan_info(ClientId))
+            ClientInfo
         ),
+        ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, mountpoint)),
         emqtt:disconnect(Client)
     end).
 

@@ -227,9 +227,7 @@ create_limiter(#{listener := ListenerId} = ClientInfo, _Conf) ->
     %% sees listener-level limits. A hook-installed container (e.g. a
     %% tenant with delivery limits under a listener with none) must not
     %% depend on that gate.
-    LimiterClientInfo = emqx_clientinfo:maybe_trusted(
-        ClientInfo, emqx_clientinfo:mqtt_require_trusted_attributes(ClientInfo)
-    ),
+    LimiterClientInfo = emqx_clientinfo:maybe_trusted_for_mqtt(ClientInfo),
     emqx_hooks:run_fold(
         'session.limiter_adjustment', [LimiterClientInfo], {lazy, ListenerId}
     ).

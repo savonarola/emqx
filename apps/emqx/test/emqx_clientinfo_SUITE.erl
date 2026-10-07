@@ -42,6 +42,23 @@ t_maybe_trusted_disabled(_) ->
     ?assert(ClientInfo =:= emqx_clientinfo:maybe_trusted(ClientInfo, false)),
     ?assertNot(ClientInfo =:= emqx_clientinfo:maybe_trusted(ClientInfo, true)).
 
+%% Verify that the MQTT shortcut projects client info only when trust enforcement is enabled.
+t_maybe_trusted_for_mqtt(_) ->
+    ClientInfo = #{
+        zone => default,
+        clientid => <<"client">>,
+        username => <<"untrusted-user">>,
+        trusted_attrs => #{clientid => true}
+    },
+    %% Keep all client info when enforcement is disabled.
+    emqx_config:put([mqtt, require_trusted_attributes], false),
+    ?assertEqual(ClientInfo, emqx_clientinfo:maybe_trusted_for_mqtt(ClientInfo)),
+    %% Remove untrusted inputs when enforcement is enabled.
+    emqx_config:put([mqtt, require_trusted_attributes], true),
+    ?assertEqual(
+        maps:remove(username, ClientInfo), emqx_clientinfo:maybe_trusted_for_mqtt(ClientInfo)
+    ).
+
 %% Verify that authn composition keeps known outputs at the top level and trusts returned values.
 t_merge_authn_result(_) ->
     ClientInfo0 = #{
@@ -161,7 +178,37 @@ t_trusted_projection(_) ->
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, custom_authn)),
     ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(ClientInfo, [authn, custom_authn])),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, username)),
-    ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, password)).
+    ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, password)),
+    %% Check raw values and their trust status without filtering the values.
+    ?assertEqual({ok, default, true}, emqx_clientinfo:get(ClientInfo, [zone])),
+    ?assertEqual({ok, false, true}, emqx_clientinfo:get(ClientInfo, is_superuser)),
+    ?assertEqual({ok, <<"user">>, false}, emqx_clientinfo:get(ClientInfo, username)),
+    ?assertEqual(
+        {ok, <<"tenant">>, true}, emqx_clientinfo:get(ClientInfo, [client_attrs, <<"tns">>])
+    ),
+    ?assertEqual(
+        {ok, <<"value">>, false}, emqx_clientinfo:get(ClientInfo, [client_attrs, <<"untrusted">>])
+    ),
+    ?assertEqual({ok, value, true}, emqx_clientinfo:get(ClientInfo, [authn, custom_authn])),
+    ?assertEqual(error, emqx_clientinfo:get(ClientInfo, custom_authn)),
+    ?assertEqual({<<"user">>, false}, emqx_clientinfo:get(ClientInfo, username, fallback)),
+    ?assertEqual({undefined, true}, emqx_clientinfo:get(ClientInfo, auth_expire_at, fallback)),
+    ?assertEqual({fallback, false}, emqx_clientinfo:get(ClientInfo, missing, fallback)),
+    ?assertEqual(
+        {fallback, false}, emqx_clientinfo:get(maps:remove(zone, ClientInfo), zone, fallback)
+    ),
+    ?assert(emqx_clientinfo:is_trusted(ClientInfo, zone)),
+    ?assert(emqx_clientinfo:is_trusted(ClientInfo, [zone])),
+    ?assert(emqx_clientinfo:is_trusted(ClientInfo, clientid)),
+    ?assert(emqx_clientinfo:is_trusted(ClientInfo, [client_attrs, <<"tns">>])),
+    ?assert(emqx_clientinfo:is_trusted(ClientInfo, [authn, custom_authn])),
+    ?assertNot(emqx_clientinfo:is_trusted(ClientInfo, client_attrs)),
+    ?assertNot(emqx_clientinfo:is_trusted(ClientInfo, [client_attrs, <<"untrusted">>])),
+    ?assertNot(emqx_clientinfo:is_trusted(ClientInfo, username)),
+    ?assertNot(emqx_clientinfo:is_trusted(ClientInfo, missing)),
+    ParentTrusted = ClientInfo#{trusted_attrs := #{client_attrs => true}},
+    ?assert(emqx_clientinfo:is_trusted(ParentTrusted, client_attrs)),
+    ?assert(emqx_clientinfo:is_trusted(ParentTrusted, [client_attrs, <<"tns">>])).
 
 %% Verify that trusted and untrusted setters update trust without changing unrelated fields.
 t_setters(_) ->
@@ -177,6 +224,7 @@ t_setters(_) ->
     },
     ClientInfo1 = emqx_clientinfo:set(ClientInfo0, clientid, <<"new">>),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo1, clientid)),
+    ?assertNot(emqx_clientinfo:is_trusted(ClientInfo1, clientid)),
     ?assertEqual(
         {ok, <<"tenant">>},
         emqx_clientinfo:get_trusted(ClientInfo1, [client_attrs, <<"tns">>])
@@ -196,7 +244,13 @@ t_setters(_) ->
         {ok, <<"trusted-tenant">>},
         emqx_clientinfo:get_trusted(ClientInfo3, [client_attrs, <<"tns">>])
     ),
-    ClientInfo4 = emqx_clientinfo:set(ClientInfo3, zone, other),
+    ?assert(emqx_clientinfo:is_trusted(ClientInfo3, [client_attrs, <<"tns">>])),
+    ?assertError(
+        {statically_trusted_attribute, [zone]},
+        emqx_clientinfo:set(ClientInfo3, zone, other)
+    ),
+    ClientInfo4 = emqx_clientinfo:set_trusted(ClientInfo3, zone, other),
+    ?assertEqual(ClientInfo3#{zone := other}, ClientInfo4),
     ?assertEqual({ok, other}, emqx_clientinfo:get_trusted(ClientInfo4, zone)).
 
 %% Verify that setters preserve unconditional trust without changing the trust metadata.
@@ -209,10 +263,25 @@ t_universal_mask_setters(_) ->
         trusted_attrs => true
     },
     ?assertEqual({ok, <<"user">>}, emqx_clientinfo:get_trusted(ClientInfo0, username)),
+    ?assert(emqx_clientinfo:is_trusted(ClientInfo0, username)),
+    ?assert(emqx_clientinfo:is_trusted(ClientInfo0, [client_attrs, <<"tns">>])),
+    ?assert(emqx_clientinfo:is_trusted(ClientInfo0, [client_attrs, <<"missing">>])),
+    ?assertEqual(
+        {<<"tenant">>, true}, emqx_clientinfo:get(ClientInfo0, [client_attrs, <<"tns">>], undefined)
+    ),
+    ?assertEqual(error, emqx_clientinfo:get(ClientInfo0, [client_attrs, <<"missing">>])),
+    ?assertEqual(
+        {undefined, false},
+        emqx_clientinfo:get(ClientInfo0, [client_attrs, <<"missing">>], undefined)
+    ),
     ClientInfo1 = emqx_clientinfo:set(ClientInfo0, username, <<"new-user">>),
     ?assertEqual(ClientInfo0#{username := <<"new-user">>}, ClientInfo1),
     ?assertEqual({ok, <<"new-user">>}, emqx_clientinfo:get_trusted(ClientInfo1, username)),
-    ClientInfo2 = emqx_clientinfo:set(ClientInfo1, zone, other),
+    ?assertError(
+        {statically_trusted_attribute, [zone]},
+        emqx_clientinfo:set(ClientInfo1, [zone], other)
+    ),
+    ClientInfo2 = emqx_clientinfo:set_trusted(ClientInfo1, [zone], other),
     ?assertEqual(ClientInfo1#{zone := other}, ClientInfo2),
     ?assertEqual({ok, other}, emqx_clientinfo:get_trusted(ClientInfo2, zone)),
     ClientInfo3 = emqx_clientinfo:set_trusted(ClientInfo2, zone, trusted_zone),
@@ -287,8 +356,20 @@ t_disabled_authn_metadata(_) ->
     ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(ClientInfo, [authn, custom_authn])),
     ?assertNot(maps:is_key(trusted_attrs, ClientInfo)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, clientid)),
+    ?assertNot(emqx_clientinfo:is_trusted(ClientInfo, clientid)),
+    ?assertNot(emqx_clientinfo:is_trusted(ClientInfo, [client_attrs, <<"tns">>])),
+    ?assert(emqx_clientinfo:is_trusted(ClientInfo, is_superuser)),
+    ?assert(emqx_clientinfo:is_trusted(ClientInfo, [authn, custom_authn])),
     ?assertEqual({ok, false}, emqx_clientinfo:get_trusted(ClientInfo, is_superuser)),
     ?assertEqual(ClientInfo, emqx_authz_context:make(ClientInfo)),
+    ?assertEqual(
+        ClientInfo#{is_superuser := true},
+        emqx_clientinfo:set_trusted(ClientInfo, is_superuser, true)
+    ),
+    ?assertError(
+        {statically_trusted_attribute, [is_superuser]},
+        emqx_clientinfo:set(ClientInfo, is_superuser, true)
+    ),
     ClientInfo1 = emqx_clientinfo:set(ClientInfo, username, <<"new-user">>),
     ClientInfo2 = emqx_clientinfo:set_trusted(ClientInfo1, [client_attrs, <<"tns">>], <<"tenant">>),
     ?assertNot(maps:is_key(trusted_attrs, ClientInfo1)),
@@ -347,6 +428,11 @@ t_enable_enforcement_without_metadata(_) ->
     ),
     ?assertNot(maps:is_key(trusted_attrs, ClientInfo0)),
     configure_enforcement(true, false, false),
+    ?assertEqual(ClientInfo0, emqx_clientinfo:set_trusted(ClientInfo0, [zone], default)),
+    ?assertError(
+        {statically_trusted_attribute, [zone]},
+        emqx_clientinfo:set(ClientInfo0, zone, default)
+    ),
     Context = emqx_authz_context:make(ClientInfo0),
     ?assertEqual(
         #{zone => default, is_superuser => true, acl => [rule], auth_expire_at => undefined},
@@ -387,7 +473,13 @@ t_custom_authn_outputs(_) ->
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo3, custom_authn)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo3, other_custom)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo3, [authn, custom_authn])),
-    ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(ClientInfo3, [authn, other_custom])).
+    ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(ClientInfo3, [authn, other_custom])),
+    ClientInfo4 = emqx_clientinfo:set_trusted(ClientInfo0, [authn, custom_authn], new),
+    ?assertEqual(ClientInfo0#{authn := #{custom_authn => new}}, ClientInfo4),
+    ?assertError(
+        {statically_trusted_attribute, [authn, custom_authn]},
+        emqx_clientinfo:set(ClientInfo0, [authn, custom_authn], new)
+    ).
 
 %% Verify that colliding unknown outputs stay in authn and cannot replace any client-info field.
 t_authn_result_reserved_keys(_) ->

@@ -281,7 +281,8 @@ info(session_state, #channel{session = Session}) ->
 info(impl, #channel{session = Session}) ->
     emqx_session:info(impl, Session);
 info(namespace, #channel{clientinfo = ClientInfo}) ->
-    get_tenant_namespace(ClientInfo).
+    {Namespace, _IsTrusted} = get_tenant_namespace(ClientInfo),
+    Namespace.
 
 trusted_value(ClientInfo, Key) ->
     emqx_clientinfo:get_trusted(ClientInfo, Key, undefined).
@@ -739,9 +740,7 @@ post_process_connect(
 %% and the container is built on first use, once a finite limit is
 %% configured for the zone or the listener; see try_consume_quota/2.
 adjust_limiter(ClientInfo) ->
-    LimiterClientInfo = emqx_clientinfo:maybe_trusted(
-        ClientInfo, emqx_clientinfo:mqtt_require_trusted_attributes(ClientInfo)
-    ),
+    LimiterClientInfo = emqx_clientinfo:maybe_trusted_for_mqtt(ClientInfo),
     emqx_hooks:run_fold('channel.limiter_adjustment', [LimiterClientInfo], undefined).
 
 try_consume_quota(Needs, #channel{quota = undefined, clientinfo = ClientInfo} = Channel) ->
@@ -1684,9 +1683,9 @@ maybe_add_zone_changed_event(Replies, #channel{clientinfo = ClientInfo0} = Chann
 
 add_set_namespace_event(Replies, #channel{clientinfo = ClientInfo}) ->
     case get_tenant_namespace(ClientInfo) of
-        undefined ->
+        {undefined, _IsTrusted} ->
             [?REPLY_EVENT({set_namespace, ?global_ns}) | wrap_list(Replies)];
-        Namespace ->
+        {Namespace, _IsTrusted} ->
             [?REPLY_EVENT({set_namespace, Namespace}) | wrap_list(Replies)]
     end.
 
@@ -2665,39 +2664,41 @@ get_user_property_as_map(_) ->
 
 fix_mountpoint(ClientInfo) ->
     RequireTrustedAttrs = emqx_clientinfo:mqtt_require_trusted_attributes(ClientInfo),
-    MountpointClientInfo = emqx_clientinfo:maybe_trusted(ClientInfo, RequireTrustedAttrs),
-    fix_mountpoint(ClientInfo, MountpointClientInfo, RequireTrustedAttrs).
+    Attrs = emqx_clientinfo:maybe_trusted(ClientInfo, RequireTrustedAttrs),
+    fix_mountpoint(ClientInfo, Attrs, RequireTrustedAttrs).
 
 fix_mountpoint(
     #{mountpoint := undefined, zone := Zone} = ClientInfo,
-    MountpointClientInfo,
-    RequireTrustedAttrs
+    Attrs,
+    _RequireTrustedAttrs
 ) ->
     case get_mqtt_conf(Zone, namespace_as_mountpoint, false) of
         true ->
-            case get_tenant_namespace(MountpointClientInfo) of
-                undefined ->
+            case get_tenant_namespace(Attrs) of
+                {undefined, _IsTrusted} ->
                     {ok, ClientInfo};
-                Tns ->
+                {Tns, IsTrusted} ->
                     Mountpoint = iolist_to_binary([Tns, "/"]),
-                    {ok, set_mountpoint(ClientInfo, Mountpoint, RequireTrustedAttrs)}
+                    {ok, set_mountpoint(ClientInfo, Mountpoint, IsTrusted)}
             end;
         false ->
             {ok, ClientInfo}
     end;
-fix_mountpoint(#{mountpoint := MountPoint} = ClientInfo, ClientInfo, false) ->
-    MountPoint1 = emqx_mountpoint:replvar(MountPoint, ClientInfo),
-    {ok, ClientInfo#{mountpoint := MountPoint1}};
-fix_mountpoint(#{mountpoint := MountPoint} = ClientInfo, MountpointClientInfo, true) ->
-    case emqx_mountpoint:replvar_strict(MountPoint, MountpointClientInfo) of
+fix_mountpoint(#{mountpoint := MountPoint} = ClientInfo, Attrs, false) ->
+    MountPoint1 = emqx_mountpoint:replvar(MountPoint, Attrs),
+    {ok, emqx_clientinfo:set(ClientInfo, mountpoint, MountPoint1)};
+fix_mountpoint(#{mountpoint := MountPoint} = ClientInfo, TrustedAttrs, true) ->
+    case emqx_mountpoint:replvar_strict(MountPoint, TrustedAttrs) of
         {ok, MountPoint1} ->
-            {ok, emqx_clientinfo:set(ClientInfo, mountpoint, MountPoint1)};
+            {ok, emqx_clientinfo:set_trusted(ClientInfo, mountpoint, MountPoint1)};
         {error, Reason} ->
             ?SLOG(warning, #{msg => "mountpoint_render_failed", reason => Reason}),
             {error, ?RC_NOT_AUTHORIZED, ClientInfo}
     end.
 
-set_mountpoint(ClientInfo, Mountpoint, _RequireTrustedAttrs) ->
+set_mountpoint(ClientInfo, Mountpoint, true) ->
+    emqx_clientinfo:set_trusted(ClientInfo, mountpoint, Mountpoint);
+set_mountpoint(ClientInfo, Mountpoint, false) ->
     emqx_clientinfo:set(ClientInfo, mountpoint, Mountpoint).
 
 fix_mountpoint(_PipelineOutput, #channel{clientinfo = ClientInfo0} = Channel0) ->
@@ -2713,13 +2714,12 @@ fix_mountpoint(_PipelineOutput, #channel{clientinfo = ClientInfo0} = Channel0) -
 
 set_log_meta(_ConnPkt, #channel{clientinfo = #{clientid := ClientId} = ClientInfo}) ->
     Username = maps:get(username, ClientInfo, undefined),
-    Tns = get_tenant_namespace(ClientInfo),
+    {Tns, _IsTrusted} = get_tenant_namespace(ClientInfo),
     emqx_logger:set_metadata_clientid(ClientId),
     emqx_logger:set_proc_metadata([{username, Username}, {tns, Tns}]).
 
 get_tenant_namespace(ClientInfo) ->
-    Attrs = maps:get(client_attrs, ClientInfo, #{}),
-    maps:get(?CLIENT_ATTR_NAME_TNS, Attrs, undefined).
+    emqx_clientinfo:get(ClientInfo, [client_attrs, ?CLIENT_ATTR_NAME_TNS], undefined).
 
 %%--------------------------------------------------------------------
 %% Check banned
@@ -3940,7 +3940,7 @@ run_fold_with_context(Name, Args, Acc, Channel) ->
 
 run_client_connack_hooks(Channel, ConnInfo, Reason, AckProps) ->
     Name = 'client.connack',
-    Ns = get_tenant_namespace(Channel#channel.clientinfo),
+    {Ns, _IsTrusted} = get_tenant_namespace(Channel#channel.clientinfo),
     Ctx0 = mk_common_hook_context(Channel),
     Ctx = Ctx0#{namespace => Ns},
     Args = [ConnInfo, Reason],

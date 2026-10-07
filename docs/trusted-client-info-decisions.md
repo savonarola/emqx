@@ -54,11 +54,15 @@ Returned `client_attrs` and applied zone or client ID overrides contribute trust
 
 Introduce `emqx_clientinfo` to centralize trusted attribute calculation and access. Compose the final trusted attributes through this module.
 
+Use `emqx_clientinfo:get/2` to read a value and its trust status by path. It returns `{ok, Value, IsTrusted}` or `error` for a missing path. It does not filter values or allocate a trusted projection. It never falls back to `authn`. Use `get/3` to supply a default. It returns `{Value, IsTrusted}` for a present value and `{Default, false}` for a missing path.
+
 Access a trusted attribute through:
 
 ```erlang
 emqx_clientinfo:get_trusted(ClientInfo, Key)
 ```
+
+Use `emqx_clientinfo:is_trusted/2` to check whether a path is statically trusted or covered by a `true` mask. This predicate does not read values or allocate a projection. It does not check whether the value exists. Partial map masks do not trust the whole parent value.
 
 Set or replace a trusted attribute through:
 
@@ -74,7 +78,7 @@ Set or replace an attribute without adding trust through:
 NewClientInfo = emqx_clientinfo:set(ClientInfo, Key, Value)
 ```
 
-When the input trust mask is a map, `set/3` removes the updated path from that map. When `trusted_attrs => true`, both setters only update the value and preserve the mask. EMQX-controlled fields remain statically trusted. Use the same key format for all three methods. Route attribute updates through these setters instead of modifying the map directly.
+When the input trust mask is a map, `set/3` removes the updated path from that map. When `trusted_attrs => true`, both setters preserve unconditional trust for non-static fields. Use `set_trusted/3` for statically trusted fields and paths under those fields. These updates leave trust metadata unchanged. `set/3` raises `{statically_trusted_attribute, Path}` for those paths in every mode. Use the same key format for all three methods. Route attribute updates through these setters instead of modifying the map directly.
 
 Do not retain compatibility field duplicates. Update consumers to use the trusted attribute accessor.
 
