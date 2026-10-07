@@ -284,10 +284,7 @@ info(namespace, #channel{clientinfo = ClientInfo}) ->
     get_tenant_namespace(ClientInfo).
 
 trusted_value(ClientInfo, Key) ->
-    case emqx_clientinfo:get_trusted(ClientInfo, Key) of
-        {ok, Value} -> Value;
-        error -> undefined
-    end.
+    emqx_clientinfo:get_trusted(ClientInfo, Key, undefined).
 
 inspect(#channel{} = Channel) ->
     lists:foldl(

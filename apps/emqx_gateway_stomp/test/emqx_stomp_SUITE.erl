@@ -1562,7 +1562,7 @@ t_authn_superuser(_) ->
         emqx_access_control,
         authorize,
         fun(ClientInfo, _PubSub, _Topic) ->
-            case emqx_authz_context:get_authn(ClientInfo, is_superuser, false) of
+            case emqx_clientinfo:get_trusted(ClientInfo, is_superuser, false) of
                 true -> allow;
                 false -> deny
             end

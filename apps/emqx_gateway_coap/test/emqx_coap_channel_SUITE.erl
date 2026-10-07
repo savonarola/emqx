@@ -418,6 +418,7 @@ t_channel_takeover_resume_enriches_clientinfo(_) ->
         #{
             is_superuser => true,
             expire_at => ExpireAt,
+            custom_authn => output,
             trusted_attrs => #{username => true, clientid => true}
         },
         replace
@@ -459,6 +460,7 @@ t_channel_takeover_resume_enriches_clientinfo(_) ->
             ) ->
                 ?assertEqual(ReqClientId, maps:get(clientid, ClientInfo)),
                 ?assertEqual(<<"admin">>, maps:get(username, ClientInfo)),
+                ?assertEqual(#{custom_authn => output}, maps:get(authn, ClientInfo)),
                 ?assertEqual({ok, true}, emqx_clientinfo:get_trusted(ClientInfo, is_superuser)),
                 ?assertEqual(
                     {ok, ExpireAt}, emqx_clientinfo:get_trusted(ClientInfo, auth_expire_at)
@@ -482,6 +484,7 @@ t_channel_takeover_resume_enriches_clientinfo(_) ->
         ?assertEqual(connected, Channel1#channel.conn_state),
         ?assertEqual(ReqToken, Channel1#channel.token),
         ?assertEqual(<<"admin">>, maps:get(username, Channel1#channel.clientinfo)),
+        ?assertEqual(#{custom_authn => output}, maps:get(authn, Channel1#channel.clientinfo)),
         ?assertEqual(
             {ok, true},
             emqx_clientinfo:get_trusted(Channel1#channel.clientinfo, is_superuser)

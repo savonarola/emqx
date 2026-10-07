@@ -128,13 +128,14 @@ resume_clientinfo(NewClientInfo, OldClientInfo) ->
         is_superuser,
         auth_expire_at,
         acl,
+        authn,
         trusted_attrs,
         mountpoint,
         dn,
         cn,
         client_attrs
     ],
-    ClientInfo = maps:without([acl, auth_expire_at, is_superuser], NewClientInfo),
+    ClientInfo = maps:without([authn, acl, auth_expire_at, is_superuser], NewClientInfo),
     maps:merge(ClientInfo, maps:with(PreservedKeys, OldClientInfo)).
 
 replay(ClientInfo, Session = #{session := S}) ->

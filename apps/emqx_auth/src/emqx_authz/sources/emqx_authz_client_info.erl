@@ -96,7 +96,7 @@ destroy(_Source) -> ok.
 %%    ]
 %%
 authorize(AuthzContext, PubSub, Topic, _Source) ->
-    case emqx_authz_context:get_authn(AuthzContext, acl, undefined) of
+    case emqx_clientinfo:get_trusted(AuthzContext, acl, undefined) of
         undefined ->
             ignore;
         Acl ->

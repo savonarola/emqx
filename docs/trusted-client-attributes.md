@@ -48,7 +48,7 @@ not enter the trusted projection. Client attributes returned by authentication a
 client ID and zone overrides are also trusted.
 
 Explicit anonymous access returns `trusted_attrs => true`. When tracking is enabled, EMQX retains
-this as `clientinfo => true`.
+this directly in `ClientInfo.trusted_attrs`.
 This mask trusts all client input, including later updates. EMQX does not expand it or track exclusions.
 
 ## Client information layout
@@ -64,17 +64,23 @@ the previous ACL when the new result does not return one.
     clientid => <<"client">>,
     is_superuser => false,
     auth_expire_at => undefined,
-    trusted_attrs => #{clientinfo => #{clientid => true}}
+    trusted_attrs => #{clientid => true},
+    authn => #{custom_field => <<"backend-value">>}
 }.
 ```
 
-`trusted_attrs.authn` contains only additional authentication outputs. EMQX omits it when empty.
-Reauthentication replaces this map and the input trust mask.
+`trusted_attrs` contains only the input trust mask. Top-level `authn` contains additional
+authentication outputs. EMQX omits `authn` when empty. Reauthentication replaces this map in every
+mode and replaces the input trust mask when tracking is enabled.
+
+EMQX applies only known authentication outputs to client information. It keeps unknown outputs
+under `authn`, including keys that match a client information field. An output named `zone` becomes
+`authn.zone` and does not change the client's zone. Use `client_attrs`, `clientid_override`, and
+`zone_override` for supported updates. This separation does not require reserved-key collision lists.
 
 When all three enforcement switches are disabled for the effective zone, EMQX skips input trust
 composition and omits `trusted_attrs` entirely. It applies zone overrides before checking the
-switches. Custom authentication outputs use the legacy top-level merge behavior in this mode.
-Without metadata, EMQX cannot identify and remove arbitrary custom outputs from an earlier result.
+switches. Custom authentication outputs remain in their separate `authn` map in this mode.
 
 ## Access API
 
@@ -87,15 +93,27 @@ case emqx_clientinfo:get_trusted(ClientInfo, [client_attrs, <<"tns">>]) of
 end.
 ```
 
+Use `emqx_clientinfo:get_trusted/3` when a consumer needs a default for a missing or untrusted field.
+
+```erlang
+emqx_clientinfo:get_trusted(ClientInfo, auth_expire_at, undefined).
+```
+
 Use `emqx_clientinfo:trusted/1` when a template or hook needs the complete trusted projection.
+
+Access custom authentication output through `authn.<key>`. For example, use
+`emqx_clientinfo:get_trusted(ClientInfo, [authn, custom_field])` for an explicit nested lookup.
+Trusted projections and persisted authorization contexts retain the `authn` map. A lookup of
+`custom_field` never falls back to `authn.custom_field`.
 
 Use `emqx_clientinfo:set_trusted/3` for a value derived from trusted input. Use
 `emqx_clientinfo:set/3` for other updates. When the input trust mask is a map, `set/3` removes the
-updated path from that map. When `clientinfo => true`, both setters only update the value and
+updated path from that map. When `trusted_attrs => true`, both setters only update the value and
 preserve trust. EMQX-controlled fields remain statically trusted.
 
-Authentication output such as `is_superuser`, `acl`, and authentication expiry is available through
-`emqx_clientinfo:get_trusted/2`. These top-level fields are authoritative, not compatibility copies.
+Use the trusted accessor for known authentication outputs `is_superuser`, `acl`, and `auth_expire_at`.
+These top-level fields are authoritative and always trusted. The accessor reads them without mask
+traversal or projection allocation. Other fields still require trust checks.
 Both setters avoid creating trust metadata when all enforcement switches are disabled.
 
 ## Migration
@@ -103,6 +121,9 @@ Both setters avoid creating trust metadata when all enforcement switches are dis
 Review custom authentication hooks before enabling enforcement. Add a `trusted_attrs` mask for each
 client field that the hook validates. Review authorization and mountpoint templates for variables
 that the configured authentication method does not validate.
+
+Update custom output consumers to read `authn.<key>` in both profiles. Unknown outputs no longer
+merge into the client information map, including when trust enforcement is disabled.
 
 Use one of these options during migration:
 

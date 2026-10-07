@@ -4,7 +4,7 @@
 
 -module(emqx_authz_context).
 
--export([make/1, make_persist/1, get_authn/3, require_trusted_attributes/0]).
+-export([make/1, make_persist/1, require_trusted_attributes/0]).
 
 -export_type([
     t/0,
@@ -34,12 +34,14 @@
     now_time => non_neg_integer(),
     peername => emqx_types:peername(),
     peerport => inet:port_number(),
-    trusted_attrs => emqx_clientinfo:trusted_attrs()
+    authn => map(),
+    trusted_attrs => emqx_clientinfo:trusted_mask()
 }.
 -type t() :: legacy() | restricted().
 
 -define(PERSIST_KEYS, [
     acl,
+    authn,
     anonymous,
     cert_pem,
     client_attrs,
@@ -77,28 +79,7 @@ Limit authz context to the fields relevant for persistence
 make_persist(ClientInfo) ->
     maps:with(?PERSIST_KEYS, ClientInfo).
 
--spec get_authn(t(), atom(), term()) -> term().
-get_authn(AuthzContext, Key, Default) ->
-    case require_trusted_attributes() of
-        true ->
-            case emqx_clientinfo:get_trusted(AuthzContext, Key) of
-                {ok, Value} -> Value;
-                error -> Default
-            end;
-        false ->
-            get_authn_legacy(AuthzContext, Key, Default)
-    end.
-
 -spec require_trusted_attributes() -> boolean().
 require_trusted_attributes() ->
     Default = emqx_security_profile:policy(authorization_require_trusted_attributes),
     emqx:get_config([authorization, require_trusted_attributes], Default).
-
-%%--------------------------------------------------------------------
-%% Internal functions
-%%--------------------------------------------------------------------
-
-get_authn_legacy(#{trusted_attrs := #{authn := Authn}} = AuthzContext, Key, Default) ->
-    maps:get(Key, Authn, maps:get(Key, AuthzContext, Default));
-get_authn_legacy(AuthzContext, Key, Default) ->
-    maps:get(Key, AuthzContext, Default).

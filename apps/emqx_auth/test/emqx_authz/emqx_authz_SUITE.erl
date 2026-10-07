@@ -131,7 +131,7 @@ t_untrusted_username(Config) ->
         zone => default,
         clientid => <<"authenticated-client">>,
         username => <<"victim">>,
-        trusted_attrs => #{clientinfo => #{clientid => true}}
+        trusted_attrs => #{clientid => true}
     },
     AuthzContext = emqx_authz_context:make(ClientInfo),
     Rule = emqx_authz_rule:compile(

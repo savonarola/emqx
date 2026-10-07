@@ -24,15 +24,17 @@ Use this mask to compose the final trusted attributes. Extend the final trust se
 
 Trusting a returned client attribute does not trust other attributes already present in the runtime `client_attrs` map.
 
-An authentication result can return `trusted_attrs => true` to trust all client input. When tracking is enabled, keep this mask as `clientinfo => true`. Do not expand it into a map or retain exclusions. Explicit anonymous access uses this mask.
+An authentication result can return `trusted_attrs => true` to trust all client input. When tracking is enabled, store this mask directly as `ClientInfo.trusted_attrs => true`. Do not expand it into a map or retain exclusions. Explicit anonymous access uses this mask.
 
 ## Retained client information layout
 
 Keep `is_superuser`, `auth_expire_at`, and `acl` at the top level. Include them in the static trusted keys. Normalize authentication's `expire_at` to `auth_expire_at`. Reset these known outputs on each successful authentication.
 
-Use `trusted_attrs.clientinfo` for the input trust mask. Use `trusted_attrs.authn` only for additional authentication outputs. Omit the `authn` map when empty. Reauthentication replaces both maps when tracking is enabled.
+Store the input trust mask directly in `ClientInfo.trusted_attrs`. Store additional authentication outputs in `ClientInfo.authn`. Omit the `authn` map when empty. Reauthentication replaces `authn` in every mode and replaces the input trust mask when tracking is enabled.
 
-When all consumer enforcement switches are disabled, omit `trusted_attrs` entirely. Apply zone overrides before checking the switches. Preserve legacy top-level merging for custom authentication outputs in this mode. Without provenance metadata, arbitrary custom outputs from an earlier result cannot be identified for removal.
+Apply only known authentication outputs to client information. Use `client_attrs`, `clientid_override`, and `zone_override` for supported updates. Keep every unknown output in `authn`, including keys that match client information fields. Client information access must not implicitly read the `authn` namespace. This separation prevents collisions without lists of reserved client information keys.
+
+When all consumer enforcement switches are disabled, omit `trusted_attrs` entirely. Apply zone overrides before checking the switches. Keep nonempty custom output in the separate `authn` map. Do not merge unknown outputs into client information in any mode.
 
 ## Built-in authenticators
 
@@ -72,11 +74,15 @@ Set or replace an attribute without adding trust through:
 NewClientInfo = emqx_clientinfo:set(ClientInfo, Key, Value)
 ```
 
-When the input trust mask is a map, `set/3` removes the updated path from that map. When `clientinfo => true`, both setters only update the value and preserve the trust metadata. EMQX-controlled fields remain statically trusted. Use the same key format for all three methods. Route attribute updates through these setters instead of modifying the map directly.
+When the input trust mask is a map, `set/3` removes the updated path from that map. When `trusted_attrs => true`, both setters only update the value and preserve the mask. EMQX-controlled fields remain statically trusted. Use the same key format for all three methods. Route attribute updates through these setters instead of modifying the map directly.
 
 Do not retain compatibility field duplicates. Update consumers to use the trusted attribute accessor.
 
 Avoid direct access to client attributes in contexts that require a trusted value. Use `emqx_clientinfo:get_trusted/2` in those contexts so consumers do not implement their own trust checks.
+
+Access custom authentication output through `authn.<key>`, or use an explicit path such as `[authn, custom_field]` with `get_trusted/2`. Preserve the `authn` namespace in trusted projections and persisted authorization contexts.
+
+Use trusted accessors for known `is_superuser`, `acl`, and `auth_expire_at` outputs. Keep the channel's `trusted_value/2` helper to express that requirement. Use `get_trusted/3` when a consumer needs a default for a missing or untrusted field. These known top-level outputs are always trusted. Keep their fast path inside `emqx_clientinfo` so callers do not bypass trust checks for arbitrary fields. This fast path must not check enforcement, traverse masks, or allocate a projection.
 
 ## Session takeover
 

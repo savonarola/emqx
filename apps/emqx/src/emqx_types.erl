@@ -186,7 +186,8 @@
     is_superuser => boolean(),
     auth_expire_at => non_neg_integer() | undefined,
     acl => term(),
-    trusted_attrs => emqx_clientinfo:trusted_attrs(),
+    authn => map(),
+    trusted_attrs => emqx_clientinfo:trusted_mask(),
     cn => binary(),
     dn => binary(),
     %% Extra client attributes, commented out for bpapi spec backward compatibility.

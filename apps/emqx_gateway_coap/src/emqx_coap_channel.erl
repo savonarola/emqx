@@ -602,7 +602,7 @@ with_udp_proxy_decision(_Decision, Shutdown) ->
     Shutdown.
 
 merge_takeover_clientinfo(ReqClientId, ClientInfo0, ResumeClientInfo) ->
-    ClientInfo = maps:without([acl, auth_expire_at, is_superuser], ClientInfo0),
+    ClientInfo = maps:without([authn, acl, auth_expire_at, is_superuser], ClientInfo0),
     BaseClientInfo = emqx_clientinfo:set(ClientInfo, clientid, ReqClientId),
     lists:foldl(
         fun(Key, Acc) ->
@@ -614,7 +614,16 @@ merge_takeover_clientinfo(ReqClientId, ClientInfo0, ResumeClientInfo) ->
             end
         end,
         BaseClientInfo,
-        [username, is_superuser, auth_expire_at, acl, trusted_attrs, mountpoint, enable_authn]
+        [
+            username,
+            is_superuser,
+            auth_expire_at,
+            acl,
+            authn,
+            trusted_attrs,
+            mountpoint,
+            enable_authn
+        ]
     ).
 
 invalid_token_reply(Msg, Channel) ->

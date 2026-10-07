@@ -7,6 +7,7 @@
 -export([
     merge_authn_result/3,
     get_trusted/2,
+    get_trusted/3,
     maybe_trusted/2,
     mqtt_require_trusted_attributes/1,
     set/3,
@@ -17,17 +18,12 @@
 -export_type([
     key/0,
     key_path/0,
-    trusted_attrs/0,
     trusted_mask/0
 ]).
 
 -type key() :: atom() | binary().
 -type key_path() :: key() | [key()].
 -type trusted_mask() :: true | #{key() => trusted_mask()}.
--type trusted_attrs() :: #{
-    authn => map(),
-    clientinfo => trusted_mask()
-}.
 
 -define(AUTHN_KEYS, [is_superuser, auth_expire_at, acl]).
 
@@ -42,7 +38,8 @@
     dn,
     listener,
     peername,
-    peerport
+    peerport,
+    authn
     | ?AUTHN_KEYS
 ]).
 
@@ -57,37 +54,56 @@ merge_authn_result(ClientInfo0, AuthResult0, ClientAttrsMode) ->
     ClientInfo1 = merge_client_attrs(ClientInfo0, AuthResult0, ClientAttrsMode),
     ClientInfo2 = apply_clientid_override(ClientInfo1, AuthResult0),
     ClientInfo = apply_zone_override(ClientInfo2, AuthResult0),
-    ExpireAt = maps:get(expire_at, AuthResult0, undefined),
-    AuthnResult0 = maps:without(
-        [client_attrs, clientid_override, expire_at, trusted_attrs, zone_override],
+    ClientInfoWithoutAuthn = maps:without(
+        [authn, trusted_attrs, expire_at | ?AUTHN_KEYS], ClientInfo
+    ),
+    ClientInfoWithKnownAuthn = merge_acl(
+        ClientInfoWithoutAuthn#{
+            is_superuser => maps:get(is_superuser, AuthResult0, false),
+            auth_expire_at => maps:get(expire_at, AuthResult0, undefined)
+        },
         AuthResult0
     ),
-    AuthnResult = AuthnResult0#{
-        is_superuser => maps:get(is_superuser, AuthnResult0, false),
-        auth_expire_at => ExpireAt
-    },
-    ClientInfoWithoutAuthn = maps:without(
-        [trusted_attrs, expire_at | ?AUTHN_KEYS], ClientInfo
+    Authn = maps:without(
+        [
+            is_superuser,
+            acl,
+            client_attrs,
+            clientid_override,
+            expire_at,
+            trusted_attrs,
+            zone_override
+        ],
+        AuthResult0
     ),
-    case require_trusted_attributes(ClientInfo) of
+    ClientInfoWithAuthn = put_authn(ClientInfoWithKnownAuthn, Authn),
+    case require_trusted_attributes(ClientInfoWithAuthn) of
         false ->
-            maps:merge(ClientInfoWithoutAuthn, AuthnResult);
+            ClientInfoWithAuthn;
         true ->
-            TrustedMask = authn_trusted_mask(ClientInfo, AuthResult0),
-            Authn = maps:without(?AUTHN_KEYS, AuthnResult),
-            TrustedAttrs = put_authn(#{clientinfo => TrustedMask}, Authn),
-            ClientInfoWithAuthn = maps:merge(
-                ClientInfoWithoutAuthn, maps:with(?AUTHN_KEYS, AuthnResult)
-            ),
-            ClientInfoWithAuthn#{trusted_attrs => TrustedAttrs}
+            ClientInfoWithAuthn#{
+                trusted_attrs => authn_trusted_mask(ClientInfoWithAuthn, AuthResult0)
+            }
     end.
 
 -spec get_trusted(emqx_types:clientinfo(), key_path()) -> {ok, term()} | error.
+get_trusted(ClientInfo, Key) when
+    Key =:= is_superuser; Key =:= auth_expire_at; Key =:= acl
+->
+    maps:find(Key, ClientInfo);
+get_trusted(ClientInfo, [Key]) ->
+    get_trusted(ClientInfo, Key);
 get_trusted(ClientInfo, Key) ->
-    Path = key_path(Key),
-    case authn_find(Path, ClientInfo) of
-        {ok, _} = Found -> Found;
-        error -> trusted_find(Path, ClientInfo)
+    case emqx_utils_maps:deep_find(key_path(Key), trusted(ClientInfo)) of
+        {ok, Value} -> {ok, Value};
+        {not_found, _, _} -> error
+    end.
+
+-spec get_trusted(emqx_types:clientinfo(), key_path(), term()) -> term().
+get_trusted(ClientInfo, Key, Default) ->
+    case get_trusted(ClientInfo, Key) of
+        {ok, Value} -> Value;
+        error -> Default
     end.
 
 -spec maybe_trusted(emqx_types:clientinfo(), boolean()) -> emqx_types:clientinfo().
@@ -104,44 +120,36 @@ mqtt_require_trusted_attributes(ClientInfo) when not is_map_key(zone, ClientInfo
     mqtt_require_trusted_attributes(#{zone => default}).
 
 -spec set(emqx_types:clientinfo(), key_path(), term()) -> emqx_types:clientinfo().
-set(#{trusted_attrs := #{clientinfo := true}} = ClientInfo, Key, Value) ->
+set(#{trusted_attrs := true} = ClientInfo, Key, Value) ->
     emqx_utils_maps:deep_force_put(key_path(Key), ClientInfo, Value);
-set(#{trusted_attrs := #{clientinfo := Mask0} = TrustedAttrs0} = ClientInfo0, Key, Value) ->
+set(#{trusted_attrs := Mask0} = ClientInfo0, Key, Value) ->
     Path = key_path(Key),
     ClientInfo1 = emqx_utils_maps:deep_force_put(Path, ClientInfo0, Value),
-    TrustedAttrs = remove_authn(Path, TrustedAttrs0),
-    ClientInfo1#{
-        trusted_attrs := TrustedAttrs#{clientinfo := remove_mask(Path, Mask0)}
-    };
+    ClientInfo1#{trusted_attrs := remove_mask(Path, Mask0)};
 set(ClientInfo, Key, Value) ->
     emqx_utils_maps:deep_force_put(key_path(Key), ClientInfo, Value).
 
 -spec set_trusted(emqx_types:clientinfo(), key_path(), term()) -> emqx_types:clientinfo().
-set_trusted(#{trusted_attrs := #{clientinfo := true}} = ClientInfo, Key, Value) ->
+set_trusted(#{trusted_attrs := true} = ClientInfo, Key, Value) ->
     emqx_utils_maps:deep_force_put(key_path(Key), ClientInfo, Value);
-set_trusted(
-    #{trusted_attrs := #{clientinfo := Mask0} = TrustedAttrs0} = ClientInfo0, Key, Value
-) ->
+set_trusted(#{trusted_attrs := Mask0} = ClientInfo0, Key, Value) ->
     Path = key_path(Key),
     ClientInfo1 = emqx_utils_maps:deep_force_put(Path, ClientInfo0, Value),
-    TrustedAttrs = remove_authn(Path, TrustedAttrs0),
-    ClientInfo1#{
-        trusted_attrs := TrustedAttrs#{clientinfo := put_mask(Path, Mask0)}
-    };
+    ClientInfo1#{trusted_attrs := put_mask(Path, Mask0)};
 set_trusted(ClientInfo0, Key, Value) ->
     Path = key_path(Key),
     ClientInfo = emqx_utils_maps:deep_force_put(Path, ClientInfo0, Value),
     case require_trusted_attributes(ClientInfo) of
         false -> ClientInfo;
-        true -> ClientInfo#{trusted_attrs => #{clientinfo => put_mask(Path, #{})}}
+        true -> ClientInfo#{trusted_attrs => put_mask(Path, #{})}
     end.
 
 -spec trusted(emqx_types:clientinfo()) -> map().
-trusted(#{trusted_attrs := #{clientinfo := Mask} = TrustedAttrs} = ClientInfo) ->
+trusted(#{trusted_attrs := Mask} = ClientInfo) ->
     Static = maps:with(?STATIC_TRUSTED_KEYS, ClientInfo),
     Masked = apply_mask(maps:remove(trusted_attrs, ClientInfo), Mask),
     TrustedClientInfo = emqx_utils_maps:deep_merge(Static, Masked),
-    TrustedClientInfo#{trusted_attrs => TrustedAttrs};
+    TrustedClientInfo#{trusted_attrs => Mask};
 trusted(ClientInfo) ->
     maps:with(?STATIC_TRUSTED_KEYS, ClientInfo).
 
@@ -154,6 +162,11 @@ require_trusted_attributes(ClientInfo) ->
     emqx_authz_context:require_trusted_attributes() orelse
         emqx:get_config([multi_tenancy, require_trusted_attributes], Default) orelse
         mqtt_require_trusted_attributes(ClientInfo).
+
+merge_acl(ClientInfo, #{acl := Acl}) ->
+    ClientInfo#{acl => Acl};
+merge_acl(ClientInfo, _AuthResult) ->
+    ClientInfo.
 
 merge_client_attrs(ClientInfo, #{client_attrs := Attrs}, merge) ->
     ExistingAttrs = maps:get(client_attrs, ClientInfo, #{}),
@@ -203,10 +216,10 @@ clientid_override_mask(#{clientid_override := ClientId}, Mask) when
 clientid_override_mask(_AuthResult, Mask) ->
     Mask.
 
-put_authn(TrustedAttrs, Authn) when map_size(Authn) =:= 0 ->
-    maps:remove(authn, TrustedAttrs);
-put_authn(TrustedAttrs, Authn) ->
-    TrustedAttrs#{authn => Authn}.
+put_authn(ClientInfo, Authn) when map_size(Authn) =:= 0 ->
+    ClientInfo;
+put_authn(ClientInfo, Authn) ->
+    ClientInfo#{authn => Authn}.
 
 configured_trusted_mask(#{zone := Zone} = ClientInfo) ->
     Paths = emqx_config:get_zone_conf(Zone, [mqtt, trusted_client_attributes], []),
@@ -280,17 +293,6 @@ key_path(Key) when is_atom(Key); is_binary(Key) ->
 key_path([_ | _] = Path) ->
     Path.
 
-authn_find([Key], #{trusted_attrs := #{authn := Authn}}) ->
-    maps:find(Key, Authn);
-authn_find(_Path, _ClientInfo) ->
-    error.
-
-trusted_find(Path, ClientInfo) ->
-    case emqx_utils_maps:deep_find(Path, trusted(ClientInfo)) of
-        {ok, Value} -> {ok, Value};
-        {not_found, _, _} -> error
-    end.
-
 apply_mask(Data, true) ->
     Data;
 apply_mask(Data, Mask) when is_map(Data), is_map(Mask) ->
@@ -321,8 +323,3 @@ remove_mask(_Path, Mask = #{}) when map_size(Mask) =:= 0 ->
     Mask;
 remove_mask(Path, Mask) ->
     emqx_utils_maps:deep_remove(Path, Mask).
-
-remove_authn([Key], #{authn := Authn} = TrustedAttrs) ->
-    put_authn(TrustedAttrs, maps:remove(Key, Authn));
-remove_authn(_Path, TrustedAttrs) ->
-    TrustedAttrs.

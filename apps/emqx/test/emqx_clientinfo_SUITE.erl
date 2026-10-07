@@ -34,11 +34,11 @@ init_per_testcase(_TestCase, Config) ->
 
 end_per_testcase(_TestCase, Config) ->
     [emqx_config:put([Root], Value) || {Root, Value} <- proplists:get_value(saved_config, Config)],
-    ok.
+    emqx_common_test_helpers:call_janitor().
 
 %% Verify that disabled projection returns the original client info term.
 t_maybe_trusted_disabled(_) ->
-    ClientInfo = #{clientid => <<"client">>, trusted_attrs => #{clientinfo => #{}}},
+    ClientInfo = #{clientid => <<"client">>, trusted_attrs => #{}},
     ?assert(ClientInfo =:= emqx_clientinfo:maybe_trusted(ClientInfo, false)),
     ?assertNot(ClientInfo =:= emqx_clientinfo:maybe_trusted(ClientInfo, true)).
 
@@ -73,7 +73,11 @@ t_merge_authn_result(_) ->
         {ok, <<"authenticated">>},
         emqx_clientinfo:get_trusted(ClientInfo, [client_attrs, <<"tenant">>])
     ),
-    ?assertEqual([clientinfo], maps:keys(maps:get(trusted_attrs, ClientInfo))),
+    ?assertEqual(
+        #{username => true, clientid => true, client_attrs => #{<<"tenant">> => true}},
+        maps:get(trusted_attrs, ClientInfo)
+    ),
+    ?assertNot(maps:is_key(authn, ClientInfo)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, [client_attrs, <<"existing">>])).
 
 %% Verify that reauthentication replaces stale authn data and the previous input trust mask.
@@ -102,7 +106,8 @@ t_replace_authn_result(_) ->
     ),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, acl)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, custom_authn)),
-    ?assertNot(maps:is_key(authn, maps:get(trusted_attrs, ClientInfo))),
+    ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, [authn, custom_authn])),
+    ?assertNot(maps:is_key(authn, ClientInfo)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, username)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, [client_attrs, <<"old">>])),
     ?assertEqual(
@@ -124,12 +129,10 @@ t_trusted_projection(_) ->
         auth_expire_at => undefined,
         acl => [rule],
         client_attrs => #{<<"tns">> => <<"tenant">>, <<"untrusted">> => <<"value">>},
+        authn => #{custom_authn => value},
         trusted_attrs => #{
-            authn => #{custom_authn => value},
-            clientinfo => #{
-                clientid => true,
-                client_attrs => #{<<"tns">> => true}
-            }
+            clientid => true,
+            client_attrs => #{<<"tns">> => true}
         }
     },
     ?assertEqual(
@@ -141,12 +144,10 @@ t_trusted_projection(_) ->
             acl => [rule],
             clientid => <<"client">>,
             client_attrs => #{<<"tns">> => <<"tenant">>},
+            authn => #{custom_authn => value},
             trusted_attrs => #{
-                authn => #{custom_authn => value},
-                clientinfo => #{
-                    clientid => true,
-                    client_attrs => #{<<"tns">> => true}
-                }
+                clientid => true,
+                client_attrs => #{<<"tns">> => true}
             }
         },
         emqx_clientinfo:trusted(ClientInfo)
@@ -157,7 +158,8 @@ t_trusted_projection(_) ->
         emqx_clientinfo:get_trusted(ClientInfo, [client_attrs, <<"tns">>])
     ),
     ?assertEqual({ok, false}, emqx_clientinfo:get_trusted(ClientInfo, is_superuser)),
-    ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(ClientInfo, custom_authn)),
+    ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, custom_authn)),
+    ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(ClientInfo, [authn, custom_authn])),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, username)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, password)).
 
@@ -169,10 +171,8 @@ t_setters(_) ->
         username => <<"user">>,
         client_attrs => #{<<"tns">> => <<"tenant">>, <<"region">> => <<"eu">>},
         trusted_attrs => #{
-            clientinfo => #{
-                clientid => true,
-                client_attrs => #{<<"tns">> => true, <<"region">> => true}
-            }
+            clientid => true,
+            client_attrs => #{<<"tns">> => true, <<"region">> => true}
         }
     },
     ClientInfo1 = emqx_clientinfo:set(ClientInfo0, clientid, <<"new">>),
@@ -206,7 +206,7 @@ t_universal_mask_setters(_) ->
         clientid => <<"client">>,
         username => <<"user">>,
         client_attrs => #{<<"tns">> => <<"tenant">>},
-        trusted_attrs => #{clientinfo => true}
+        trusted_attrs => true
     },
     ?assertEqual({ok, <<"user">>}, emqx_clientinfo:get_trusted(ClientInfo0, username)),
     ClientInfo1 = emqx_clientinfo:set(ClientInfo0, username, <<"new-user">>),
@@ -237,17 +237,14 @@ t_replace_universal_mask(_) ->
     ClientInfo1 = emqx_clientinfo:merge_authn_result(
         ClientInfo0, #{trusted_attrs => true}, merge
     ),
-    ?assertEqual(
-        #{clientinfo => true},
-        maps:get(trusted_attrs, ClientInfo1)
-    ),
+    ?assertEqual(true, maps:get(trusted_attrs, ClientInfo1)),
     ClientInfo2 = emqx_clientinfo:merge_authn_result(
         ClientInfo1, #{trusted_attrs => #{clientid => true}}, merge
     ),
     ?assertEqual({ok, <<"client">>}, emqx_clientinfo:get_trusted(ClientInfo2, clientid)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo2, username)).
 
-%% Verify that all disabled consumers skip trust composition and keep legacy authentication output.
+%% Verify that disabled consumers skip trust composition and keep custom output in its own namespace.
 t_disabled_authn_metadata(_) ->
     configure_enforcement(false, false, false),
     emqx_config:put_zone_conf(default, [mqtt, trusted_client_attributes], [invalid]),
@@ -259,7 +256,8 @@ t_disabled_authn_metadata(_) ->
         is_superuser => true,
         acl => [old_rule],
         auth_expire_at => 123,
-        trusted_attrs => #{clientinfo => true, authn => #{old_custom => value}}
+        trusted_attrs => true,
+        authn => #{old_custom => value}
     },
     ClientInfo = emqx_clientinfo:merge_authn_result(
         ClientInfo0,
@@ -281,11 +279,13 @@ t_disabled_authn_metadata(_) ->
             },
             is_superuser => false,
             auth_expire_at => undefined,
-            custom_authn => value
+            authn => #{custom_authn => value}
         },
         ClientInfo
     ),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, custom_authn)),
+    ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(ClientInfo, [authn, custom_authn])),
+    ?assertNot(maps:is_key(trusted_attrs, ClientInfo)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, clientid)),
     ?assertEqual({ok, false}, emqx_clientinfo:get_trusted(ClientInfo, is_superuser)),
     ?assertEqual(ClientInfo, emqx_authz_context:make(ClientInfo)),
@@ -298,6 +298,7 @@ t_disabled_authn_metadata(_) ->
         ClientInfo2, #{is_superuser => true, acl => [new_rule], expire_at => 456}, merge
     ),
     ?assertMatch(#{is_superuser := true, acl := [new_rule], auth_expire_at := 456}, ClientInfo3),
+    ?assertNot(maps:is_key(authn, ClientInfo3)),
     ?assertNot(maps:is_key(trusted_attrs, ClientInfo3)).
 
 %% Verify that each enforcement switch independently retains the input trust mask.
@@ -310,7 +311,7 @@ t_independent_enforcement(_) ->
                 #{trusted_attrs => #{clientid => true}},
                 merge
             ),
-            ?assertEqual(#{clientinfo => #{clientid => true}}, maps:get(trusted_attrs, ClientInfo)),
+            ?assertEqual(#{clientid => true}, maps:get(trusted_attrs, ClientInfo)),
             ?assertEqual({ok, <<"client">>}, emqx_clientinfo:get_trusted(ClientInfo, clientid))
         end,
         [{true, false, false}, {false, true, false}, {false, false, true}]
@@ -351,7 +352,7 @@ t_enable_enforcement_without_metadata(_) ->
         #{zone => default, is_superuser => true, acl => [rule], auth_expire_at => undefined},
         Context
     ),
-    ?assertEqual(true, emqx_authz_context:get_authn(Context, is_superuser, false)),
+    ?assertEqual(true, maps:get(is_superuser, Context)),
     ClientInfo1 = emqx_clientinfo:set(ClientInfo0, username, <<"new-user">>),
     ?assertNot(maps:is_key(trusted_attrs, ClientInfo1)),
     ClientInfo2 = emqx_clientinfo:set_trusted(ClientInfo1, [client_attrs, <<"tns">>], <<"tenant">>),
@@ -366,24 +367,246 @@ t_enable_enforcement_without_metadata(_) ->
     ?assertEqual({ok, false}, emqx_clientinfo:get_trusted(ClientInfo3, is_superuser)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo3, acl)).
 
-%% Verify that custom authentication outputs remain optional and setters remove stale custom values.
+%% Verify that custom output remains separate from client-info setters and resets on reauthentication.
 t_custom_authn_outputs(_) ->
     ClientInfo0 = emqx_clientinfo:merge_authn_result(
         #{zone => default, clientid => <<"client">>}, #{custom_authn => old}, merge
     ),
-    ?assertEqual(
-        #{clientinfo => #{}, authn => #{custom_authn => old}}, maps:get(trusted_attrs, ClientInfo0)
-    ),
+    ?assertEqual(#{}, maps:get(trusted_attrs, ClientInfo0)),
+    ?assertEqual(#{custom_authn => old}, maps:get(authn, ClientInfo0)),
     ?assertNot(maps:is_key(custom_authn, ClientInfo0)),
     ClientInfo1 = emqx_clientinfo:set(ClientInfo0, custom_authn, new),
-    ?assertEqual(#{clientinfo => #{}}, maps:get(trusted_attrs, ClientInfo1)),
+    ?assertEqual(#{}, maps:get(trusted_attrs, ClientInfo1)),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo1, custom_authn)),
+    ?assertEqual({ok, old}, emqx_clientinfo:get_trusted(ClientInfo1, [authn, custom_authn])),
     ClientInfo2 = emqx_clientinfo:set_trusted(ClientInfo0, custom_authn, new),
-    ?assertEqual(#{clientinfo => #{custom_authn => true}}, maps:get(trusted_attrs, ClientInfo2)),
+    ?assertEqual(#{custom_authn => true}, maps:get(trusted_attrs, ClientInfo2)),
     ?assertEqual({ok, new}, emqx_clientinfo:get_trusted(ClientInfo2, custom_authn)),
+    ?assertEqual({ok, old}, emqx_clientinfo:get_trusted(ClientInfo2, [authn, custom_authn])),
     ClientInfo3 = emqx_clientinfo:merge_authn_result(ClientInfo0, #{other_custom => value}, merge),
     ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo3, custom_authn)),
-    ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(ClientInfo3, other_custom)).
+    ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo3, other_custom)),
+    ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo3, [authn, custom_authn])),
+    ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(ClientInfo3, [authn, other_custom])).
+
+%% Verify that colliding unknown outputs stay in authn and cannot replace any client-info field.
+t_authn_result_reserved_keys(_) ->
+    ClientInfo0 = #{
+        zone => default,
+        protocol => mqtt,
+        peerhost => {127, 0, 0, 1},
+        sockport => 1883,
+        is_bridge => false,
+        cert_pem => <<"broker-cert">>,
+        cn => <<"broker-cn">>,
+        dn => <<"broker-dn">>,
+        listener => tcp_default,
+        peername => {{127, 0, 0, 1}, 1234},
+        peerport => 1234,
+        clientid => <<"client">>,
+        username => <<"user">>,
+        password => <<"secret">>,
+        mountpoint => <<"broker/">>,
+        ws_cookie => [],
+        peersni => <<"broker-host">>,
+        enable_authn => true,
+        old_zone => default,
+        auth_result => success,
+        anonymous => false,
+        broker_extension => broker_value
+    },
+    ReservedKeys = maps:keys(ClientInfo0),
+    Collisions = maps:map(fun(_Key, _Value) -> external end, ClientInfo0),
+    AuthResult = Collisions#{
+        is_superuser => true,
+        acl => [rule],
+        expire_at => 123,
+        custom_authn => output
+    },
+    ExpectedAuthn = Collisions#{custom_authn => output},
+    lists:foreach(
+        fun(RequireTrusted) ->
+            configure_enforcement(RequireTrusted, RequireTrusted, RequireTrusted),
+            ClientInfo = emqx_clientinfo:merge_authn_result(ClientInfo0, AuthResult, merge),
+            ?assertEqual(ClientInfo0, maps:with(ReservedKeys, ClientInfo)),
+            ?assertMatch(#{is_superuser := true, acl := [rule], auth_expire_at := 123}, ClientInfo),
+            ?assertEqual(ExpectedAuthn, maps:get(authn, ClientInfo)),
+            ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, custom_authn)),
+            ?assertEqual(
+                {ok, output}, emqx_clientinfo:get_trusted(ClientInfo, [authn, custom_authn])
+            ),
+            case RequireTrusted of
+                true ->
+                    ?assertEqual(#{}, maps:get(trusted_attrs, ClientInfo)),
+                    ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, username));
+                false ->
+                    ?assertNot(maps:is_key(trusted_attrs, ClientInfo))
+            end
+        end,
+        [true, false]
+    ).
+
+%% Verify that authn fields never shadow present or absent top-level statically trusted fields.
+t_authn_metadata_static_keys(_) ->
+    StaticFields = #{
+        zone => default,
+        protocol => mqtt,
+        peerhost => {127, 0, 0, 1},
+        sockport => 1883,
+        is_bridge => false,
+        cert_pem => <<"broker-cert">>,
+        cn => <<"broker-cn">>,
+        dn => <<"broker-dn">>,
+        listener => tcp_default,
+        peername => {{127, 0, 0, 1}, 1234},
+        peerport => 1234,
+        is_superuser => false,
+        auth_expire_at => undefined,
+        acl => [broker_rule]
+    },
+    Authn = maps:map(fun(_Key, _Value) -> external end, StaticFields),
+    lists:foreach(
+        fun(Mask) ->
+            ClientInfo = StaticFields#{authn => Authn, trusted_attrs => Mask},
+            maps:foreach(
+                fun(Key, Value) ->
+                    ?assertEqual({ok, Value}, emqx_clientinfo:get_trusted(ClientInfo, Key)),
+                    ?assertEqual({ok, Value}, emqx_clientinfo:get_trusted(ClientInfo, [Key])),
+                    ?assertEqual(Value, maps:get(Key, ClientInfo)),
+                    ?assertEqual(
+                        {ok, external}, emqx_clientinfo:get_trusted(ClientInfo, [authn, Key])
+                    ),
+                    ClientInfoWithoutKey = maps:remove(Key, ClientInfo),
+                    ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfoWithoutKey, Key)),
+                    ?assertEqual(missing, maps:get(Key, ClientInfoWithoutKey, missing))
+                end,
+                StaticFields
+            )
+        end,
+        [#{}, true]
+    ).
+
+%% Verify that input and derived fields retain their own trust when authn contains the same key.
+t_authn_metadata_reserved_inputs(_) ->
+    ClientInfo0 = #{username => <<"user">>, mountpoint => <<"broker/">>},
+    Authn = #{username => <<"external-user">>, mountpoint => <<"external/">>},
+    ClientInfo = ClientInfo0#{authn => Authn, trusted_attrs => #{}},
+    lists:foreach(
+        fun(Key) ->
+            ?assertEqual(error, emqx_clientinfo:get_trusted(ClientInfo, Key)),
+            ?assertEqual(maps:get(Key, ClientInfo0), maps:get(Key, ClientInfo)),
+            ?assertEqual(
+                {ok, maps:get(Key, Authn)}, emqx_clientinfo:get_trusted(ClientInfo, [authn, Key])
+            ),
+            TrustedClientInfo = emqx_clientinfo:set_trusted(
+                ClientInfo, Key, maps:get(Key, ClientInfo0)
+            ),
+            ?assertEqual(
+                {ok, maps:get(Key, ClientInfo0)},
+                emqx_clientinfo:get_trusted(TrustedClientInfo, Key)
+            )
+        end,
+        [username, mountpoint]
+    ).
+
+%% Verify that disabled consumers preserve the original map without mask traversal or projections.
+t_authn_lookup_skips_fallback(_) ->
+    configure_enforcement(false, false, false),
+    ok = meck:new(emqx_utils_maps, [passthrough, no_link]),
+    emqx_common_test_helpers:on_exit(fun() -> meck:unload(emqx_utils_maps) end),
+    ClientInfo = #{authn => #{custom_authn => output}, trusted_attrs => invalid},
+    ?assertEqual(ClientInfo, emqx_clientinfo:maybe_trusted(ClientInfo, false)),
+    Context = emqx_authz_context:make(ClientInfo),
+    ?assertEqual(ClientInfo, Context),
+    #{authn := #{custom_authn := output}} = Context,
+    ?assertNot(meck:called(emqx_utils_maps, deep_find, '_')),
+    ?assertNot(meck:called(emqx_utils_maps, deep_merge, '_')).
+
+%% Verify that disabled reauthentication replaces custom outputs and drops empty authn maps.
+t_replace_custom_authn_disabled(_) ->
+    configure_enforcement(false, false, false),
+    ClientInfo0 = emqx_clientinfo:merge_authn_result(
+        #{zone => default}, #{custom_authn => old}, merge
+    ),
+    ClientInfo1 = emqx_clientinfo:merge_authn_result(ClientInfo0, #{other_custom => new}, merge),
+    ?assertEqual(#{other_custom => new}, maps:get(authn, ClientInfo1)),
+    ?assertNot(maps:is_key(trusted_attrs, ClientInfo1)),
+    ClientInfo2 = emqx_clientinfo:merge_authn_result(ClientInfo1, #{}, merge),
+    ?assertNot(maps:is_key(authn, ClientInfo2)),
+    ?assertNot(maps:is_key(trusted_attrs, ClientInfo2)).
+
+%% Verify that known authn reads preserve values and defaults without config checks or projections.
+t_known_authn_trusted_lookup(_) ->
+    Modules = [emqx_config, emqx_utils_maps],
+    ok = meck:new(Modules, [passthrough, no_link]),
+    emqx_common_test_helpers:on_exit(fun() -> meck:unload(Modules) end),
+    KnownOutputs = #{is_superuser => false, auth_expire_at => undefined, acl => #{rules => []}},
+    Authn = maps:map(fun(_Key, _Value) -> external end, KnownOutputs),
+    ClientInfo0 = KnownOutputs#{authn => Authn},
+    lists:foreach(
+        fun(ClientInfo) ->
+            maps:foreach(
+                fun(Key, Value) ->
+                    lists:foreach(
+                        fun(Path) ->
+                            ?assertEqual(
+                                {ok, Value}, emqx_clientinfo:get_trusted(ClientInfo, Path)
+                            ),
+                            ?assertEqual(
+                                Value, emqx_clientinfo:get_trusted(ClientInfo, Path, missing)
+                            ),
+                            WithoutKey = maps:remove(Key, ClientInfo),
+                            ?assertEqual(error, emqx_clientinfo:get_trusted(WithoutKey, Path)),
+                            ?assertEqual(
+                                missing, emqx_clientinfo:get_trusted(WithoutKey, Path, missing)
+                            )
+                        end,
+                        [Key, [Key]]
+                    )
+                end,
+                KnownOutputs
+            )
+        end,
+        [ClientInfo0 | [ClientInfo0#{trusted_attrs => Mask} || Mask <- [#{}, true]]]
+    ),
+    ?assertNot(meck:called(emqx_config, get, '_')),
+    ?assertNot(meck:called(emqx_config, get_zone_conf, '_')),
+    ?assertNot(meck:called(emqx_utils_maps, deep_find, '_')),
+    ?assertNot(meck:called(emqx_utils_maps, deep_merge, '_')).
+
+%% Verify that default-value access rejects untrusted input and reads custom output only via authn.
+t_get_trusted_defaults(_) ->
+    ClientInfo = #{
+        username => <<"untrusted-user">>,
+        clientid => <<"trusted-client">>,
+        custom_authn => input,
+        client_attrs => #{<<"tns">> => <<"tenant">>, <<"other">> => <<"untrusted">>},
+        authn => #{username => <<"authn-user">>, custom_authn => output},
+        trusted_attrs => #{clientid => true, client_attrs => #{<<"tns">> => true}}
+    },
+    ?assertEqual(missing, emqx_clientinfo:get_trusted(ClientInfo, username, missing)),
+    ?assertEqual(missing, emqx_clientinfo:get_trusted(ClientInfo, [username], missing)),
+    ?assertEqual(missing, emqx_clientinfo:get_trusted(ClientInfo, custom_authn, missing)),
+    ?assertEqual(missing, emqx_clientinfo:get_trusted(ClientInfo, missing_key, missing)),
+    ?assertEqual(<<"trusted-client">>, emqx_clientinfo:get_trusted(ClientInfo, clientid, missing)),
+    ?assertEqual(
+        <<"tenant">>, emqx_clientinfo:get_trusted(ClientInfo, [client_attrs, <<"tns">>], missing)
+    ),
+    ?assertEqual(
+        missing, emqx_clientinfo:get_trusted(ClientInfo, [client_attrs, <<"other">>], missing)
+    ),
+    ?assertEqual(output, emqx_clientinfo:get_trusted(ClientInfo, [authn, custom_authn], missing)),
+    ?assertEqual(
+        <<"authn-user">>, emqx_clientinfo:get_trusted(ClientInfo, [authn, username], missing)
+    ),
+    ?assertEqual(
+        missing,
+        emqx_clientinfo:get_trusted(maps:remove(trusted_attrs, ClientInfo), clientid, missing)
+    ),
+    ?assertEqual(
+        <<"untrusted-user">>,
+        emqx_clientinfo:get_trusted(ClientInfo#{trusted_attrs := true}, username, missing)
+    ).
 
 %%------------------------------------------------------------------------------
 %% Helpers

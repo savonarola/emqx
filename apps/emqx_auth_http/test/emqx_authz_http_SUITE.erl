@@ -1389,7 +1389,7 @@ templated_host_client_info() ->
     }.
 
 authz_context(ClientInfo) ->
-    emqx_authz_context:make(ClientInfo#{trusted_attrs => #{clientinfo => true}}).
+    emqx_authz_context:make(ClientInfo#{trusted_attrs => true}).
 
 templated_host_config_params(TCConfig) ->
     #{

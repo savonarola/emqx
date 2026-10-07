@@ -65,7 +65,7 @@ t_authenticate(_) ->
     {ok, NInfo1} = emqx_gateway_ctx:authenticate(Ctx, Info1),
     ?assertEqual(default, maps:get(zone, NInfo1)),
     ?assertMatch(#{is_superuser := false, auth_expire_at := undefined}, NInfo1),
-    ?assertNot(maps:is_key(authn, maps:get(trusted_attrs, NInfo1))),
+    ?assertNot(maps:is_key(authn, NInfo1)),
     ?assertEqual({ok, false}, emqx_clientinfo:get_trusted(NInfo1, is_superuser)),
     ?assertEqual({ok, undefined}, emqx_clientinfo:get_trusted(NInfo1, auth_expire_at)),
 
@@ -96,7 +96,8 @@ t_authenticate(_) ->
     ?assertEqual(default, maps:get(zone, NInfo5)),
     ?assertEqual(false, maps:is_key(zone_override, NInfo5)),
     ?assertEqual(false, maps:is_key(custom_authn, NInfo5)),
-    ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(NInfo5, custom_authn)),
+    ?assertEqual(error, emqx_clientinfo:get_trusted(NInfo5, custom_authn)),
+    ?assertEqual({ok, value}, emqx_clientinfo:get_trusted(NInfo5, [authn, custom_authn])),
     ok.
 
 t_clientid_override_ignored(_) ->

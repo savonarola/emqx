@@ -492,7 +492,7 @@ authorize_deny(
 ) ->
     authz_result().
 authorize(AuthzContext, PubSub, Topic, _DefaultResult, SourceStates) ->
-    case emqx_authz_context:get_authn(AuthzContext, is_superuser, false) of
+    case emqx_clientinfo:get_trusted(AuthzContext, is_superuser, false) of
         true ->
             Username = maps:get(username, AuthzContext, undefined),
             ?tp(authz_skipped, #{reason => client_is_superuser, action => PubSub}),
@@ -525,7 +525,7 @@ authorize_non_superuser(AuthzContext, PubSub, Topic, SourceStates) ->
     end.
 
 source_for_logging(client_info, AuthzContext) ->
-    case emqx_authz_context:get_authn(AuthzContext, acl, undefined) of
+    case emqx_clientinfo:get_trusted(AuthzContext, acl, undefined) of
         Acl when is_map(Acl) -> maps:get(source_for_logging, Acl, client_info);
         _ -> client_info
     end;

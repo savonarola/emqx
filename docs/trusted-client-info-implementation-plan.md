@@ -13,7 +13,7 @@ The implementation centers on `emqx_clientinfo`, explicit trust metadata from au
 - `emqx_clientinfo` calculates trusted attributes and exposes `get_trusted(ClientInfo, Key)` and `set_trusted(ClientInfo, Key, Value)`.
 - `emqx_clientinfo:set(ClientInfo, Key, Value)` updates a field and removes its path from an explicit input trust map. Unconditional trust and static trust remain unchanged.
 - Do not retain compatibility field duplicates.
-- Keep known authentication outputs at the top level and statically trusted. Retain `trusted_attrs.authn` only for additional outputs, and omit it when empty.
+- Keep known authentication outputs at the top level and statically trusted. Store additional outputs in top-level `authn`, and omit it when empty. Store the input mask directly in `trusted_attrs`.
 - Omit all trust metadata and skip input trust composition when all consumer enforcement switches are disabled for the effective zone.
 - Security-sensitive consumers should use the trusted access API.
 - Evaluate the post-authentication namespace expression using trusted attributes when multi-tenancy enforcement is enabled.
@@ -24,7 +24,7 @@ Design the implementation so disabling trusted attributes causes no noticeable p
 
 When a consumer's trust enforcement is disabled, pass `ClientInfo` through as-is. Check the enforcement switch before doing trust-specific work. Do not recalculate trusted attributes, traverse a trust mask, or allocate a projection for that consumer. Preserve this fast path when other consumers have enforcement enabled.
 
-When all consumer enforcement switches are disabled, omit `trusted_attrs` during authentication. Setters must not create metadata in this mode. Preserve legacy top-level merging for custom authentication outputs. Reset known authentication outputs. Enabling enforcement on an existing connection must not restore discarded trust without reauthentication or reconnect.
+When all consumer enforcement switches are disabled, omit `trusted_attrs` during authentication. Setters must not create masks in this mode. Keep custom authentication outputs in top-level `authn`, separate from client information fields. Reset known outputs and replace custom outputs on every successful authentication. Enabling enforcement on an existing connection must not restore discarded input trust without reauthentication or reconnect.
 
 ## 1. Introduce emqx_clientinfo
 
@@ -44,7 +44,7 @@ Responsibilities:
 2. Provide `get_trusted(ClientInfo, Key)`.
 3. Provide a trusted projection for consumers that need a complete map, such as template evaluation.
 4. Provide `set_trusted(ClientInfo, Key, Value) -> NewClientInfo` to set or replace a trusted value. Use the same key format as `get_trusted/2`. Store the value as trusted and return the updated `ClientInfo`.
-5. Provide `set(ClientInfo, Key, Value) -> NewClientInfo` to update a field and remove its path from an explicit input trust map. When `clientinfo => true`, both setters only update the value. EMQX-controlled fields remain statically trusted. Use the same key format as `get_trusted/2`.
+5. Provide `set(ClientInfo, Key, Value) -> NewClientInfo` to update a field and remove its path from an explicit input trust map. When `trusted_attrs => true`, both setters only update the value. EMQX-controlled fields remain statically trusted. Use the same key format as `get_trusted/2`.
 
 Keep the distinction between the mask returned by authn and the resulting trusted data in `ClientInfo` explicit.
 
@@ -63,7 +63,7 @@ Files: `emqx_access_control.erl`, `emqx_authn_provider.erl`, and `emqx_authn_cha
 - Compose trust only after successful authentication.
 - Do not accumulate trust from ignored or failed authenticators.
 - Handle explicit anonymous access using the EIP's universal input mask.
-- Ensure reauthentication resets known authentication outputs and replaces custom output metadata and trust when tracking is enabled.
+- Ensure reauthentication resets known authentication outputs and replaces custom outputs in every mode. Replace the input trust mask when tracking is enabled.
 
 Custom hooks can continue returning authentication output, but they must return a mask to trust input fields such as `username`. Document this breaking change.
 
@@ -105,7 +105,7 @@ Replace their independent authentication-result handling with shared `emqx_clien
 - Apply client ID and zone overrides through the shared module.
 - Make trusted authentication output available before `client.post_authn`.
 - Update expiry handling and other direct authn-field consumers to use the new representation.
-- Keep `is_superuser`, `auth_expire_at`, and `acl` authoritative at the top level. Retain no duplicate copies in `trusted_attrs.authn`.
+- Keep `is_superuser`, `auth_expire_at`, and `acl` authoritative at the top level. Store unknown outputs only under `authn`. Do not read them through implicit client information fallbacks.
 
 ### Gateways
 

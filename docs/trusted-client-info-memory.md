@@ -11,16 +11,18 @@ integration.
 | Core API only | `218a6a97fd` |
 | Integrated implementation | `8e3f5672ac` |
 | Unconditional-trust cleanup | `e00a7c2f0b` plus removal of exclusion metadata |
-| Optimized authentication layout | Current worktree based on `e00a7c2f0b` |
+| Optimized authentication layout | `4317637eef` |
+| Direct trust mask and separate authn namespace | Current worktree based on `4317637eef` |
 
-The results below use the optimized authentication layout. Known authentication outputs remain at
-the top level. Empty custom authentication output maps are absent. Disabled connections retain no
-trust metadata.
+The results below use the direct trust mask and separate authn namespace. Known authentication
+outputs remain at the top level. Unknown outputs stay in top-level `authn`, which is absent when
+empty. `trusted_attrs` contains the input mask directly. Disabled connections retain no trust mask.
 
 The unconditional-trust cleanup retained 160 extra bytes per disabled or client-ID-only channel and
 328 bytes per several-attributes channel. The optimized layout removes the disabled overhead and
-saves another 48 bytes in each enabled case. The original integrated implementation retained another
-40 bytes per channel for the empty exclusion map and its metadata entry.
+saves 48 bytes in each enabled case. The direct mask saves another 48 bytes per enabled channel by
+removing the singleton wrapper map. The original integrated implementation retained another 40 bytes
+per channel for the empty exclusion map and its metadata entry.
 
 The core API checkpoint had no runtime integration. Its retained terms matched the baseline byte for
 byte: 896 bytes for `ClientInfo`, 3,496 bytes for the channel record, and 4,072 bytes for the complete
@@ -78,17 +80,17 @@ API or the integrated implementation.
 
 All values are bytes. Sharing-aware and flat sizes were equal for these extracted terms.
 
-| Case | Term | Baseline | Optimized layout | Increase | Percent |
+| Case | Term | Baseline | Direct mask | Increase | Percent |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Disabled | `ClientInfo` | 896 | 896 | 0 | 0% |
 | Disabled | Channel record | 3,496 | 3,496 | 0 | 0% |
 | Disabled | Connection state | 4,072 | 4,072 | 0 | 0% |
-| Enabled, client ID only | `ClientInfo` | 896 | 1,008 | +112 | +12.50% |
-| Enabled, client ID only | Channel record | 3,496 | 3,608 | +112 | +3.20% |
-| Enabled, client ID only | Connection state | 4,072 | 4,184 | +112 | +2.75% |
-| Enabled, several attributes | `ClientInfo` | 896 | 1,176 | +280 | +31.25% |
-| Enabled, several attributes | Channel record | 3,496 | 3,776 | +280 | +8.01% |
-| Enabled, several attributes | Connection state | 4,072 | 4,352 | +280 | +6.88% |
+| Enabled, client ID only | `ClientInfo` | 896 | 960 | +64 | +7.14% |
+| Enabled, client ID only | Channel record | 3,496 | 3,560 | +64 | +1.83% |
+| Enabled, client ID only | Connection state | 4,072 | 4,136 | +64 | +1.57% |
+| Enabled, several attributes | `ClientInfo` | 896 | 1,128 | +232 | +25.89% |
+| Enabled, several attributes | Channel record | 3,496 | 3,728 | +232 | +6.64% |
+| Enabled, several attributes | Connection state | 4,072 | 4,304 | +232 | +5.70% |
 
 The referenced binary payload did not increase. It remained 1,317 bytes for `ClientInfo` and 1,348
 bytes for the channel and connection-state terms in every case. The process dictionary remained
@@ -97,17 +99,17 @@ trusted projection in its cache.
 
 ## Channel-process memory
 
-All three optimized-layout cases stayed in the same median and p95 heap-size step as the baseline.
+All three direct-mask cases stayed in the same median and p95 heap-size step as the baseline.
 
-| Case | Baseline median / p95 | Optimized layout median / p95 | Measured increase |
+| Case | Baseline median / p95 | Direct mask median / p95 | Measured increase |
 | --- | ---: | ---: | ---: |
 | Disabled | 6,104 / 6,104 | 6,104 / 6,104 | 0 bytes, 0% |
 | Enabled, client ID only | 6,104 / 6,104 | 6,104 / 6,104 | 0 bytes, 0% |
 | Enabled, several attributes | 6,104 / 6,104 | 6,104 / 6,104 | 0 bytes, 0% |
 
-The optimized-layout process-memory means ranged from 6,104.0 to 6,176.5 bytes in disabled mode and
-from 6,104.0 to 6,104.1 bytes in both enabled cases. Referenced off-heap binary payload was 411 bytes
-per process in every run.
+The direct-mask process-memory means ranged from 6,119.1 to 6,191.6 bytes in disabled mode, from
+6,146.2 to 6,179.4 bytes for client-ID-only trust, and from 6,104.0 to 6,140.3 bytes for several
+attributes. Referenced off-heap binary payload was 411 bytes per process in every run.
 
 Earlier unconditional-trust cleanup measurements showed heap-allocation variation in the
 several-attributes case. One execution used a 987-word heap for most channels, with a 9,120-byte
@@ -125,17 +127,19 @@ depends on the heap step. The earlier 3,016-byte step adds 287.63 MiB for 100,00
 | Case | Retained increase per channel | 100,000 channels | 1,000,000 channels |
 | --- | ---: | ---: | ---: |
 | Disabled | 0 bytes | 0 MiB | 0 MiB |
-| Enabled, client ID only | 112 bytes | 10.68 MiB | 106.81 MiB |
-| Enabled, several attributes | 280 bytes | 26.70 MiB | 267.03 MiB |
+| Enabled, client ID only | 64 bytes | 6.10 MiB | 61.04 MiB |
+| Enabled, several attributes | 232 bytes | 22.13 MiB | 221.25 MiB |
 
 ## Overhead source
 
-The enabled client-ID-only case retains 112 extra bytes. The top-level metadata entry costs 16 bytes,
-the `trusted_attrs` map costs 48 bytes, and the client-ID mask costs 48 bytes. The nested mask for
-`client_attrs.tns` and the two additional attributes adds 168 bytes. Attribute values are not copied.
+The enabled client-ID-only case retains 64 extra bytes. The top-level `trusted_attrs` entry costs
+16 bytes, and its client-ID mask costs 48 bytes. There is no singleton wrapper map. The nested mask
+for `client_attrs.tns` and the two additional attributes adds 168 bytes. Attribute values are not
+copied.
 
 There is no exclusion mask. Known authentication outputs remain at the top level, so the benchmark
-does not retain an `authn` submap. Custom authentication outputs would add that map only when present.
+does not retain an `authn` map. Custom authentication outputs add a separate top-level map only when
+present. This map remains separate from the input trust mask in every enforcement mode.
 
 The channel retains one `ClientInfo` term. The exact `ClientInfo` increase therefore propagates to
 the channel record and complete connection state without another retained copy. Attribute values are
@@ -143,7 +147,7 @@ not copied into the mask, and referenced binary payload remains unchanged. Trust
 by authorization and other consumers are temporary and are not retained in the measured channel or
 authorization cache.
 
-Disabled authentication skips input trust composition and retains no metadata. Disabled consumers
+Disabled authentication skips input trust composition and retains no trust mask. Disabled consumers
 do not build projections or traverse masks. Enabling enforcement on these existing connections
 treats discarded input trust as absent until reauthentication or reconnect. Known authentication
 outputs remain statically trusted.

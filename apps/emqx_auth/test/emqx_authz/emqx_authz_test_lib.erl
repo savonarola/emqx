@@ -122,7 +122,7 @@ base_client_info() ->
         is_superuser => false,
         zone => default,
         listener => 'tcp:default',
-        trusted_attrs => #{clientinfo => true}
+        trusted_attrs => true
     }.
 
 client_info(Overrides) ->

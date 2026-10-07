@@ -2005,7 +2005,7 @@ t_authn_result_composition(_) ->
         maps:get(client_attrs, ClientInfo)
     ),
     ?assertMatch(#{is_superuser := true, auth_expire_at := 123}, ClientInfo),
-    ?assertNot(maps:is_key(authn, maps:get(trusted_attrs, ClientInfo))),
+    ?assertNot(maps:is_key(authn, ClientInfo)),
     ?assertEqual({ok, true}, emqx_clientinfo:get_trusted(ClientInfo, is_superuser)),
     ?assertEqual({ok, 123}, emqx_clientinfo:get_trusted(ClientInfo, auth_expire_at)),
     ?assertEqual({ok, <<"overridden">>}, emqx_clientinfo:get_trusted(ClientInfo, clientid)),
