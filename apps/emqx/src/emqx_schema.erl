@@ -700,6 +700,21 @@ fields("crl_cache") ->
                 }
             )}
     ];
+fields("mqtt_native_listener") ->
+    [
+        {"enable", sc(boolean(), #{default => true, desc => ?DESC(fields_listener_enabled)})},
+        {"bind", sc(ip_port(), #{required => true, desc => ?DESC(base_listener_bind)})},
+        {"enable_unauthenticated",
+            sc(boolean(), #{required => true, desc => ?DESC(native_enable_unauthenticated)})},
+        {"ssl_options", sc(ref("native_ssl_opts"), #{desc => ?DESC(native_ssl_opts)})}
+    ];
+fields("native_ssl_opts") ->
+    [{"enable", sc(boolean(), #{default => false, desc => ?DESC(native_tls_enable)})}] ++
+        [
+            Field
+         || {Name, _} = Field <- fields("listener_ssl_opts"),
+            lists:member(Name, ["certfile", "keyfile"])
+        ];
 fields("mqtt_tcp_listener") ->
     mqtt_listener(1883) ++
         [
@@ -2489,6 +2504,10 @@ desc("conn_congestion") ->
 desc("force_gc") ->
     "Force garbage collection in MQTT connection process after\n"
     " they process certain number of messages or bytes of data.";
+desc("mqtt_native_listener") ->
+    ?DESC(mqtt_native_listener);
+desc("native_ssl_opts") ->
+    ?DESC(native_ssl_opts);
 desc("listeners") ->
     "MQTT listeners identified by their protocol type and assigned names";
 desc("mqtt_tcp_listener") ->
@@ -4702,6 +4721,10 @@ ensure_unicode_path(Path, _) ->
 
 listeners() ->
     [
+        {"native",
+            sc(tombstone_map(name, ref("mqtt_native_listener")), #{
+                desc => ?DESC(mqtt_native_listener), default => #{}
+            })},
         {"tcp",
             sc(
                 tombstone_map(name, ref("mqtt_tcp_listener")),

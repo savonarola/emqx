@@ -5,7 +5,7 @@ defmodule EMQXTokio.MixProject do
   def project do
     [
       app: :emqx_tokio,
-      version: "6.1.0",
+      version: "7.0.0",
       build_path: "../../_build",
       compilers: Mix.compilers() ++ [:rust_nif],
       erlc_options: UMP.erlc_options(),
@@ -22,5 +22,7 @@ defmodule EMQXTokio.MixProject do
     [extra_applications: UMP.extra_applications(), mod: {:emqx_tokio_app, []}]
   end
 
-  def deps, do: UMP.deps([{:emqx_mix_utils, in_umbrella: true, runtime: false}])
+  def deps,
+    do:
+      UMP.deps([{:emqx, in_umbrella: true}, {:emqx_mix_utils, in_umbrella: true, runtime: false}])
 end

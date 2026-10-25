@@ -1,5 +1,26 @@
 emqx_schema {
 
+mqtt_native_listener.desc:
+"""Prototype native MQTT 3.1.1 listeners with QoS 0 delivery.
+Configure only enable, bind, enable_unauthenticated, and ssl_options.
+Authentication, authorization, persistent sessions, retained messages, and MQTT 5 are not supported.
+Use these listeners only for benchmarks and closed networks."""
+mqtt_native_listener.label: "Native MQTT listener"
+
+native_enable_unauthenticated.desc:
+"""Set to true to permit a native listener to start without authentication or authorization.
+This field is required and has no default."""
+native_enable_unauthenticated.label: "Allow unauthenticated connections"
+
+native_ssl_opts.desc:
+"""Native TLS settings. Only enable, certfile, and keyfile are supported.
+Use PEM files with an unencrypted private key. TLS 1.2 and TLS 1.3 are supported.
+Client certificate verification is not supported."""
+native_ssl_opts.label: "Native TLS settings"
+
+native_tls_enable.desc: "Enable TLS on this native listener."
+native_tls_enable.label: "Enable TLS"
+
 fields_mqtt_quic_listener_peer_unidi_stream_count.desc:
 """Number of unidirectional streams to allow the peer to open."""
 

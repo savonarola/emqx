@@ -57,6 +57,7 @@
 -export([post_zone_config_update/2, update_listener_for_zone_changes/3]).
 
 -export([format_bind/1, format_bind_ip/1]).
+-export([register_native/1, unregister_native/1, native_config_update/3]).
 
 -ifdef(TEST).
 -export([certs_dir/2, do_log_bind_portability/4]).
@@ -81,7 +82,7 @@
 -endif.
 
 -type listener_id() :: atom() | binary().
--type listener_type() :: tcp | ssl | ws | wss | quic | dtls.
+-type listener_type() :: tcp | ssl | ws | wss | quic | dtls | native.
 
 %% MQTT SockOpts
 -define(MQTT_SOCKOPTS, [
@@ -115,7 +116,7 @@
 -define(ROOT_KEY, listeners).
 -define(MAX_LISTENER_NAME_BYTES, 64).
 -define(CONF_KEY_PATH, [?ROOT_KEY, '?', '?']).
--define(TYPES_STRING, ["tcp", "ssl", "ws", "wss", "quic"]).
+-define(TYPES_STRING, ["tcp", "ssl", "ws", "wss", "quic", "native"]).
 -define(MARK_DEL, ?TOMBSTONE_CONFIG_CHANGE_REQ).
 
 -spec id_example() -> atom().
@@ -208,6 +209,11 @@ is_running(ListenerId) ->
         false -> {error, not_found}
     end.
 
+is_running(native, ListenerId, _Conf) ->
+    case native_call(is_running, [ListenerId]) of
+        true -> true;
+        _ -> false
+    end;
 is_running(Type, ListenerId, _Conf) when Type =:= tcp; Type =:= ssl ->
     find_listen_on(ListenerId) =/= error;
 is_running(Type, ListenerId, _Conf) when Type =:= ws; Type =:= wss ->
@@ -229,6 +235,8 @@ current_conns(Id, ListenOn) ->
     {ok, #{type := Type, name := Name}} = parse_listener_id(Id),
     current_conns(Type, Name, ListenOn).
 
+current_conns(native, _Name, _Bind) ->
+    0;
 current_conns(Type, Name, Bind) when Type == tcp; Type == ssl ->
     ListenOn = emqx_default_address:listen_on(mqtt, Bind),
     esockd:get_current_connections({listener_id(Type, Name), ListenOn});
@@ -244,6 +252,8 @@ max_conns(Id, ListenOn) ->
     {ok, #{type := Type, name := Name}} = parse_listener_id(Id),
     max_conns(Type, Name, ListenOn).
 
+max_conns(native, _Name, _Bind) ->
+    infinity;
 max_conns(Type, Name, Bind) when Type == tcp; Type == ssl ->
     ListenOn = emqx_default_address:listen_on(mqtt, Bind),
     esockd:get_max_connections({listener_id(Type, Name), ListenOn});
@@ -298,7 +308,12 @@ start() ->
     ok = emqx_config_handler:add_handler(?CONF_KEY_PATH, ?MODULE),
     %% callback when reload from config file
     ok = emqx_config_handler:add_handler([?ROOT_KEY], ?MODULE),
-    foreach_listeners(fun start_listener/3).
+    foreach_listeners(fun(Type, Name, Conf) ->
+        case start_listener(Type, Name, Conf) of
+            {error, not_available} when Type =:= native -> ok;
+            Result -> Result
+        end
+    end).
 
 warn_loopback_by_profile() ->
     case emqx_default_address:loopback_by_profile() of
@@ -322,6 +337,8 @@ start_listener(ListenerId) ->
     apply_on_listener(ListenerId, fun ?MODULE:start_listener/3).
 
 -spec start_listener(listener_type(), atom(), map()) -> ok | {error, term()}.
+start_listener(native, Name, Conf) ->
+    native_call(start_listener, [listener_id(native, Name), Conf]);
 start_listener(Type, Name, #{bind := Bind0, enable := true} = Conf0) ->
     %% A bare-port bind gets the resolved default address here, so every
     %% later use of this listener's bind sees the same listen-on value.
@@ -401,6 +418,8 @@ update_listener_for_zone_changes(Type, Name, Conf) ->
     ?SLOG(info, #{msg => ?FUNCTION_NAME, result => Res, listener => listener_id(Type, Name)}),
     ok.
 
+update_listener(native, Name, _OldConf, NewConf) ->
+    native_call(start_listener, [listener_id(native, Name), NewConf]);
 update_listener(_Type, _Name, #{enable := false}, #{enable := false}) ->
     ok;
 update_listener(Type, Name, Conf = #{enable := true}, #{enable := false}) ->
@@ -435,6 +454,8 @@ do_update_running_listener(Type, Name, OldConf, NewConf) ->
         end
     end.
 
+restart_listener(native, Name, _OldConf, NewConf) ->
+    native_call(restart_listener, [listener_id(native, Name), NewConf]);
 restart_listener(Type, Name, OldConf, NewConf) ->
     case stop_listener(Type, Name, OldConf) of
         ok ->
@@ -458,6 +479,11 @@ stop() ->
 stop_listener(ListenerId) ->
     apply_on_listener(ListenerId, fun stop_listener/3).
 
+stop_listener(native, Name, Conf) ->
+    case native_call(stop_listener, [listener_id(native, Name), Conf]) of
+        {error, not_available} -> ok;
+        Result -> Result
+    end;
 stop_listener(Type, Name, #{bind := Bind0} = Conf0) ->
     Id = listener_id(Type, Name),
     Bind = listen_on(Id, Bind0),
@@ -723,9 +749,47 @@ pre_config_update([?ROOT_KEY], NewConf, OldConf) ->
     end.
 
 post_config_update(Path, Request, NewConf, OldConf, AppEnvs) ->
+    Root = listeners_root(Path, NewConf),
+    ok = native_config_update(before, listeners, Root),
     Result = do_post_config_update(Path, Request, NewConf, OldConf, AppEnvs),
+    case Result of
+        ok -> ok = native_config_update('after', listeners, Root);
+        _ -> ok
+    end,
     ok = emqx_connection_conf:listeners_changed(changed_listeners(Path, Request, NewConf, OldConf)),
     Result.
+
+listeners_root([listeners], Conf) ->
+    Conf;
+listeners_root([listeners, Type, Name], Conf) ->
+    emqx_utils_maps:deep_put([Type, Name], emqx:get_config([listeners], #{}), Conf).
+
+-doc "Register the native listener implementation after its runtime starts".
+-spec register_native(module()) -> ok.
+register_native(Module) ->
+    persistent_term:put({?MODULE, native}, Module).
+
+-spec unregister_native(module()) -> ok.
+unregister_native(Module) ->
+    case persistent_term:get({?MODULE, native}, undefined) of
+        Module -> persistent_term:erase({?MODULE, native});
+        _ -> ok
+    end,
+    ok.
+
+-doc "Update native forwarding before starting and after stopping other listeners".
+-spec native_config_update(before | 'after', listeners | gateway, map()) -> ok.
+native_config_update(Phase, Root, Conf) ->
+    case native_call(config_update, [Phase, Root, Conf]) of
+        {error, not_available} -> ok;
+        Result -> Result
+    end.
+
+native_call(Function, Args) ->
+    case persistent_term:get({?MODULE, native}, undefined) of
+        undefined -> {error, not_available};
+        Module -> apply(Module, Function, Args)
+    end.
 
 %% The updated listeners with their new config, and the deleted ones with `undefined'.
 changed_listeners([?ROOT_KEY, Type, Name], ?MARK_DEL, _NewConf, _OldConf) ->

@@ -1241,7 +1241,7 @@ listeners([]) ->
             ResolvedAddress = maps:get(resolved_address, Conf),
             ResolvedAddressFrom = maps:get(resolved_address_from, Conf),
             Enable = maps:get(enable, Conf),
-            Acceptors = maps:get(acceptors, Conf),
+            Acceptors = maps:get(acceptors, Conf, undefined),
             ProxyProtocol = maps:get(proxy_protocol, Conf, undefined),
             Running = maps:get(running, Conf),
             case Running of

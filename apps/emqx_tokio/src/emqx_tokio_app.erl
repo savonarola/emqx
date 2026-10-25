@@ -5,10 +5,14 @@
 
 -behaviour(application).
 
--export([start/2, stop/1]).
+-export([start/2, prep_stop/1, stop/1]).
 
 start(_StartType, _StartArgs) ->
     emqx_tokio_sup:start_link().
 
 stop(_State) ->
     ok.
+
+prep_stop(State) ->
+    ok = emqx_tokio_runtime:stop_listeners(),
+    State.

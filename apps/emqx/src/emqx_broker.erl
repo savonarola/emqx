@@ -144,7 +144,8 @@ create_tabs() ->
     %% bag: O(n) insert
     %% However, the factor is small: high-fanout topics are _sharded_ into
     %% buckets of constant length (e.g. 1024).
-    ok = emqx_utils_ets:new(?SUBSCRIBER, [bag | TabOpts]).
+    ok = emqx_utils_ets:new(?SUBSCRIBER, [bag | TabOpts]),
+    ok = emqx_utils_ets:new(?NATIVE_SUBSCRIBER, [bag | TabOpts]).
 
 -spec init_config() -> ok.
 init_config() ->
@@ -209,6 +210,12 @@ with_subid(undefined, SubOpts) ->
 with_subid(SubId, SubOpts) ->
     maps:put(subid, SubId, SubOpts).
 
+do_subscribe(Topic, SubPid, #{native := true} = SubOpts) when is_binary(Topic) ->
+    true = ets:insert(?SUBOPTION, {{Topic, SubPid}, SubOpts}),
+    case call(pick_sub({Topic, 0}), {subscribe_native, Topic, SubPid}) of
+        ok -> ok;
+        Ref when is_reference(Ref) -> emqx_router_syncer:wait(Ref)
+    end;
 do_subscribe(Topic, SubPid, SubOpts) when is_binary(Topic) ->
     I = emqx_broker_helper:assign_sub_shard(Topic),
     true = ets:insert(?SUBOPTION, {{Topic, SubPid}, with_shard_idx(I, SubOpts)}),
@@ -259,6 +266,8 @@ do_unsubscribe(Topic, SubPid, SubOpts) ->
 
 -spec do_unsubscribe_regular(emqx_types:topic(), pid(), emqx_types:subopts()) ->
     ok.
+do_unsubscribe_regular(Topic, SubPid, #{native := true}) ->
+    cast(pick_sub({Topic, 0}), {unsubscribed_native, Topic, SubPid});
 do_unsubscribe_regular(Topic, SubPid, SubOpts) ->
     I = maps:get(shard, SubOpts, 0),
     _ = emqx_broker_helper:unassign_sub_shard(Topic, I),
@@ -590,7 +599,7 @@ inc_dropped_cnt(Msg) ->
 ) ->
     [pid()].
 subscribers(Topic) when is_binary(Topic) ->
-    lookup_value(?SUBSCRIBER, Topic, []);
+    lookup_value(?SUBSCRIBER, Topic, []) ++ lookup_value(?NATIVE_SUBSCRIBER, Topic, []);
 subscribers(Shard = {shard, _Topic, _I}) ->
     lookup_value(?SUBSCRIBER, Shard, []).
 
@@ -734,8 +743,13 @@ init([Pool, Id]) ->
     true = gproc_pool:connect_worker(Pool, {Pool, Id}),
     {ok, #{pool => Pool, id => Id}}.
 
+handle_call({subscribe_native, Topic, SubPid}, {From, _Tag}, State) ->
+    Result = maybe_add_route(has_subscribers(Topic), Topic, From),
+    assert_ok_result(Result),
+    true = ets:insert(?NATIVE_SUBSCRIBER, {Topic, SubPid}),
+    {reply, Result, State};
 handle_call({subscribe, Topic, SubPid, 0}, {From, _Tag}, State) ->
-    Existed = ets:member(?SUBSCRIBER, Topic),
+    Existed = has_subscribers(Topic),
     Result = maybe_add_route(Existed, Topic, From),
     assert_ok_result(Result),
     true = ets:insert(?SUBSCRIBER, {Topic, SubPid}),
@@ -787,6 +801,10 @@ handle_cast({subscribed, Topic, shard, _I}, State) ->
     _ = sync_route(add, Topic, #{}),
     {noreply, State};
 handle_cast({unsubscribed, Topic, shard, _I}, State) ->
+    _ = maybe_delete_route(Topic),
+    {noreply, State};
+handle_cast({unsubscribed_native, Topic, SubPid}, State) ->
+    true = ets:delete_object(?NATIVE_SUBSCRIBER, {Topic, SubPid}),
     _ = maybe_delete_route(Topic),
     {noreply, State};
 handle_cast({unsubscribed, Topic, SubPid, 0}, State) ->
@@ -842,7 +860,15 @@ do_dispatch2(Topic, #delivery{message = MsgIn}) ->
         true ->
             DispN0 = do_dispatch_shards_async(Topic, Msg, Shards, 0)
     end,
-    DispN = do_dispatch_chans(Deliver, subscribers(Topic), DispN0),
+    DispN1 = do_dispatch_chans(Deliver, lookup_value(?SUBSCRIBER, Topic, []), DispN0),
+    Native = lookup_value(?NATIVE_SUBSCRIBER, Topic, []),
+    DispN =
+        case Msg of
+            #message{headers = #{native_origin := Origin}} when Origin =:= node() ->
+                DispN1 + length(Native);
+            _ ->
+                do_dispatch_chans(Deliver, Native, DispN1)
+        end,
     ?BROKER_INSTR_OBSERVE_HIST(broker, dispatch_total_lat_us, ?US_SINCE(T0)),
     case DispN of
         0 ->
@@ -889,10 +915,13 @@ maybe_add_route(_Existed = true, _Topic, _ReplyTo) ->
     ok.
 
 maybe_delete_route(Topic) ->
-    case ets:member(?SUBSCRIBER, Topic) of
+    case has_subscribers(Topic) of
         true -> ok;
         false -> sync_route(delete, Topic, #{})
     end.
+
+has_subscribers(Topic) ->
+    ets:member(?SUBSCRIBER, Topic) orelse ets:member(?NATIVE_SUBSCRIBER, Topic).
 
 sync_route(Action, Topic, ReplyTo) ->
     Res =

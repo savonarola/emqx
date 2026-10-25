@@ -16,6 +16,7 @@
 %% ETS tables for PubSub
 -define(SUBOPTION, emqx_suboption).
 -define(SUBSCRIBER, emqx_subscriber).
+-define(NATIVE_SUBSCRIBER, emqx_native_subscriber).
 -define(SUBSCRIPTION, emqx_subscription).
 
 -endif.

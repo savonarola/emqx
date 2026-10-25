@@ -838,7 +838,16 @@ badres_listener_authn(already_exist, GwName, LType, LName) ->
 ) ->
     ok | {ok, Result :: any()} | {error, Reason :: term()}.
 
-post_config_update(?GATEWAY, Req, NewConfig, OldConfig, _AppEnvs) when is_tuple(Req) ->
+post_config_update(Path, Req, NewConfig, OldConfig, AppEnvs) ->
+    ok = emqx_listeners:native_config_update(before, gateway, NewConfig),
+    Result = do_post_config_update(Path, Req, NewConfig, OldConfig, AppEnvs),
+    case Result of
+        ok -> ok = emqx_listeners:native_config_update('after', gateway, NewConfig);
+        _ -> ok
+    end,
+    Result.
+
+do_post_config_update(?GATEWAY, Req, NewConfig, OldConfig, _AppEnvs) when is_tuple(Req) ->
     [_Tag, GwName0 | _] = tuple_to_list(Req),
     GwName = binary_to_existing_atom(GwName0),
 
@@ -853,7 +862,7 @@ post_config_update(?GATEWAY, Req, NewConfig, OldConfig, _AppEnvs) when is_tuple(
         {New, Old} when is_map(New), is_map(Old) ->
             emqx_gateway:update(GwName, New)
     end;
-post_config_update(?GATEWAY, _Req = #{}, NewConfig, OldConfig, _AppEnvs) ->
+do_post_config_update(?GATEWAY, _Req = #{}, NewConfig, OldConfig, _AppEnvs) ->
     %% unload gateways
     maps:foreach(
         fun(GwName, _OldGwConf) ->

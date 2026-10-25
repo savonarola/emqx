@@ -15,9 +15,21 @@ start_link() ->
 
 init([]) ->
     SupFlags = #{
-        strategy => one_for_one,
+        strategy => rest_for_one,
         intensity => 10,
         period => 10
     },
-    ChildSpecs = [],
+    ChildSpecs = [
+        #{
+            id => emqx_tokio_runtime,
+            start => {emqx_tokio_runtime, start_link, []},
+            shutdown => 15000
+        },
+        #{
+            id => emqx_tokio_pool,
+            start => {emqx_tokio_pool, start_link, []},
+            type => supervisor,
+            shutdown => infinity
+        }
+    ],
     {ok, {SupFlags, ChildSpecs}}.

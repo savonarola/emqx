@@ -329,10 +329,13 @@ create_listener_schema(Opts) ->
     ).
 
 listeners_type() ->
-    lists:map(fun({Type, _}) -> list_to_existing_atom(Type) end, emqx_schema:listeners()).
+    lists:map(fun({Type, _}) -> list_to_existing_atom(Type) end, managed_listeners()).
+
+managed_listeners() ->
+    lists:keydelete("native", 1, emqx_schema:listeners()).
 
 listeners_info(Opts) ->
-    Listeners = emqx_schema:listeners(),
+    Listeners = managed_listeners(),
     lists:map(
         fun({ListenerType, Schema}) ->
             Type = emqx_schema:get_tombstone_map_value_type(Schema),
@@ -533,7 +536,7 @@ parse_listener_conf(new_id, Conf0) ->
         {IdBin, Conf3} ->
             {ok, #{type := Type, name := Name}} = emqx_listeners:parse_listener_id(IdBin),
             case Type =:= TypeAtom of
-                true -> {binary_to_atom(IdBin), TypeAtom, Name, Conf3};
+                true -> {emqx_listeners:listener_id(TypeAtom, Name), TypeAtom, Name, Conf3};
                 false -> {error, listener_type_inconsistent}
             end;
         _ ->
@@ -572,10 +575,9 @@ parse_listener_conf(name, Conf0) ->
     TypeAtom = binary_to_existing_atom(TypeBin),
     case maps:take(<<"name">>, Conf2) of
         {Name, Conf3} ->
-            IdBin = <<TypeBin/binary, $:, Name/binary>>,
             case emqx_listeners:validate_listener_name(Name) of
                 ok ->
-                    {binary_to_atom(IdBin), TypeAtom, Name, Conf3};
+                    {emqx_listeners:listener_id(TypeAtom, Name), TypeAtom, Name, Conf3};
                 {error, _} = Error ->
                     Error
             end;
