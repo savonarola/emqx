@@ -45,6 +45,7 @@ defmodule Mix.Tasks.Compile.RustNif do
           File.cp!(so, dest)
           Mix.shell().info("NIF installed: #{dest}")
         end)
+
         {:ok, []}
 
       {output, exit_code} ->
