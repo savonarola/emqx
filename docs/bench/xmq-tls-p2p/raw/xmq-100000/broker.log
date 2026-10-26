@@ -1,19 +1,19 @@
-10/26/26 14:17:57.140 [Info] (primary) Configuration:        /results/xmq_server.conf
-10/26/26 14:17:57.140 [Info] (primary) Log to:               stdout and /tmp/xmq_server.log
-10/26/26 14:17:57.140 [Info] (primary) Log level:            Info
-10/26/26 14:17:57.140 [Info] (primary) CPU affinity:         not applied - disabled by default; use --use-cpu-affinity to enable
-10/26/26 14:17:57.140 [Info] (primary) Persistence:          off
-10/26/26 14:17:57.140 [Info] (primary) Connection reserve:   1048576 sessions, from the file descriptor limit
-10/26/26 14:17:57.140 [Info] (primary) Threads:              3 send, 4 receive, 2 delivery
-10/26/26 14:17:57.140 [Info] (primary) Initialization completed
-10/26/26 14:17:57.140 [Info] (xmq service) Starting
-10/26/26 14:17:57.172 [ERROR] [Startup] The configuration interface could not be encrypted: Can't open file /etc/xmq/certs/node.crt for writing: error:8000000D:system library::Permission denied in SelfSignedCertificate.cpp:372
-10/26/26 14:17:57.172 [ERROR] [Startup] Falling back to plain HTTP. Correct the certificate at /etc/xmq/certs/node.crt and restart to serve HTTPS again.
-10/26/26 14:17:57.172 [Info] [Startup] Listening Web GUI on 127.0.0.1:21884 (http).
-10/26/26 14:17:57.172 [WARNING] [Startup] No password is set for the 'admin' account. Until one is, the Web GUI answers on this machine only, at http://127.0.0.1:21884 - open it and set the password.
-10/26/26 14:17:57.184 [Info] (primary) <server_events> XMQ server version 1.0.0.
-10/26/26 14:17:57.184 [Info] (primary) <server_events> Using storage at memory.
-10/26/26 14:17:57.184 [ERROR] (primary) <server_events> No extension authenticates, so only anonymous clients can connect. Configure an authenticator in xmq_extensions.d.
-10/26/26 14:17:57.185 [Info] (primary) <server_events> Listening MQTT+SSL on port 21883 (4 threads).
-10/26/26 14:17:57.185 [Info] (primary) <server_events> Server started.
-10/26/26 14:17:57.268 [ERROR] (primary) <server_connections> ERROR SSL_accept: error:0A000126:SSL routines::unexpected eof while reading: unexpected eof while reading in SSLSocket.cpp:343
+10/26/26 16:22:04.014 [Info] (primary) Configuration:        /results/xmq_server.conf
+10/26/26 16:22:04.014 [Info] (primary) Log to:               stdout and /tmp/xmq_server.log
+10/26/26 16:22:04.014 [Info] (primary) Log level:            Info
+10/26/26 16:22:04.014 [Info] (primary) CPU affinity:         not applied - disabled by default; use --use-cpu-affinity to enable
+10/26/26 16:22:04.014 [Info] (primary) Persistence:          off
+10/26/26 16:22:04.014 [Info] (primary) Connection reserve:   1048576 sessions, from the file descriptor limit
+10/26/26 16:22:04.014 [Info] (primary) Threads:              3 send, 4 receive, 2 delivery
+10/26/26 16:22:04.014 [Info] (primary) Initialization completed
+10/26/26 16:22:04.014 [Info] (xmq service) Starting
+10/26/26 16:22:04.034 [ERROR] [Startup] The configuration interface could not be encrypted: Can't open file /etc/xmq/certs/node.crt for writing: error:8000000D:system library::Permission denied in SelfSignedCertificate.cpp:372
+10/26/26 16:22:04.034 [ERROR] [Startup] Falling back to plain HTTP. Correct the certificate at /etc/xmq/certs/node.crt and restart to serve HTTPS again.
+10/26/26 16:22:04.034 [Info] [Startup] Listening Web GUI on 127.0.0.1:21884 (http).
+10/26/26 16:22:04.034 [WARNING] [Startup] No password is set for the 'admin' account. Until one is, the Web GUI answers on this machine only, at http://127.0.0.1:21884 - open it and set the password.
+10/26/26 16:22:04.045 [Info] (primary) <server_events> XMQ server version 1.0.0.
+10/26/26 16:22:04.045 [Info] (primary) <server_events> Using storage at memory.
+10/26/26 16:22:04.045 [ERROR] (primary) <server_events> No extension authenticates, so only anonymous clients can connect. Configure an authenticator in xmq_extensions.d.
+10/26/26 16:22:04.046 [Info] (primary) <server_events> Listening MQTT+SSL on port 21883 (4 threads).
+10/26/26 16:22:04.046 [Info] (primary) <server_events> Server started.
+10/26/26 16:22:04.142 [ERROR] (primary) <server_connections> ERROR SSL_accept: error:0A000126:SSL routines::unexpected eof while reading: unexpected eof while reading in SSLSocket.cpp:343

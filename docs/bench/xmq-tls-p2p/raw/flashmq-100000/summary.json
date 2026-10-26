@@ -1,14 +1,14 @@
 {
   "mode": "flashmq",
   "target_rate": 100000,
-  "received": 59958811,
-  "achieved_rate": 99931,
-  "mean_latency_ms": 19.433,
-  "median_interval_latency_ms": 0.292,
-  "broker_mean_cpu_percent": 548.1578207356465,
-  "broker_steady_cpu_percent": 541.2101291978507,
-  "broker_peak_rss_bytes": 3842445312,
-  "broker_idle_rss_bytes": 322125824,
-  "broker_steady_rss_bytes": 3841789952.0,
-  "broker_rss_per_connection_bytes": 35196.64128
+  "received": 59970746,
+  "achieved_rate": 99951,
+  "mean_latency_ms": 0.312,
+  "median_interval_latency_ms": 0.253,
+  "broker_mean_cpu_percent": 540.7519984454393,
+  "broker_steady_cpu_percent": 540.7068394016243,
+  "broker_peak_rss_bytes": 3840532480,
+  "broker_idle_rss_bytes": 319029248,
+  "broker_steady_rss_bytes": 3839877120.0,
+  "broker_rss_per_connection_bytes": 35208.47872
 }

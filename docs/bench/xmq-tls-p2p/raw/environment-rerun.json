@@ -1,0 +1,31 @@
+{
+  "arguments": {
+    "results": "/tmp/opencode/xmq-tls-rerun",
+    "broker_cpus": "0-3,8-11",
+    "client_cpus": "4-7,12-15",
+    "image": "alexeyparshin/xmq@sha256:dd4a1a857ac6d14c74cac0cc833fac9137954681e1933c6892c1023b358aa79c",
+    "duration": 600,
+    "connection_rate": 10000,
+    "rates": [
+      100000
+    ],
+    "modes": [
+      "xmq",
+      "flashmq"
+    ]
+  },
+  "sysctl_before": {
+    "net.ipv4.ip_local_port_range": "32768\t60999",
+    "net.core.somaxconn": "4096",
+    "net.ipv4.tcp_max_syn_backlog": "4096"
+  },
+  "sysctl_during": {
+    "net.ipv4.ip_local_port_range": "1024 65535",
+    "net.core.somaxconn": "65535",
+    "net.ipv4.tcp_max_syn_backlog": "65535"
+  },
+  "load": "18:22:03 up 1 day,  9:26,  5 users,  load average: 0.98, 0.72, 0.48",
+  "memory": "total        used        free      shared  buff/cache   available\nMem:            58Gi       8.3Gi        27Gi       166Mi        23Gi        50Gi\nSwap:          8.0Gi          0B       8.0Gi",
+  "epmd": "epmd: up and running on port 4369 with data:",
+  "ports": "State  Recv-Q Send-Q               Local Address:Port  Peer Address:PortProcess\nLISTEN 0      512                      127.0.0.1:49374      0.0.0.0:*          \nLISTEN 0      128                      127.0.0.1:17600      0.0.0.0:*          \nLISTEN 0      128                      127.0.0.1:17603      0.0.0.0:*          \nLISTEN 0      4096                       0.0.0.0:17500      0.0.0.0:*          \nLISTEN 0      4096                100.100.232.65:45580      0.0.0.0:*          \nLISTEN 0      10                         0.0.0.0:18899      0.0.0.0:*          \nLISTEN 0      4096                100.100.232.65:10000      0.0.0.0:*          \nLISTEN 0      4096                       0.0.0.0:22300      0.0.0.0:*          \nLISTEN 0      4096                100.100.232.65:8317       0.0.0.0:*          \nLISTEN 0      4096                100.100.232.65:8443       0.0.0.0:*          \nLISTEN 0      4096                     127.0.0.1:631        0.0.0.0:*          \nLISTEN 0      4096                     127.0.0.1:2019       0.0.0.0:*          \nLISTEN 0      511                      127.0.0.1:6379       0.0.0.0:*          \nLISTEN 0      4096                 127.0.0.53%lo:53         0.0.0.0:*          \nLISTEN 0      4096                    127.0.0.54:53         0.0.0.0:*          \nLISTEN 0      4096                       0.0.0.0:22         0.0.0.0:*          \nLISTEN 0      50                         0.0.0.0:139        0.0.0.0:*          \nLISTEN 0      50                         0.0.0.0:445        0.0.0.0:*          \nLISTEN 0      4096                     127.0.0.1:11434      0.0.0.0:*          \nLISTEN 0      10                       127.0.0.1:8888       0.0.0.0:*          \nLISTEN 0      4096                       0.0.0.0:2342       0.0.0.0:*          \nLISTEN 0      2048                       0.0.0.0:2455       0.0.0.0:*          \nLISTEN 0      512                        0.0.0.0:4097       0.0.0.0:*          \nLISTEN 0      4096                       0.0.0.0:4369       0.0.0.0:*          \nLISTEN 0      4096   [fd7a:115c:a1e0::4901:e892]:8443          [::]:*          \nLISTEN 0      4096   [fd7a:115c:a1e0::4901:e892]:10000         [::]:*          \nLISTEN 0      4096   [fd7a:115c:a1e0::4901:e892]:47273         [::]:*          \nLISTEN 0      10                            [::]:18899         [::]:*          \nLISTEN 0      4096                          [::]:22300         [::]:*          \nLISTEN 0      4096                             *:80               *:*          \nLISTEN 0      4096                          [::]:22            [::]:*          \nLISTEN 0      50                            [::]:139           [::]:*          \nLISTEN 0      50                            [::]:445           [::]:*          \nLISTEN 0      4096                             *:443              *:*          \nLISTEN 0      4096                         [::1]:631           [::]:*          \nLISTEN 0      4096                          [::]:2342          [::]:*          \nLISTEN 0      4096                          [::]:4369          [::]:*"
+}

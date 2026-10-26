@@ -132,18 +132,34 @@ available as packages anymore.
 | 75K | XMQ | 74,970/s | 180 us | 189 us | 448% | 2.53 GB | 32 KB |
 | 75K | FlashMQ | 74,975/s | 101 us | 102 us | 396% | 2.88 GB | 34 KB |
 | 75K | EMQX native-only | 74,964/s | 114 us | 112 us | 358% | 3.44 GB | 40 KB |
-| 100K | XMQ | 99,806/s | 401 ms | 417 ms | 614% | 3.40 GB | 32 KB |
-| 100K | FlashMQ | 99,931/s | 19.4 ms | 292 us | 541% | 3.84 GB | 35 KB |
+| 100K | XMQ | 99,869/s | 355 ms | 459 ms | 615% | 3.39 GB | 33 KB |
+| 100K | FlashMQ | 99,951/s | 312 us | 253 us | 541% | 3.84 GB | 35 KB |
 | 100K | EMQX native-only | 99,931/s | 317 us | 276 us | 469% | 4.52 GB | 41 KB |
 
-- At 100K, XMQ delivers the rate, but its latency is 370 to 460 ms in every
-  minute of the run. The latency does not grow over the run.
-- At 100K, FlashMQ has one minute at 191 ms and one at 1.5 ms. The other
-  minutes are 250 to 350 us. This one minute makes the mean 19.4 ms.
+- At 100K, XMQ delivers the rate, but its latency is about 460 ms in every
+  minute after the first. The latency does not grow over the run.
 - EMQX native-only uses the least CPU at every rate. It uses 6 to 9 KB more
   memory per connection than XMQ and FlashMQ.
 - Connect rate: XMQ about 1,200 to 1,450 a second, FlashMQ about 9,100 a
   second. `xmq_scn` asks for 10,000 a second.
+
+### Rerun of the 100K runs
+
+The first XMQ and FlashMQ runs at 100K overlapped CT runs of another
+worktree on the same host:
+
+- XMQ, 16:18 to 16:29: a compile and CT runs from 16:19 to 16:27.
+- FlashMQ, 16:50 to 17:00: a compile and a CT run from 16:51 to 16:53. That
+  run had one minute at 191 ms and a mean latency of 19.4 ms.
+
+Both runs were repeated from 18:22 to 18:43 on an idle host. The table above
+shows the reruns. During the reruns, `raw/host-activity-rerun.log` recorded the
+load and the top processes every 10 s. No other process used more than 12% of
+one CPU thread. The XMQ latency at 100K was the same in the rerun, so it does
+not come from the CT runs.
+
+No CT runs or compiles overlapped the other runs. The EMQX runs started at
+23:46, and the last CT run of that night ended at 23:28.
 
 ## Reference results
 
@@ -175,6 +191,8 @@ not kept.
 | `raw/environment.json` | Runner arguments, sysctl values before and during the runs, load, memory, EPMD, ports |
 | `raw/runner.log` | One summary line per finished rate |
 | `raw/environment-scale.json`, `raw/runner-scale.log` | The same for the XMQ and FlashMQ runs |
+| `raw/environment-rerun.json`, `raw/runner-rerun.log` | The same for the 100K reruns; their output replaces `raw/xmq-100000` and `raw/flashmq-100000` |
+| `raw/host-activity-rerun.log` | Load average and top processes every 10 s during the reruns |
 | `raw/xmq-<rate>/xmq_server.conf`, `raw/flashmq-<rate>/flashmq.conf` | Broker configuration |
 | `raw/<mode>-<rate>/scenario.json` | Scenario passed to `xmq_scn` |
 | `raw/<mode>-<rate>/client.log` | `xmq_scn` output: connect phase and publish intervals |

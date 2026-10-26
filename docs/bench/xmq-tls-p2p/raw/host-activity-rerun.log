@@ -1,0 +1,1040 @@
+18:22:03
+0.98 0.72 0.48 4/1690 1077531
+ 2.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.1 opencode        opencode
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.3 opencode        opencode
+18:22:13
+1.30 0.80 0.50 2/1958 1078042
+ 103 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+79.3 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.1 opencode        opencode
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+18:22:23
+1.34 0.82 0.52 2/1949 1078150
+96.7 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+78.1 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+18:22:33
+1.68 0.91 0.55 4/1933 1078246
+94.8 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+76.9 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+18:22:43
+1.89 0.98 0.57 3/1951 1078484
+94.1 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+76.6 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+18:22:53
+1.83 1.00 0.58 5/1943 1078588
+94.9 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+75.6 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+18:23:03
+1.94 1.05 0.61 4/1931 1078683
+95.0 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+75.2 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.4 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+18:23:13
+2.27 1.14 0.64 4/1951 1078796
+94.7 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+75.2 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.4 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+18:23:23
+4.13 1.59 0.79 21/1816 1078901
+ 102 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+83.7 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.3 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+18:23:33
+6.56 2.19 1.00 22/1803 1079003
+ 160 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 137 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 2.3 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+18:23:43
+7.83 2.61 1.15 19/1823 1079123
+ 207 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 181 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.3 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+18:23:53
+9.49 3.14 1.34 23/1816 1079231
+ 245 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 216 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.2 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+18:24:03
+10.42 3.55 1.49 18/1804 1079331
+ 277 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 245 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.2 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+18:24:13
+12.40 4.20 1.72 19/1826 1079452
+ 305 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 272 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 2.2 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+18:24:23
+13.33 4.67 1.91 18/1820 1079568
+ 330 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 296 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.1 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+18:24:33
+14.26 5.16 2.09 21/1807 1079667
+ 352 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 316 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.1 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+18:24:43
+14.82 5.58 2.26 16/1826 1079786
+ 371 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 334 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.1 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 2.0 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+18:24:53
+15.33 5.99 2.43 14/1823 1079899
+ 388 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 351 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 2.1 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+18:25:03
+16.40 6.54 2.65 21/1810 1080001
+ 404 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 365 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.0 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.7 opencode        opencode
+18:25:13
+16.57 6.90 2.81 13/1826 1080108
+ 417 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 378 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.1 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.7 opencode        opencode
+18:25:23
+17.38 7.39 3.01 23/1822 1080216
+ 430 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 389 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.3 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.7 opencode        opencode
+18:25:34
+17.79 7.81 3.20 24/1815 1080318
+ 442 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 400 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.3 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.7 opencode        opencode
+18:25:44
+18.16 8.21 3.38 23/1820 1080427
+ 453 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 409 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.3 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.7 opencode        opencode
+18:25:54
+18.05 8.52 3.53 23/1828 1080545
+ 463 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 418 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.3 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.7 opencode        opencode
+18:26:04
+18.43 8.91 3.71 23/1802 1080643
+ 472 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 426 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.2 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.6 opencode        opencode
+18:26:14
+19.03 9.36 3.91 23/1815 1080750
+ 480 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 433 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.2 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.6 opencode        opencode
+18:26:24
+18.55 9.58 4.04 24/1819 1080870
+ 488 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 440 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.2 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.6 opencode        opencode
+18:26:34
+18.57 9.87 4.20 20/1801 1080984
+ 495 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 447 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.2 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.6 opencode        opencode
+18:26:44
+18.96 10.24 4.38 23/1820 1081093
+ 501 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 453 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.1 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 opencode        opencode
+18:26:54
+19.74 10.70 4.59 18/1818 1081202
+ 508 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 458 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 2.1 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+18:27:04
+19.25 10.89 4.72 20/1801 1081299
+ 513 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 463 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 2.1 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+18:27:14
+19.90 11.30 4.92 22/1812 1081410
+ 519 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 468 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.1 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:27:24
+19.92 11.59 5.08 20/1818 1081528
+ 524 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 473 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.1 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:27:34
+20.41 11.97 5.27 23/1795 1081629
+ 529 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 477 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 2.0 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+18:27:44
+20.54 12.28 5.45 21/1808 1081736
+ 533 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 481 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 2.0 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+18:27:54
+20.83 12.62 5.63 16/1812 1081851
+ 537 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 485 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 2.0 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+18:28:04
+21.16 12.96 5.82 25/1794 1081946
+ 542 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 488 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.0 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:28:14
+20.28 13.04 5.92 22/1806 1082057
+ 545 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 492 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 2.0 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:28:24
+20.62 13.35 6.10 24/1812 1082174
+ 549 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 495 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:28:34
+20.59 13.59 6.25 20/1794 1082274
+ 552 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 498 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:28:44
+20.79 13.87 6.42 23/1806 1082387
+ 555 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 501 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.9 opencode        opencode
+18:28:54
+20.97 14.13 6.59 19/1812 1082501
+ 558 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 504 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.9 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:29:04
+21.12 14.39 6.76 20/1792 1082596
+ 561 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 506 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.9 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:29:14
+20.61 14.51 6.88 30/1807 1082710
+ 564 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 509 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.9 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:29:24
+20.54 14.69 7.02 22/1812 1082829
+ 567 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 511 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.8 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:29:34
+20.34 14.85 7.15 23/1802 1082932
+ 569 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 513 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.8 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:29:44
+20.38 15.04 7.29 21/1816 1083046
+ 572 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 516 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.8 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:29:54
+20.05 15.14 7.41 25/1811 1083154
+ 574 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 518 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.8 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:30:04
+20.02 15.30 7.55 23/1792 1083254
+ 576 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 520 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 200 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.8 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:30:14
+19.65 15.37 7.65 19/1818 1083369
+ 578 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 522 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.8 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:30:24
+19.85 15.55 7.80 21/1823 1083489
+ 580 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 524 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.8 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:30:34
+19.95 15.72 7.93 24/1797 1083580
+ 582 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 525 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.8 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:30:44
+20.49 15.97 8.10 22/1809 1083685
+ 584 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 527 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:30:54
+20.42 16.11 8.23 24/1815 1083797
+ 586 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 529 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:31:04
+20.27 16.22 8.35 21/1797 1083897
+ 588 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 530 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:31:14
+20.25 16.35 8.47 19/1809 1084008
+ 589 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 532 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:31:24
+19.92 16.40 8.58 24/1814 1084122
+ 591 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 533 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:31:35
+19.29 16.39 8.66 26/1795 1084237
+ 593 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 535 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:31:45
+19.30 16.49 8.77 23/1809 1084346
+ 594 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 536 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:31:55
+18.88 16.49 8.86 21/1817 1084461
+ 596 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 537 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:32:05
+18.78 16.55 8.96 21/1795 1084556
+ 597 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 539 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:32:15
+19.04 16.68 9.08 26/1812 1084668
+ 598 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 540 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:32:25
+18.89 16.73 9.18 21/1814 1084786
+ 600 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 541 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:32:35
+19.03 16.84 9.30 18/1796 1084883
+ 601 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 542 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:32:45
+19.41 16.99 9.43 26/1807 1084992
+ 602 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:32:55
+19.13 17.01 9.51 26/1812 1085107
+ 603 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 545 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:33:05
+19.35 17.12 9.63 23/1791 1085202
+ 605 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 546 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:33:15
+19.15 17.15 9.72 25/1808 1085313
+ 606 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 547 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:33:25
+18.06 16.99 9.75 3/1814 1085434
+ 605 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 546 xmq_server      xmq_server -c /results/xmq_server.conf -l /tmp/xmq.log
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:33:35
+22.29 17.96 10.15 29/1877 1086053
+ 740 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 675 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:33:45
+22.42 18.14 10.29 9/1763 1086169
+ 671 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 651 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:33:55
+21.34 18.05 10.35 17/1771 1086287
+ 638 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 621 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:34:05
+21.05 18.10 10.44 22/1750 1086388
+ 632 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 597 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:34:15
+20.67 18.11 10.53 21/1763 1086503
+ 629 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 585 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 200 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:34:25
+19.96 18.04 10.59 17/1770 1086622
+ 627 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 577 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:34:35
+18.40 17.76 10.58 17/1751 1086723
+ 626 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 571 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.9 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:34:45
+17.64 17.62 10.61 26/1764 1086831
+ 624 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 567 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:34:55
+17.16 17.52 10.65 13/1771 1086946
+ 624 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 564 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:35:05
+16.83 17.44 10.70 21/1753 1087045
+ 623 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 561 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:35:15
+16.77 17.41 10.76 17/1773 1087157
+ 623 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 559 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:35:25
+16.98 17.43 10.84 22/1777 1087274
+ 622 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 558 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:35:35
+16.26 17.26 10.86 24/1756 1087366
+ 622 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 556 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:35:45
+16.00 17.17 10.90 18/1769 1087479
+ 622 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 555 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.7 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:35:55
+16.63 17.27 11.00 20/1775 1087591
+ 622 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 554 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:36:05
+16.67 17.26 11.06 16/1754 1087691
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 553 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:36:15
+16.63 17.23 11.12 18/1767 1087798
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 552 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:36:25
+16.75 17.24 11.19 17/1773 1087913
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 552 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:36:35
+16.03 17.07 11.20 12/1755 1088024
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 551 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:36:45
+15.87 17.00 11.24 14/1768 1088133
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 551 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:36:55
+15.75 16.93 11.28 19/1775 1088248
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 550 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:37:05
+15.39 16.82 11.30 19/1757 1088349
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 550 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:37:15
+15.48 16.79 11.35 22/1773 1088460
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 549 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:37:25
+15.56 16.77 11.40 17/1779 1088576
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 549 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:37:35
+15.49 16.71 11.44 23/1761 1088672
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 549 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:37:46
+15.58 16.68 11.49 15/1771 1088782
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 548 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:37:56
+15.78 16.69 11.55 19/1778 1088899
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 548 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:38:06
+16.20 16.75 11.63 18/1760 1088999
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 548 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.6 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:38:16
+15.92 16.68 11.66 15/1772 1089108
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 547 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:38:26
+15.56 16.57 11.68 22/1777 1089229
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 547 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:38:36
+15.09 16.44 11.69 21/1758 1089332
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 547 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:38:46
+15.23 16.43 11.73 14/1767 1089443
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 547 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:38:56
+15.56 16.46 11.79 15/1766 1089558
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 546 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:39:06
+15.66 16.45 11.84 14/1747 1089656
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 546 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:39:16
+15.49 16.38 11.87 12/1759 1089767
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 546 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:39:26
+15.03 16.25 11.88 20/1768 1089890
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 546 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:39:36
+15.33 16.28 11.93 16/1746 1089991
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 546 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:39:46
+15.60 16.30 11.99 18/1762 1090103
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 546 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:39:56
+15.79 16.32 12.04 19/1766 1090215
+ 621 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 545 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:40:06
+16.37 16.43 12.12 17/1779 1090348
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 546 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:40:16
+16.15 16.38 12.15 13/1773 1090440
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 546 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:40:26
+16.05 16.35 12.19 13/1772 1090554
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 545 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:40:36
+15.43 16.21 12.19 21/1750 1090645
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 545 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:40:46
+15.52 16.20 12.23 19/1757 1090753
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 545 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:40:56
+15.30 16.13 12.25 18/1764 1090871
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 545 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:41:06
+15.11 16.06 12.27 19/1756 1091012
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 545 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+11.9 npm exec tavily npm exec tavily-mcp@latest
+ 4.9 MainThread      node /home/av/.npm/_npx/3a4829a0511b3281/node_modules/.bin/tavily-mcp
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+18:41:16
+15.32 16.07 12.31 16/1767 1091125
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 545 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 5.7 npm exec tavily npm exec tavily-mcp@latest
+ 2.2 MainThread      node /home/av/.npm/_npx/3a4829a0511b3281/node_modules/.bin/tavily-mcp
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+18:41:26
+15.42 16.07 12.35 17/1773 1091249
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 545 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 3.7 npm exec tavily npm exec tavily-mcp@latest
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:41:36
+15.52 16.07 12.39 20/1747 1091357
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 545 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 2.8 npm exec tavily npm exec tavily-mcp@latest
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:41:46
+15.36 16.02 12.41 20/1760 1091467
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 545 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 2.2 npm exec tavily npm exec tavily-mcp@latest
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:41:56
+15.47 16.02 12.45 20/1767 1091586
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 npm exec tavily npm exec tavily-mcp@latest
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:42:06
+15.95 16.10 12.52 20/1745 1091679
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.5 npm exec tavily npm exec tavily-mcp@latest
+18:42:16
+15.65 16.03 12.54 19/1767 1091797
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.4 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:42:26
+14.93 15.86 12.52 17/1770 1091922
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.4 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:42:36
+15.18 15.88 12.56 20/1757 1092028
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.4 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:42:46
+15.60 15.95 12.62 15/1756 1092131
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:42:56
+15.73 15.97 12.66 18/1772 1092251
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.4 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:43:06
+15.55 15.92 12.68 20/1763 1092354
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.4 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:43:16
+15.92 15.99 12.74 21/1757 1092452
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.4 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
+18:43:26
+16.09 16.03 12.79 21/1771 1092564
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 100 ps              ps -eo pcpu,comm,args --sort=-pcpu --no-headers
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+18:43:36
+16.17 16.04 12.83 15/1761 1092680
+ 620 xmq_scn         xmq_scn --scenario /results/scenario.json --encrypted --cafile /results/cert.pem --bind-to-interfaces 127.0.0.11,127.0.
+ 544 flashmq         /usr/bin/flashmq --config-file /results/flashmq.conf
+ 1.9 opencode        /home/av/.opencode/bin/opencode serve --service
+ 1.8 opencode        opencode
+ 1.6 python          /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/python /home/av/.cache/uv/archive-v0/qoIwKmHlCH37-9hqHwHkB/bin/
+ 1.4 rslsync         /usr/bin/rslsync --config /etc/resilio-sync/config.json
