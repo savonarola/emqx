@@ -1,0 +1,61 @@
+CPU affinity: not applied - disabled by default; use --use-cpu-affinity to enable
+
+Binding clients to 4 local interface(s).
+Scenario: Point-To-Point-TLS-50K-native-only (connect clients)
+Interval        Count    Latency       Rate/s
+─────────────────────────────────────────────
+0ms              1619    24447us         6476
+250ms            1811    25741us         7244
+500ms            1779    25902us         7116
+750ms            1713    24869us         6852
+1000ms           1847    25809us         7388
+1250ms           1816    24548us         7264
+1500ms           1753    26289us         7012
+1750ms           1865    27123us         7460
+2000ms           1771    25899us         7084
+2250ms           1823    25352us         7292
+2500ms           1816    26329us         7264
+2750ms           1798    24763us         7192
+3000ms           1833    27208us         7332
+3250ms           1756    24794us         7024
+─────────────────────────────────────────────
+Average         25000    25665us         7142
+Median                   25809us
+
+Scenario: Point-To-Point-TLS-50K-native-only (connect clients)
+Interval        Count    Latency       Rate/s
+─────────────────────────────────────────────
+0ms              1753    25232us         7012
+250ms            1807    24503us         7228
+500ms            1765    25968us         7060
+750ms            1814    25954us         7256
+1000ms           1849    25319us         7396
+1250ms           1802    25344us         7208
+1500ms           1782    26361us         7128
+1750ms           1800    25102us         7200
+2000ms           1829    25356us         7316
+2250ms           1716    25323us         6864
+2500ms           1894    25474us         7576
+2750ms           1743    25391us         6972
+3000ms           1869    25463us         7476
+3250ms           1577    24797us         6308
+─────────────────────────────────────────────
+Average         25000    25404us         7142
+Median                   25356us
+
+Scenario: Point-To-Point-TLS-50K-native-only
+Interval        Count    Latency       Rate/s
+─────────────────────────────────────────────
+0ms           2999996       65us        49999
+60000ms       3000000       65us        50000
+120000ms      3000000       69us        50000
+180000ms      3000001       67us        50000
+240000ms      2999984       64us        49999
+300000ms      3000014       64us        50000
+360000ms      3000000       64us        50000
+420000ms      3000001       64us        50000
+480000ms      2999999       64us        49999
+540000ms      2990322       64us        49838
+─────────────────────────────────────────────
+Average      29990317       65us        49983
+Median                      64us

@@ -1,0 +1,169 @@
+*** emqx_cth_suite 2026-10-25T23:46:53.733+02:00 @ 'native_tls_bench_531440@127.0.0.1' ***
+Starting gen_rpc
+
+23:46:53.779 [info] [driver: :tcp, port: 5369, socket: [~c"#Port<0.5>"], msg: ~c"server_setup_successfully"]
+
+23:46:53.802 [info] [domain: [:gen_rpc, :dispatcher], "$kind": :gen_rpc_dispatcher_start]
+*** emqx_cth_suite 2026-10-25T23:46:53.803+02:00 @ 'native_tls_bench_531440@127.0.0.1' ***
+Started applications: [crypto,asn1,public_key,ssl,gen_rpc]
+*** emqx_cth_suite 2026-10-25T23:46:53.803+02:00 @ 'native_tls_bench_531440@127.0.0.1' ***
+Starting mria
+
+23:46:53.832 [notice] [env: [], "$kind": ~c"Starting mria"]
+
+23:46:53.837 [notice] ["$kind": ~c"Starting mnesia"]
+
+23:46:53.838 [debug] ["$kind": ~c"Ensure mnesia schema"]
+
+23:46:53.933 [notice] [result: :ok, "$kind": ~c"Creating new mnesia schema"]
+
+23:46:54.006 [notice] ["$kind": ~c"Starting shards"]
+
+23:46:54.009 [debug] ["$kind": :rlog_schema_init]
+
+23:46:54.017 [info] ["$kind": ~c"Setting RLOG shard config", shard: :"$mria_meta_shard", tables: [:"$mria_rlog_sync", :mria_schema]]
+
+23:46:54.017 [info] ["$kind": ~c"Converging schema"]
+
+23:46:54.017 [info] ["$kind": ~c"Setting RLOG shard config", shard: :"$mria_meta_shard", tables: [:"$mria_rlog_sync", :mria_schema]]
+
+23:46:54.032 [info] ["$kind": ~c"starting_rlog_shard", shard: :"$mria_meta_shard"]
+*** emqx_cth_suite 2026-10-25T23:46:54.033+02:00 @ 'native_tls_bench_531440@127.0.0.1' ***
+Started applications: [inets,replayq,snabbkaffe,optvar,gproc,mria]
+*** emqx_cth_suite 2026-10-25T23:46:54.033+02:00 @ 'native_tls_bench_531440@127.0.0.1' ***
+Starting ekka with:
+ * start: #Fun<emqx_cth_suite.11.92137896>
+
+23:46:54.033 [info] [node: :"native_tls_bench_531440@127.0.0.1", "$kind": ~c"Shard fully up", shard: :"$mria_meta_shard"]
+
+23:46:54.033 [notice] ["$kind": ~c"Mria is running"]
+
+23:46:54.036 [info] ["$kind": ~c"Starting ekka"]
+*** emqx_cth_suite 2026-10-25T23:46:54.061+02:00 @ 'native_tls_bench_531440@127.0.0.1' ***
+Started applications: [mnesia,ekka]
+
+23:46:54.061 [info] ["$kind": ~c"Ekka is running"]
+*** emqx_cth_suite 2026-10-25T23:46:54.061+02:00 @ 'native_tls_bench_531440@127.0.0.1' ***
+Starting emqx_conf with:
+ * config: 
+authorization {no_match = allow}
+listeners {
+  ssl {
+    default {enable_authn = false}
+  }
+  tcp {
+    default {enable_authn = false}
+  }
+  ws {
+    default {enable_authn = false}
+  }
+  wss {
+    default {enable_authn = false}
+  }
+}
+node {
+  cookie = JOJIIEXNHSVSZHLVJEQN
+  data_dir = "/tmp/opencode/xmq-tls-p2p/classic-50000/broker"
+  name = "native_tls_bench_531440@127.0.0.1"
+}
+
+listeners {
+  native {}
+  ssl {
+    default {
+      bind = "127.0.0.1:21883"
+      enable = true
+      enable_authn = false
+      ssl_options {
+        certfile = "/tmp/opencode/xmq-tls-p2p/classic-50000/cert.pem"
+        keyfile = "/tmp/opencode/xmq-tls-p2p/classic-50000/key.pem"
+        versions = [
+          "tlsv1.3"
+        ]
+      }
+    }
+  }
+  tcp {
+    default {enable = false}
+  }
+  ws {
+    default {enable = false}
+  }
+  wss {
+    default {enable = false}
+  }
+}
+mqtt {max_inflight = 128, max_mqueue_len = 100000}
+
+ * before_start: #Fun<emqx_cth_suite.8.92137896>
+
+23:46:54.065 [debug] [name: :emqx_config, options: [type: :ordered_set, rlog_shard: :emqx_common_shard, storage: :disc_copies, record_name: :emqx_config, attributes: [:root_key, :raw_value, :extra]], "$kind": :mria_mnesia_create_table]
+
+23:46:54.068 [info] [table: :emqx_config, "$kind": ~c"Adding table to a shard", shard: :emqx_common_shard]
+
+23:46:54.068 [debug] [table: :emqx_config, "$kind": :ensure_local_table, "$span": :start]
+
+23:46:54.068 [info] ["$kind": ~c"Setting RLOG shard config", shard: :emqx_common_shard, tables: [:emqx_config]]
+
+23:46:54.069 [debug] [table: :emqx_config, "$kind": :ensure_local_table, "$span": {:complete, true}]
+
+23:46:54.073 [info] ["$kind": ~c"starting_rlog_shard", shard: :emqx_common_shard]
+
+23:46:54.073 [info] [node: :"native_tls_bench_531440@127.0.0.1", "$kind": ~c"Shard fully up", shard: :emqx_common_shard]
+
+23:46:54.517 [debug] [name: :emqx_config, options: [type: :ordered_set, rlog_shard: :emqx_common_shard, storage: :disc_copies, record_name: :emqx_config, attributes: [:root_key, :raw_value, :extra]], "$kind": :mria_mnesia_create_table]
+
+23:46:54.517 [debug] [table: :emqx_config, "$kind": :ensure_local_table, "$span": :start]
+
+23:46:54.517 [debug] [table: :emqx_config, "$kind": :ensure_local_table, "$span": {:complete, true}]
+
+23:46:54.527 [debug] [name: :cluster_rpc_mfa, options: [type: :ordered_set, rlog_shard: :emqx_cluster_rpc_shard, storage: :disc_copies, record_name: :cluster_rpc_mfa, attributes: [:tnx_id, :mfa, :created_at, :initiator]], "$kind": :mria_mnesia_create_table]
+
+23:46:54.531 [info] [table: :cluster_rpc_mfa, "$kind": ~c"Adding table to a shard", shard: :emqx_cluster_rpc_shard]
+
+23:46:54.531 [debug] [table: :cluster_rpc_mfa, "$kind": :ensure_local_table, "$span": :start]
+
+23:46:54.532 [info] ["$kind": ~c"Setting RLOG shard config", shard: :emqx_cluster_rpc_shard, tables: [:cluster_rpc_mfa]]
+
+23:46:54.532 [debug] [table: :cluster_rpc_mfa, "$kind": :ensure_local_table, "$span": {:complete, true}]
+
+23:46:54.532 [debug] [name: :cluster_rpc_commit, options: [type: :set, rlog_shard: :emqx_cluster_rpc_shard, storage: :disc_copies, record_name: :cluster_rpc_commit, attributes: [:node, :tnx_id]], "$kind": :mria_mnesia_create_table]
+
+23:46:54.536 [info] [table: :cluster_rpc_commit, "$kind": ~c"Adding table to a shard", shard: :emqx_cluster_rpc_shard]
+
+23:46:54.536 [debug] [table: :cluster_rpc_commit, "$kind": :ensure_local_table, "$span": :start]
+
+23:46:54.536 [info] ["$kind": ~c"Setting RLOG shard config", shard: :emqx_cluster_rpc_shard, tables: [:cluster_rpc_commit, :cluster_rpc_mfa]]
+
+23:46:54.536 [debug] [table: :cluster_rpc_commit, "$kind": :ensure_local_table, "$span": {:complete, true}]
+
+23:46:54.536 [info] ["$kind": ~c"starting_rlog_shard", shard: :emqx_cluster_rpc_shard]
+
+23:46:54.537 [info] [node: :"native_tls_bench_531440@127.0.0.1", "$kind": ~c"Shard fully up", shard: :emqx_cluster_rpc_shard]
+
+23:46:54.537 [debug] [name: :emqx_config, options: [type: :ordered_set, rlog_shard: :emqx_common_shard, storage: :disc_copies, record_name: :emqx_config, attributes: [:root_key, :raw_value, :extra]], "$kind": :mria_mnesia_create_table]
+
+23:46:54.537 [debug] [table: :emqx_config, "$kind": :ensure_local_table, "$span": :start]
+
+23:46:54.537 [debug] [table: :emqx_config, "$kind": :ensure_local_table, "$span": {:complete, true}]
+
+23:46:54.539 [info] [msg: ~c"wait_for_cluster_rpc_shard", result: :ok]
+
+23:46:54.539 [info] [msg: ~c"wait_for_cluster_rpc_tables", result: :ok]
+
+23:46:54.539 [info] [reason: ~c"This is a single node, or the first node in the cluster", msg: ~c"skip_sync_cluster_conf"]
+
+23:46:54.539 [info] [reason: ~c"Some application has set another config loader", msg: ~c"skip_init_config_load", loader: :emqx_cth_suite]
+Config override: log.file.default is updated
+Config override: log level is set to 'warning'
+*** emqx_cth_suite 2026-10-25T23:46:54.562+02:00 @ 'native_tls_bench_531440@127.0.0.1' ***
+Started applications: [eunit,common_test,dialyzer,cf,cth_readable,bbmustache,proper,tools,meck,emqx_ctl,emqx_conf]
+*** emqx_cth_suite 2026-10-25T23:46:54.562+02:00 @ 'native_tls_bench_531440@127.0.0.1' ***
+Starting emqx with:
+ * config: 
+false (don't inhibit config loader)
+ * override_env: [{data_dir,"/tmp/opencode/xmq-tls-p2p/classic-50000/broker"}]
+ * before_start: #Fun<emqx_cth_suite.10.92137896>
+*** emqx_cth_suite 2026-10-25T23:46:54.984+02:00 @ 'native_tls_bench_531440@127.0.0.1' ***
+Started applications: [sasl,os_mon,xmerl,jiffy,emqx_http_lib,erlang_qq,getopt,typerefl,hocon,ranch,cowboy,emqx_utils,emqx_bpapi,aten,gen_batch_server,seshat,ra,emqx_durable_storage,emqx_ds_builtin_local,emqx_ds_builtin_raft,emqx_ds_backends,emqx_durable_timer,esockd,runtime_tools,lc,bcrypt,recon,quicer,emqx]
+TLS_BENCH_READY

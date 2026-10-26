@@ -1,0 +1,22 @@
+{
+  "mode": "native-only",
+  "target_rate": 50000,
+  "received": 29990317,
+  "achieved_rate": 49983,
+  "mean_latency_ms": 0.065,
+  "median_interval_latency_ms": 0.064,
+  "broker_mean_cpu_percent": 242.14918563565342,
+  "broker_steady_cpu_percent": 235.82894458174337,
+  "broker_peak_rss_bytes": 2369130496,
+  "broker_idle_rss_bytes": 454053888,
+  "broker_steady_rss_bytes": 2366033920.0,
+  "broker_rss_per_connection_bytes": 38239.60064,
+  "beam_steady_total_bytes": 171600992.0,
+  "beam_steady_processes_bytes": 62808980.0,
+  "beam_steady_binary_bytes": 103692.0,
+  "beam_steady_ets_bytes": 21693904.0,
+  "beam_steady_system_bytes": 108793668.0,
+  "non_beam_steady_bytes": 2194432928.0,
+  "beam_steady_process_count": 443.0,
+  "beam_steady_port_count": 7.0
+}

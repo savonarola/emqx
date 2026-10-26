@@ -1,0 +1,8 @@
+openssl_conf = default_conf
+[default_conf]
+ssl_conf = ssl_section
+[ssl_section]
+system_default = tls_defaults
+[tls_defaults]
+MinProtocol = TLSv1.3
+MaxProtocol = TLSv1.3
