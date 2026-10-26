@@ -15,7 +15,7 @@
 -include("types.hrl").
 -include("emqx_mqtt.hrl").
 
--export([start_link/2, create_tabs/0, init_config/0]).
+-export([start_link/2, create_tabs/0, init_config/0, set_native_dispatch_enabled/1]).
 
 %% PubSub
 -export([
@@ -96,6 +96,7 @@
 -define(IS_SUBID(Id), (is_binary(Id) orelse is_atom(Id))).
 
 -define(PT_FLAG_ASYNC_SHARD_DISPATCH, '$emqx_broker__async_fanout_shard_dispatch').
+-define(PT_FLAG_NATIVE_DISPATCH, '$emqx_broker__native_dispatch').
 
 -define(cast_or_eval(PICK, Msg, Expr),
     case PICK of
@@ -155,6 +156,11 @@ init_config() ->
         ?PT_FLAG_ASYNC_SHARD_DISPATCH,
         emqx:get_config([broker, perf, async_fanout_shard_dispatch], false)
     ).
+
+-doc "Include native subscribers in dispatch and subscriber lookups while the native runtime runs".
+-spec set_native_dispatch_enabled(boolean()) -> ok.
+set_native_dispatch_enabled(Enabled) ->
+    persistent_term:put(?PT_FLAG_NATIVE_DISPATCH, Enabled).
 
 %%------------------------------------------------------------------------------
 %% Subscribe API
@@ -599,7 +605,7 @@ inc_dropped_cnt(Msg) ->
 ) ->
     [pid()].
 subscribers(Topic) when is_binary(Topic) ->
-    lookup_value(?SUBSCRIBER, Topic, []) ++ lookup_value(?NATIVE_SUBSCRIBER, Topic, []);
+    lookup_value(?SUBSCRIBER, Topic, []) ++ native_subscribers(Topic);
 subscribers(Shard = {shard, _Topic, _I}) ->
     lookup_value(?SUBSCRIBER, Shard, []).
 
@@ -861,14 +867,7 @@ do_dispatch2(Topic, #delivery{message = MsgIn}) ->
             DispN0 = do_dispatch_shards_async(Topic, Msg, Shards, 0)
     end,
     DispN1 = do_dispatch_chans(Deliver, lookup_value(?SUBSCRIBER, Topic, []), DispN0),
-    Native = lookup_value(?NATIVE_SUBSCRIBER, Topic, []),
-    DispN =
-        case Msg of
-            #message{headers = #{native_origin := Origin}} when Origin =:= node() ->
-                DispN1 + length(Native);
-            _ ->
-                do_dispatch_chans(Deliver, Native, DispN1)
-        end,
+    DispN = dispatch_native(Topic, Deliver, DispN1),
     ?BROKER_INSTR_OBSERVE_HIST(broker, dispatch_total_lat_us, ?US_SINCE(T0)),
     case DispN of
         0 ->
@@ -877,6 +876,22 @@ do_dispatch2(Topic, #delivery{message = MsgIn}) ->
             {error, no_subscribers};
         _ ->
             {ok, DispN}
+    end.
+
+dispatch_native(Topic, #deliver{message = Msg} = Deliver, Count) ->
+    Native = native_subscribers(Topic),
+    case Msg of
+        #message{headers = #{native_origin := Origin}} when Origin =:= node() ->
+            Count + length(Native);
+        _ ->
+            do_dispatch_chans(Deliver, Native, Count)
+    end.
+
+%% Skip the native subscriber table when the native runtime does not run.
+native_subscribers(Topic) ->
+    case persistent_term:get(?PT_FLAG_NATIVE_DISPATCH, false) of
+        true -> lookup_value(?NATIVE_SUBSCRIBER, Topic, []);
+        false -> []
     end.
 
 %% Don't dispatch to share subscriber here.

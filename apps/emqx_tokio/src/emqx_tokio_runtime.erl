@@ -59,6 +59,7 @@ init([]) ->
     Limits = configured_limits(),
     {ok, Runtime} = emqx_tokio_nif:native_new(Limits),
     persistent_term:put({?MODULE, resource}, Runtime),
+    ok = emqx_broker:set_native_dispatch_enabled(true),
     ok = emqx_listeners:register_native(?MODULE),
     ok = ekka:monitor(membership),
     ok = update_forwarding(Runtime, current_config()),
@@ -104,6 +105,7 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, #{runtime := Runtime}) ->
+    ok = emqx_broker:set_native_dispatch_enabled(false),
     ok = emqx_listeners:unregister_native(?MODULE),
     persistent_term:erase({?MODULE, resource}),
     ekka:unmonitor(membership),
