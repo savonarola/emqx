@@ -9,6 +9,9 @@ modes:
 - **Native-only:** native (Rust) TLS listener. Forwarding to the broker is off,
   so messages do not enter the BEAM.
 
+The same scenario also runs XMQ and FlashMQ on the same host, to put the EMQX
+numbers in scale. See [XMQ and FlashMQ on our host](#xmq-and-flashmq-on-our-host).
+
 Status: complete. All runs finished, and the host tuning was restored.
 
 ## Summary
@@ -106,6 +109,42 @@ Every client connected in every run. `xmq_scn` asks for 10,000 connections a
 second. The achieved connect rate was about 3,500 a second for classic and about
 7,100 a second for native-only. TLS handshakes limit both.
 
+## XMQ and FlashMQ on our host
+
+Date: 2026-10-26. Same host, CPU split, client, scenario, and host tuning as
+above. Each broker runs in Docker with host networking and `--cpuset-cpus
+0-3,8-11`. CPU and RSS come from `/proc` of the broker process. There is no
+BEAM split.
+
+| Broker | Image | Configuration |
+| --- | --- | --- |
+| XMQ 1.0.0 | the client image above, entrypoint `xmq_server` | `raw/xmq-*/xmq_server.conf`: one TLS listener with 4 threads; 3 send, 4 receive, 2 delivery threads, as on the reference 8-thread host; anonymous access; persistence off |
+| FlashMQ 1.27.3 | `native-bench/flashmq:1.27.3`, built by the runner from the FlashMQ apt repository | `raw/flashmq-*/flashmq.conf`: the reference configuration with `thread_count 8` and a TLS listener |
+
+The reference used XMQ 0.9.20 and FlashMQ 1.27.2. These versions are not
+available as packages anymore.
+
+| Rate | Broker | Achieved | Mean latency | Median latency | Steady CPU | Steady RSS | Per connection |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 50K | XMQ | 49,986/s | 77 us | 78 us | 285% | 1.70 GB | 31 KB |
+| 50K | FlashMQ | 49,988/s | 69 us | 69 us | 250% | 1.93 GB | 32 KB |
+| 50K | EMQX native-only | 49,983/s | 65 us | 64 us | 236% | 2.37 GB | 38 KB |
+| 75K | XMQ | 74,970/s | 180 us | 189 us | 448% | 2.53 GB | 32 KB |
+| 75K | FlashMQ | 74,975/s | 101 us | 102 us | 396% | 2.88 GB | 34 KB |
+| 75K | EMQX native-only | 74,964/s | 114 us | 112 us | 358% | 3.44 GB | 40 KB |
+| 100K | XMQ | 99,806/s | 401 ms | 417 ms | 614% | 3.40 GB | 32 KB |
+| 100K | FlashMQ | 99,931/s | 19.4 ms | 292 us | 541% | 3.84 GB | 35 KB |
+| 100K | EMQX native-only | 99,931/s | 317 us | 276 us | 469% | 4.52 GB | 41 KB |
+
+- At 100K, XMQ delivers the rate, but its latency is 370 to 460 ms in every
+  minute of the run. The latency does not grow over the run.
+- At 100K, FlashMQ has one minute at 191 ms and one at 1.5 ms. The other
+  minutes are 250 to 350 us. This one minute makes the mean 19.4 ms.
+- EMQX native-only uses the least CPU at every rate. It uses 6 to 9 KB more
+  memory per connection than XMQ and FlashMQ.
+- Connect rate: XMQ about 1,200 to 1,450 a second, FlashMQ about 9,100 a
+  second. `xmq_scn` asks for 10,000 a second.
+
 ## Reference results
 
 From <https://xmq.sptk.net/xmq_tests_encryption>, EMQX 6.3.1 at 50K messages a
@@ -135,6 +174,8 @@ not kept.
 | --- | --- |
 | `raw/environment.json` | Runner arguments, sysctl values before and during the runs, load, memory, EPMD, ports |
 | `raw/runner.log` | One summary line per finished rate |
+| `raw/environment-scale.json`, `raw/runner-scale.log` | The same for the XMQ and FlashMQ runs |
+| `raw/xmq-<rate>/xmq_server.conf`, `raw/flashmq-<rate>/flashmq.conf` | Broker configuration |
 | `raw/<mode>-<rate>/scenario.json` | Scenario passed to `xmq_scn` |
 | `raw/<mode>-<rate>/client.log` | `xmq_scn` output: connect phase and publish intervals |
 | `raw/<mode>-<rate>/summary.json` | Summary of the rate |

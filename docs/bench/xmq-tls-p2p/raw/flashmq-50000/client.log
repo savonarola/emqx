@@ -1,0 +1,55 @@
+CPU affinity: not applied - disabled by default; use --use-cpu-affinity to enable
+
+Binding clients to 4 local interface(s).
+Scenario: Point-To-Point-TLS-50K-flashmq (connect clients)
+Interval        Count    Latency       Rate/s
+─────────────────────────────────────────────
+0ms              2062    26564us         8248
+250ms            2317    28943us         9268
+500ms            2304    28985us         9216
+750ms            2303    28142us         9212
+1000ms           2380    28251us         9520
+1250ms           2339    28905us         9356
+1500ms           2378    28538us         9512
+1750ms           2350    28551us         9400
+2000ms           2358    28680us         9432
+2250ms           2349    28924us         9396
+2500ms           1860    28682us         7440
+─────────────────────────────────────────────
+Average         25000    28486us         9090
+Median                   28680us
+
+Scenario: Point-To-Point-TLS-50K-flashmq (connect clients)
+Interval        Count    Latency       Rate/s
+─────────────────────────────────────────────
+0ms              2191    27641us         8764
+250ms            2336    28746us         9344
+500ms            2347    28515us         9388
+750ms            2379    28392us         9516
+1000ms           2317    28979us         9268
+1250ms           2360    28594us         9440
+1500ms           2288    29676us         9152
+1750ms           2299    29392us         9196
+2000ms           2358    28237us         9432
+2250ms           2377    28615us         9508
+2500ms           1748    28159us         6992
+─────────────────────────────────────────────
+Average         25000    28644us         9090
+Median                   28594us
+
+Scenario: Point-To-Point-TLS-50K-flashmq
+Interval        Count    Latency       Rate/s
+─────────────────────────────────────────────
+0ms           2999992       70us        49999
+60000ms       3000000       68us        50000
+120000ms      3000000       68us        50000
+180000ms      3000000       69us        50000
+240000ms      3000000       68us        50000
+300000ms      2999998       69us        49999
+360000ms      3000001       68us        50000
+420000ms      3000001       68us        50000
+480000ms      3000000       71us        50000
+540000ms      2992998       69us        49883
+─────────────────────────────────────────────
+Average      29992990       69us        49988
+Median                      69us

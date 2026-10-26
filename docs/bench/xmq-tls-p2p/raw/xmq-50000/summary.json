@@ -1,0 +1,14 @@
+{
+  "mode": "xmq",
+  "target_rate": 50000,
+  "received": 29991954,
+  "achieved_rate": 49986,
+  "mean_latency_ms": 0.077,
+  "median_interval_latency_ms": 0.078,
+  "broker_mean_cpu_percent": 272.16227466009013,
+  "broker_steady_cpu_percent": 285.3731891933159,
+  "broker_peak_rss_bytes": 1703211008,
+  "broker_idle_rss_bytes": 162279424,
+  "broker_steady_rss_bytes": 1703211008.0,
+  "broker_rss_per_connection_bytes": 30818.63168
+}

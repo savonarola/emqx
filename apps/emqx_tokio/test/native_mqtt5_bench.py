@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import resource
+import socket
 import statistics
 import subprocess
 import threading
@@ -15,6 +16,21 @@ import time
 
 ROOT = Path(__file__).resolve().parents[3]
 IMAGE = "alexeyparshin/xmq@sha256:dd4a1a857ac6d14c74cac0cc833fac9137954681e1933c6892c1023b358aa79c"
+# Built from the FlashMQ apt repository; see FLASHMQ_DOCKERFILE.
+FLASHMQ_IMAGE = "native-bench/flashmq:1.27.3"
+FLASHMQ_DOCKERFILE = """FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg libssl3t64 \\
+ && curl -fsSL https://www.flashmq.org/flashmq-repo.gpg > /usr/share/keyrings/flashmq-repo.gpg \\
+ && gpg --show-keys --with-colons /usr/share/keyrings/flashmq-repo.gpg \\
+    | grep -q 874E6552A197BDD069A1526E1788BCA932A92BDF \\
+ && echo "deb [signed-by=/usr/share/keyrings/flashmq-repo.gpg] http://repo.flashmq.org/apt noble main" \\
+    > /etc/apt/sources.list.d/flashmq.list \\
+ && apt-get update && cd /tmp && apt-get download flashmq \\
+ && dpkg-deb -x flashmq_*.deb / && rm -f flashmq_*.deb && rm -rf /var/lib/apt/lists/*
+ENTRYPOINT ["/usr/bin/flashmq"]
+"""
+PORT = 21883
+MODES = ["classic", "native-only", "xmq", "flashmq"]
 PUBLISH_RATE = 2
 MAX_INFLIGHT = 128
 # erlang:memory/0 keys sampled every second, written as atoms into the broker code.
@@ -42,7 +58,124 @@ def cpu_count(cpus):
     return count
 
 
-def start_broker(mode, directory, cpus):
+class EmqxBroker:
+    """An EMQX node from the test build, stopped through its standard input."""
+
+    def __init__(self, process, reader):
+        self.process, self.reader, self.pid = process, reader, process.pid
+
+    def stop(self):
+        self.process.stdin.write("\n")
+        self.process.stdin.flush()
+        try:
+            self.process.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+        self.reader.join()
+
+
+class DockerBroker:
+    """A broker container with host networking, pinned to the broker CPUs."""
+
+    def __init__(self, directory, cpus, image, args, entrypoint=None):
+        self.directory = directory
+        self.name = f"native-mqtt5-broker-{os.getpid()}"
+        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True)
+        subprocess.run(
+            ["docker", "run", "-d", "--name", self.name, "--network", "host", "--cpuset-cpus", cpus,
+             "--ulimit", "nofile=1048576:1048576", "--user", f"{os.getuid()}:{os.getgid()}",
+             "-v", f"{directory}:/results",
+             *(["--entrypoint", entrypoint] if entrypoint else []), image, *args],
+            check=True, capture_output=True,
+        )
+        self.pid = int(command(["docker", "inspect", "-f", "{{.State.Pid}}", self.name]))
+        wait_for_port(directory, self.name)
+
+    def stop(self):
+        with (self.directory / "broker.log").open("w") as log:
+            subprocess.run(["docker", "logs", self.name], stdout=log, stderr=subprocess.STDOUT)
+        subprocess.run(["docker", "rm", "-f", self.name], capture_output=True)
+
+
+def wait_for_port(directory, name):
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        try:
+            socket.create_connection(("127.0.0.1", PORT), timeout=1).close()
+            return
+        except OSError:
+            time.sleep(0.2)
+    subprocess.run(["docker", "logs", name], stdout=(directory / "broker.log").open("w"),
+                   stderr=subprocess.STDOUT)
+    raise RuntimeError(f"broker startup failed: {directory}/broker.log")
+
+
+def start_xmq(directory, cpus, image):
+    # The packaged configuration of the reference, with the thread counts of its 8-thread bench host.
+    config = {
+        "connections": {
+            "listener": [{"id": 1, "name": "Encrypted", "bind_ip": "127.0.0.1", "port": PORT,
+                          "threads": 4, "protocol": "MQTT+SSL", "enable": True}],
+            "ssl_keys": {"cafile": "", "keyfile": "/results/key.pem", "certfile": "/results/cert.pem",
+                         "verify_depth": 0},
+        },
+        "queue_limits": {"max_size": 50000, "max_inflight_messages": 32768},
+        "server_limits": {"send_threads": 3, "receive_threads": 4, "delivery_threads": 2,
+                          "max_topic_alias": 128},
+        "authentication": {"allow_anonymous": True},
+        "persistence": {"redis_uri": "redis://localhost:6379", "clean_start": True, "enabled": False,
+                        "max_redis_connections": 2, "max_queued_writes": 1000},
+        "logging": {"log_to": "/tmp/xmq_server.log", "keep_logs": 1, "min_log_level": "INFO",
+                    "log_level": {"connect": "DEBUG", "disconnect": "DEBUG", "subscribe": "DEBUG",
+                                  "unsubscribe": "DEBUG", "publish": "ERROR", "ack": "ERROR",
+                                  "server_connections": "DEBUG", "server_events": "DEBUG",
+                                  "cluster_connections": "INFO", "cluster_events": "INFO"}},
+        "web_service": {"listener_port": 21884, "encrypted": True},
+        "bridges": [],
+        "cluster": {"this_node": {"node_name": "primary", "host_port": "localhost:21885", "encrypted": True},
+                    "nodes": []},
+    }
+    (directory / "xmq_server.conf").write_text(json.dumps(config, indent=2) + "\n")
+    return DockerBroker(directory, cpus, image, ["-c", "/results/xmq_server.conf", "-l", "/tmp/xmq.log"],
+                        entrypoint="xmq_server")
+
+
+def start_flashmq(directory, cpus):
+    # The reference FlashMQ configuration with one thread per broker CPU, and a TLS listener.
+    (directory / "flashmq.conf").write_text(f"""log_file /tmp/flashmq.log
+log_level warning
+log_subscriptions false
+log_publishes false
+thread_count {cpu_count(cpus)}
+max_qos_msg_pending_per_client 65535
+max_qos_bytes_pending_per_client 268435456
+listen {{
+  protocol mqtt
+  inet_protocol ip4
+  inet4_bind_address 127.0.0.1
+  port {PORT}
+  fullchain /results/cert.pem
+  privkey /results/key.pem
+  allow_anonymous true
+  tcp_nodelay true
+}}
+""")
+    if subprocess.run(["docker", "image", "inspect", FLASHMQ_IMAGE], capture_output=True).returncode:
+        subprocess.run(["docker", "build", "-q", "-t", FLASHMQ_IMAGE, "-"], input=FLASHMQ_DOCKERFILE,
+                       text=True, check=True, capture_output=True)
+    return DockerBroker(directory, cpus, FLASHMQ_IMAGE, ["--config-file", "/results/flashmq.conf"])
+
+
+def start_broker(mode, directory, cpus, image):
+    if mode == "xmq":
+        return start_xmq(directory, cpus, image)
+    if mode == "flashmq":
+        return start_flashmq(directory, cpus)
+    return start_emqx(mode, directory, cpus)
+
+
+def start_emqx(mode, directory, cpus):
     native = mode == "native-only"
     schedulers = cpu_count(cpus)
     ssl = f"""#{{<<"certfile">> => <<"{directory}/cert.pem">>,
@@ -119,7 +252,7 @@ def start_broker(mode, directory, cpus):
 
     thread = threading.Thread(target=drain)
     thread.start()
-    return process, thread
+    return EmqxBroker(process, thread)
 
 
 def sample(pid):
@@ -140,6 +273,14 @@ def memory_summary(directory, samples, start, end, connections):
     """Summarize memory: the idle RSS, and medians over the steady publish window [start, end]."""
     idle_rss = samples[0][2]
     steady_rss = statistics.median(s[2] for s in samples if start <= s[0] <= end)
+    rss = {
+        "broker_idle_rss_bytes": idle_rss,
+        "broker_steady_rss_bytes": steady_rss,
+        "broker_rss_per_connection_bytes": (steady_rss - idle_rss) / connections,
+    }
+    # Only EMQX brokers write BEAM memory samples.
+    if not (directory / "memory.csv").exists():
+        return rss
     columns = ["time", *BEAM_MEMORY, "process_count", "port_count"]
     # The broker can stop in the middle of the last line.
     rows = [dict(zip(columns, map(int, line.split(","))))
@@ -148,9 +289,7 @@ def memory_summary(directory, samples, start, end, connections):
     steady = [row for row in rows if start <= row["time"] / 1000 <= end]
     beam = {key: statistics.median(row[key] for row in steady) for key in columns[1:]}
     return {
-        "broker_idle_rss_bytes": idle_rss,
-        "broker_steady_rss_bytes": steady_rss,
-        "broker_rss_per_connection_bytes": (steady_rss - idle_rss) / connections,
+        **rss,
         **{f"beam_steady_{key}_bytes": beam[key] for key in BEAM_MEMORY},
         # Memory outside the BEAM allocators: the native runtime, TLS, and the C allocator.
         "non_beam_steady_bytes": steady_rss - beam["total"],
@@ -184,13 +323,13 @@ MaxProtocol = TLSv1.3
         "name": f"Point-To-Point-TLS-{rate // 1000}K-{mode}", "type": "Point-To-Point",
         "publishers": {**group, "id_prefix": "test-publisher-"},
         "subscribers": {**group, "id_prefix": "test-subscriber-"},
-        "server": {"hostname": "127.0.0.1", "port": 21883, "username": "", "password": ""},
+        "server": {"hostname": "127.0.0.1", "port": PORT, "username": "", "password": ""},
         "parameters": {"connection_rate": args.connection_rate, "duration_sec": args.duration,
                        "payload_size": 16, "publish_rate": PUBLISH_RATE,
                        "keep_alive_sec": 300, "max_inflight_messages": 1024},
     }
     (directory / "scenario.json").write_text(json.dumps(scenario, indent=2) + "\n")
-    broker, reader = start_broker(mode, directory, args.broker_cpus)
+    broker = start_broker(mode, directory, args.broker_cpus, args.image)
     samples = []
     stopped = threading.Event()
 
@@ -221,14 +360,7 @@ MaxProtocol = TLSv1.3
         stopped.set()
         monitor_thread.join()
         (directory / "resources.json").write_text(json.dumps(samples) + "\n")
-        broker.stdin.write("\n")
-        broker.stdin.flush()
-        try:
-            broker.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            broker.kill()
-            broker.wait()
-        reader.join()
+        broker.stop()
 
     output = (directory / "client.log").read_text()
     publish_output = output.rsplit(f"Scenario: {scenario['name']}\n", 1)[1]
@@ -259,7 +391,7 @@ def main():
     parser.add_argument("--duration", type=int, default=600)
     parser.add_argument("--connection-rate", type=int, default=10000)
     parser.add_argument("--rates", nargs="+", type=int, default=[50000, 75000, 100000])
-    parser.add_argument("--modes", nargs="+", choices=["classic", "native-only"], default=["classic", "native-only"])
+    parser.add_argument("--modes", nargs="+", choices=MODES, default=["classic", "native-only"])
     args = parser.parse_args()
     args.results = args.results.resolve()
     assert all(rate > 0 and rate % PUBLISH_RATE == 0 for rate in args.rates)

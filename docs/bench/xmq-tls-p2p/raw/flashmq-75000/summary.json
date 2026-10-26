@@ -1,0 +1,14 @@
+{
+  "mode": "flashmq",
+  "target_rate": 75000,
+  "received": 44985267,
+  "achieved_rate": 74975,
+  "mean_latency_ms": 0.101,
+  "median_interval_latency_ms": 0.10200000000000001,
+  "broker_mean_cpu_percent": 398.1546739452574,
+  "broker_steady_cpu_percent": 395.8671268589033,
+  "broker_peak_rss_bytes": 2878935040,
+  "broker_idle_rss_bytes": 318513152,
+  "broker_steady_rss_bytes": 2878279680.0,
+  "broker_rss_per_connection_bytes": 34130.22037333333
+}
