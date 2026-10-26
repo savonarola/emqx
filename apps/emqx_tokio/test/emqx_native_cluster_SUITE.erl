@@ -81,6 +81,42 @@ t_native_only_cluster(Config) ->
     emqx_native_listener_SUITE:expect_publish(B, <<"native-cluster">>, <<"peer">>),
     emqx_native_listener_SUITE:assert_empty(B).
 
+-doc "Preserve MQTT 5 properties and QoS 1 across native listeners on two nodes".
+t_mqtt5_cluster(Config) ->
+    [N1, N2] = ?config(nodes, Config),
+    A = emqx_native_mqtt5_SUITE:client(18901, #{}),
+    B = emqx_native_mqtt5_SUITE:client(18902, #{}),
+    [
+        begin
+            {ok, _, [1]} = emqtt:subscribe(Pid, <<"cluster5">>, 1)
+        end
+     || Pid <- [A, B]
+    ],
+    [
+        ?retry(
+            50,
+            100,
+            ?assertEqual(2, length(rpc:call(Node, emqx_router, match_routes, [<<"cluster5">>])))
+        )
+     || Node <- [N1, N2]
+    ],
+    Properties = emqx_native_mqtt5_SUITE:properties(),
+    lists:foreach(
+        fun(Pub) ->
+            {ok, _} = emqtt:publish(Pub, <<"cluster5">>, Properties, <<"remote">>, [{qos, 1}]),
+            [
+                begin
+                    #{qos := 1, payload := <<"remote">>, properties := Received} =
+                        emqx_native_mqtt5_SUITE:message(Sub),
+                    emqx_native_mqtt5_SUITE:assert_properties(Received)
+                end
+             || Sub <- [A, B]
+            ]
+        end,
+        [A, B]
+    ),
+    [emqtt:disconnect(Pid) || Pid <- [A, B]].
+
 node_spec(Index) ->
     Listeners0 = emqx_native_listener_SUITE:base_listeners(),
     Listeners = Listeners0#{

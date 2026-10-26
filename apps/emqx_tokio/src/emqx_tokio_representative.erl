@@ -24,7 +24,7 @@ handle_info(native_ready, #{runtime := Runtime, slot := Slot, batch_size := Max}
     {Batch, Status} = emqx_tokio_nif:take(Runtime, Slot, Max),
     lists:foreach(fun process_event/1, Batch),
     ?tp(native_publish_batch, #{
-        slot => Slot, publishes => length([ok || {publish, _, _, _, _} <- Batch])
+        slot => Slot, publishes => length([ok || {publish, _, _, _, _, _} <- Batch])
     }),
     case Status of
         more -> self() ! native_ready;
@@ -32,7 +32,7 @@ handle_info(native_ready, #{runtime := Runtime, slot := Slot, batch_size := Max}
     end,
     {noreply, State};
 handle_info(#deliver{} = Delivery, #{runtime := Runtime, slot := Slot, batch_size := Max} = State) ->
-    Batch = collect_deliveries(Max - 1, [delivery(Delivery)]),
+    Batch = lists:filtermap(fun delivery/1, collect_deliveries(Max - 1, [Delivery])),
     ok = emqx_tokio_nif:deliver(Runtime, Slot, Batch),
     ?tp(native_delivery_batch, #{slot => Slot, count => length(Batch)}),
     {noreply, State};
@@ -45,7 +45,7 @@ handle_info(_Info, State) ->
 
 process_event({subscribe, Filter}) ->
     try
-        ok = emqx_broker:subscribe(Filter, undefined, #{native => true, qos => 0})
+        ok = emqx_broker:subscribe(Filter, undefined, #{native => true, qos => 1})
     catch
         Class:Reason ->
             ?SLOG(error, #{
@@ -57,9 +57,14 @@ process_event({subscribe, Filter}) ->
     end;
 process_event({unsubscribe, Filter}) ->
     ok = emqx_broker:unsubscribe(Filter);
-process_event({publish, ClientId, Topic, Payload, QoS}) ->
+process_event({publish, ClientId, Topic, Payload, QoS, Properties}) ->
     Msg0 = emqx_message:make(ClientId, QoS, Topic, Payload),
-    Msg = emqx_message:set_header(native_origin, node(), Msg0),
+    Msg1 = emqx_message:set_header(native_origin, node(), Msg0),
+    Msg =
+        case Properties of
+            undefined -> Msg1;
+            _ -> emqx_message:set_header(properties, Properties, Msg1)
+        end,
     _ = emqx_broker:publish(Msg),
     ok.
 
@@ -67,11 +72,18 @@ collect_deliveries(0, Acc) ->
     lists:reverse(Acc);
 collect_deliveries(Left, Acc) ->
     receive
-        #deliver{} = Delivery -> collect_deliveries(Left - 1, [delivery(Delivery) | Acc])
+        #deliver{} = Delivery -> collect_deliveries(Left - 1, [Delivery | Acc])
     after 0 -> lists:reverse(Acc)
     end.
 
-delivery(#deliver{
-    topic = Filter, message = #message{topic = Topic, payload = Payload, flags = Flags}
-}) ->
-    {Filter, Topic, iolist_to_binary(Payload), maps:get(retain, Flags, false)}.
+%% Drop expired messages, as regular sessions do, and lower the expiry of the others.
+delivery(#deliver{topic = Filter, message = Msg0}) ->
+    case emqx_message:is_expired(Msg0, default) of
+        true ->
+            false;
+        false ->
+            Msg = emqx_message:update_expiry(Msg0),
+            #message{topic = Topic, payload = Payload, qos = QoS} = Msg,
+            Properties = emqx_message:get_header(properties, Msg, #{}),
+            {true, {Filter, Topic, iolist_to_binary(Payload), QoS, Properties}}
+    end.

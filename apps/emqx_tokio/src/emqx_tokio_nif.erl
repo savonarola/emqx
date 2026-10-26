@@ -13,10 +13,7 @@
     forwarding/2,
     listener_apply/4,
     listener_status/2,
-    listeners_stop/2,
-    redis_connect/2,
-    redis_get/4,
-    redis_set/5
+    listeners_stop/2
 ]).
 
 -export([init/0]).
@@ -61,19 +58,6 @@ listener_status(_Runtime, _ReplyTo) -> not_loaded(?LINE).
 
 -spec listeners_stop(reference(), pid()) -> reference().
 listeners_stop(_Runtime, _ReplyTo) -> not_loaded(?LINE).
-
--spec redis_connect(reference(), binary()) ->
-    {ok, reference()} | {error, string()}.
-redis_connect(_Runtime, _Url) ->
-    not_loaded(?LINE).
-
--spec redis_get(reference(), reference(), binary(), pid()) -> ok.
-redis_get(_Runtime, _Conn, _Key, _ReceiverPid) ->
-    not_loaded(?LINE).
-
--spec redis_set(reference(), reference(), binary(), binary(), pid()) -> ok.
-redis_set(_Runtime, _Conn, _Key, _Value, _ReceiverPid) ->
-    not_loaded(?LINE).
 
 %%--------------------------------------------------------------------
 %% Internal helpers

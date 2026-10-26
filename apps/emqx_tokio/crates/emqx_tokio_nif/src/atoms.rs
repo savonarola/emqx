@@ -1,3 +1,4 @@
+// Atoms in messages to Erlang processes and keys of the EMQX property map.
 rustler::atoms! {
     ok,
     error,
@@ -11,4 +12,10 @@ rustler::atoms! {
     publish,
     more,
     empty,
+    payload_format_indicator = "Payload-Format-Indicator",
+    message_expiry_interval = "Message-Expiry-Interval",
+    content_type = "Content-Type",
+    response_topic = "Response-Topic",
+    correlation_data = "Correlation-Data",
+    user_property = "User-Property",
 }

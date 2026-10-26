@@ -4,9 +4,7 @@ mod mqtt;
 mod state;
 
 use parking_lot::Mutex;
-use rustler::{
-    Binary, Encoder, Env, LocalPid, NifResult, OwnedBinary, OwnedEnv, ResourceArc, Term,
-};
+use rustler::{Binary, Encoder, Env, LocalPid, NifResult, OwnedEnv, ResourceArc, Term};
 use state::{Limits, NodeState};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -15,9 +13,7 @@ use std::sync::{
 use std::time::Duration;
 use tokio::runtime::{Handle, Runtime};
 
-use redis::aio::MultiplexedConnection;
-use redis::{AsyncCommands, Client, RedisResult};
-
+/// NIF resource: the tokio runtime, the shared node state, and the native listeners.
 pub struct TokioRuntime {
     state: Arc<NodeState>,
     handle: Handle,
@@ -25,15 +21,10 @@ pub struct TokioRuntime {
     listeners: Arc<tokio::sync::Mutex<listener::Manager>>,
 }
 
-impl TokioRuntime {
-    pub fn handle(&self) -> &Handle {
-        &self.handle
-    }
-}
-
 impl rustler::Resource for TokioRuntime {
     const IMPLEMENTS_DOWN: bool = true;
 
+    /// A representative died: clear its slot, which closes the slot's connections.
     fn down(&self, _env: Env, _pid: LocalPid, monitor: rustler::Monitor) {
         for (index, slot) in self.state.slots.iter().enumerate() {
             let mut inner = slot.inner.lock();
@@ -46,6 +37,7 @@ impl rustler::Resource for TokioRuntime {
 }
 
 impl Drop for TokioRuntime {
+    // The last resource reference is gone: stop the runtime on its own thread, without wills.
     fn drop(&mut self) {
         self.state.quiet.store(true, Ordering::Release);
         if let Some(rt) = self.runtime.lock().take() {
@@ -54,24 +46,17 @@ impl Drop for TokioRuntime {
     }
 }
 
-pub struct RedisHandle {
-    conn: MultiplexedConnection,
-}
-
-#[allow(non_local_definitions)]
 fn load(env: Env, _info: Term) -> bool {
-    if env.register::<TokioRuntime>().is_err() {
-        return false;
-    }
-    _ = rustler::resource!(RedisHandle, env);
-    true
+    env.register::<TokioRuntime>().is_ok()
 }
 
+/// Runtime with default limits.
 #[rustler::nif(schedule = "DirtyIo")]
 fn runtime_new(env: Env) -> NifResult<Term> {
     new_runtime(env, Limits::default())
 }
 
+/// Runtime for native listeners. Rejects limits that the router or the codec cannot use.
 #[rustler::nif(schedule = "DirtyIo")]
 fn native_new(env: Env, limits: Limits) -> NifResult<Term> {
     if limits.representatives == 0
@@ -79,6 +64,9 @@ fn native_new(env: Env, limits: Limits) -> NifResult<Term> {
         || limits.batch_size == 0
         || limits.output_limit == 0
         || limits.max_packet_size < 2
+        || limits.max_packet_size > 268_435_460
+        || limits.max_inflight == 0
+        || limits.max_inflight > u16::MAX as usize
     {
         return Err(rustler::Error::BadArg);
     }
@@ -104,12 +92,15 @@ fn new_runtime(env: Env, limits: Limits) -> NifResult<Term> {
     }
 }
 
+/// Stop the listeners and the runtime on a separate thread, then send `runtime_stopped` to Reply.
 #[rustler::nif]
 fn runtime_stop(rt: ResourceArc<TokioRuntime>, reply: LocalPid) -> rustler::Atom {
     rt.state.quiet.store(true, Ordering::Release);
     let runtime = rt.runtime.lock().take();
+    let listeners = rt.listeners.clone();
     std::thread::spawn(move || {
         if let Some(runtime) = runtime {
+            runtime.block_on(async { listeners.lock().await.stop_all().await });
             runtime.shutdown_timeout(Duration::from_secs(5));
         }
         let _ = OwnedEnv::new().send_and_clear(&reply, |env| atoms::runtime_stopped().encode(env));
@@ -117,6 +108,7 @@ fn runtime_stop(rt: ResourceArc<TokioRuntime>, reply: LocalPid) -> rustler::Atom
     atoms::ok()
 }
 
+/// Bind a representative to a slot. A previous one is replaced, and the slot is cleared.
 #[rustler::nif]
 fn register(
     env: Env,
@@ -136,12 +128,14 @@ fn register(
     Ok(atoms::ok())
 }
 
+/// Copy bytes into a new Erlang binary.
 fn binary<'a>(env: Env<'a>, data: &[u8]) -> Binary<'a> {
     let mut bin = rustler::NewBinary::new(env, data.len());
     bin.as_mut_slice().copy_from_slice(data);
     bin.into()
 }
 
+/// The representative drains up to Max events from its slot queue: subscribe, unsubscribe, publish.
 #[rustler::nif]
 fn take(env: Env, rt: ResourceArc<TokioRuntime>, slot: usize, max: usize) -> NifResult<Term> {
     if slot >= rt.state.slots.len() || max == 0 {
@@ -160,9 +154,10 @@ fn take(env: Env, rt: ResourceArc<TokioRuntime>, slot: usize, max: usize) -> Nif
             state::Event::Publish(client, msg) => (
                 atoms::publish(),
                 binary(env, client.as_bytes()),
-                binary(env, msg.topic.as_bytes()),
+                binary(env, msg.topic().as_bytes()),
                 binary(env, &msg.payload),
                 msg.qos,
+                decode_properties(env, &msg.properties),
             )
                 .encode(env),
         })
@@ -170,33 +165,126 @@ fn take(env: Env, rt: ResourceArc<TokioRuntime>, slot: usize, max: usize) -> Nif
     Ok((batch, if more { atoms::more() } else { atoms::empty() }).encode(env))
 }
 
+/// The representative passes broker deliveries. Each goes to the slot's members of its filter.
 #[rustler::nif]
 fn deliver(
     rt: ResourceArc<TokioRuntime>,
     slot: usize,
-    batch: Vec<(Binary, Binary, Binary, bool)>,
+    batch: Vec<(Binary, Binary, Binary, u8, Term)>,
 ) -> NifResult<rustler::Atom> {
     if slot >= rt.state.slots.len() || batch.len() > rt.state.limits.batch_size {
         return Err(rustler::Error::BadArg);
     }
     let batch = batch
         .iter()
-        .map(|(filter, topic, payload, retain)| {
+        .map(|(filter, topic, payload, qos, properties)| {
             let filter =
                 std::str::from_utf8(filter.as_slice()).map_err(|_| rustler::Error::BadArg)?;
-            Ok((filter, mqtt::publish(topic, payload, *retain)))
+            let topic_str = std::str::from_utf8(topic).map_err(|_| rustler::Error::BadArg)?;
+            if !mqtt::valid_topic(topic_str) || topic.len() > u16::MAX as usize || *qos > 2 {
+                return Err(rustler::Error::BadArg);
+            }
+            let properties = encode_properties(*properties);
+            Ok((
+                filter,
+                mqtt::Message::copy(topic, &properties, payload, *qos),
+            ))
         })
         .collect::<NifResult<Vec<_>>>()?;
     rt.state.deliver(slot, &batch);
     Ok(atoms::ok())
 }
 
+/// MQTT 5 PUBLISH property IDs and the keys of the EMQX property map.
+fn property_keys() -> [(u8, rustler::Atom); 6] {
+    [
+        (1, atoms::payload_format_indicator()),
+        (2, atoms::message_expiry_interval()),
+        (3, atoms::content_type()),
+        (8, atoms::response_topic()),
+        (9, atoms::correlation_data()),
+        (0x26, atoms::user_property()),
+    ]
+}
+
+/// Convert a raw PUBLISH property block to the EMQX property map, or `undefined` when it is empty.
+fn decode_properties<'a>(env: Env<'a>, block: &[u8]) -> Term<'a> {
+    if block.is_empty() || block == [0] {
+        return atoms::undefined().encode(env);
+    }
+    let mut map = rustler::types::map::map_new(env);
+    let mut users = Vec::new();
+    mqtt::walk_properties(block, mqtt::PropertyKind::Publish, |id, value| {
+        let key = property_keys()
+            .into_iter()
+            .find(|(n, _)| *n == id)
+            .unwrap()
+            .1;
+        let value = match value {
+            mqtt::PropertyValue::Number(n) => n.encode(env),
+            mqtt::PropertyValue::Binary(b) => binary(env, b).encode(env),
+            mqtt::PropertyValue::Pair(k, v) => {
+                users.push((binary(env, k), binary(env, v)));
+                return;
+            }
+        };
+        map = map.map_put(key, value).expect("property map");
+    })
+    .expect("validated PUBLISH properties");
+    if !users.is_empty() {
+        map = map
+            .map_put(atoms::user_property(), users)
+            .expect("property map");
+    }
+    map
+}
+
+/// Build a raw property block from the EMQX property map. Keys outside `property_keys` are ignored.
+// Skip a property value that MQTT cannot encode, so that one message does not fail the batch.
+fn encode_properties(properties: Term<'_>) -> bytes::Bytes {
+    let fits = |b: &Binary| b.len() <= u16::MAX as usize;
+    let mut out = Vec::new();
+    for (id, key) in property_keys() {
+        let Ok(value) = properties.map_get(key) else {
+            continue;
+        };
+        match id {
+            1 | 2 => {
+                if let Ok(n) = value.decode::<u32>() {
+                    if id == 2 || n <= 1 {
+                        mqtt::encode_property(&mut out, id, mqtt::PropertyValue::Number(n));
+                    }
+                }
+            }
+            0x26 => {
+                for pair in value.decode::<Vec<Term>>().unwrap_or_default() {
+                    if let Ok((k, v)) = pair.decode::<(Binary, Binary)>() {
+                        if fits(&k) && fits(&v) {
+                            mqtt::encode_property(&mut out, id, mqtt::PropertyValue::Pair(&k, &v));
+                        }
+                    }
+                }
+            }
+            _ => {
+                if let Ok(b) = value.decode::<Binary>() {
+                    if fits(&b) {
+                        mqtt::encode_property(&mut out, id, mqtt::PropertyValue::Binary(&b));
+                    }
+                }
+            }
+        }
+    }
+    mqtt::property_block(&out)
+}
+
+/// Turn forwarding of native publishes to the broker on or off.
 #[rustler::nif]
 fn forwarding(rt: ResourceArc<TokioRuntime>, enabled: bool) -> rustler::Atom {
     rt.state.forwarding.store(enabled, Ordering::Release);
     atoms::ok()
 }
 
+/// Start, restart, or stop a listener in the background. Replies `{native_result, Ref, Result}`.
 #[rustler::nif]
 fn listener_apply(
     env: Env,
@@ -227,6 +315,7 @@ fn listener_apply(
     reference.encode(env)
 }
 
+/// Reply `{native_result, Ref, Ids}` with the IDs of the running listeners.
 #[rustler::nif]
 fn listener_status(env: Env, rt: ResourceArc<TokioRuntime>, reply: LocalPid) -> Term {
     let mut msg_env = OwnedEnv::new();
@@ -242,6 +331,7 @@ fn listener_status(env: Env, rt: ResourceArc<TokioRuntime>, reply: LocalPid) -> 
     reference.encode(env)
 }
 
+/// Stop all listeners without publishing wills. Replies `{native_result, Ref, ok}`.
 #[rustler::nif]
 fn listeners_stop(env: Env, rt: ResourceArc<TokioRuntime>, reply: LocalPid) -> Term {
     let mut msg_env = OwnedEnv::new();
@@ -256,99 +346,6 @@ fn listeners_stop(env: Env, rt: ResourceArc<TokioRuntime>, reply: LocalPid) -> T
         });
     });
     reference.encode(env)
-}
-
-#[rustler::nif(schedule = "DirtyIo")]
-fn redis_connect(
-    env: Env,
-    tokio_runtime: ResourceArc<TokioRuntime>,
-    url: String,
-) -> NifResult<Term> {
-    let rt = tokio_runtime.handle();
-
-    let (tx, rx) = tokio::sync::oneshot::channel::<RedisResult<MultiplexedConnection>>();
-
-    rt.spawn(async move {
-        let client = Client::open(url).expect("bad redis url");
-        let conn_res = client.get_multiplexed_async_connection().await;
-        let _ = tx.send(conn_res);
-    });
-
-    let conn_res = rt.block_on(async { rx.await.expect("task dropped") });
-    match conn_res {
-        Ok(conn) => {
-            let resource = ResourceArc::new(RedisHandle { conn });
-            Ok((atoms::ok(), resource).encode(env))
-        }
-        Err(e) => Ok((atoms::error(), e.to_string()).encode(env)),
-    }
-}
-
-#[rustler::nif]
-fn redis_get<'a>(
-    env: Env<'a>,
-    tokio_runtime: ResourceArc<TokioRuntime>,
-    redis_handle: ResourceArc<RedisHandle>,
-    key: Binary<'a>,
-    receiver_pid: LocalPid,
-) -> NifResult<Term<'a>> {
-    let key = key.as_slice().to_vec();
-    let rt = tokio_runtime.handle();
-    let mut conn = redis_handle.conn.clone();
-    let mut msg_env = OwnedEnv::new();
-
-    let ref_term = env.make_ref();
-    let saved_ref = msg_env.save(ref_term);
-
-    rt.spawn(async move {
-        let result: RedisResult<Option<Vec<u8>>> = conn.get(&key).await;
-        let _ = msg_env.send_and_clear(&receiver_pid, |send_env| {
-            let r = saved_ref.load(send_env);
-            match result {
-                Ok(Some(val)) => {
-                    let mut bin = OwnedBinary::new(val.len()).unwrap();
-                    bin.as_mut_slice().copy_from_slice(&val);
-                    (atoms::ok(), r, bin.release(send_env)).encode(send_env)
-                }
-                Ok(None) => (atoms::ok(), r, atoms::undefined()).encode(send_env),
-                Err(e) => (atoms::error(), r, e.to_string()).encode(send_env),
-            }
-        });
-    });
-
-    Ok((atoms::ok(), ref_term).encode(env))
-}
-
-#[rustler::nif]
-fn redis_set<'a>(
-    env: Env<'a>,
-    tokio_runtime: ResourceArc<TokioRuntime>,
-    redis_handle: ResourceArc<RedisHandle>,
-    key: Binary<'a>,
-    value: Binary<'a>,
-    receiver_pid: LocalPid,
-) -> NifResult<Term<'a>> {
-    let key = key.as_slice().to_vec();
-    let value = value.as_slice().to_vec();
-    let rt = tokio_runtime.handle();
-    let mut conn = redis_handle.conn.clone();
-    let mut msg_env = OwnedEnv::new();
-
-    let ref_term = env.make_ref();
-    let saved_ref = msg_env.save(ref_term);
-
-    rt.spawn(async move {
-        let result: RedisResult<()> = conn.set(&key, &value).await;
-        let _ = msg_env.send_and_clear(&receiver_pid, |send_env| {
-            let r = saved_ref.load(send_env);
-            match result {
-                Ok(_) => (atoms::ok(), r).encode(send_env),
-                Err(e) => (atoms::error(), r, e.to_string()).encode(send_env),
-            }
-        });
-    });
-
-    Ok((atoms::ok(), ref_term).encode(env))
 }
 
 rustler::init!("emqx_tokio_nif", load = load);

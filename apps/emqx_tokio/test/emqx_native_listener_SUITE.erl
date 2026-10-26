@@ -147,10 +147,10 @@ t_protocol(_Config) ->
     ok = gen_tcp:send(A, <<16#C0, 0, 16#C0, 0>>),
     ?assertEqual({16#D0, <<>>}, recv_packet(A)),
     ?assertEqual({16#D0, <<>>}, recv_packet(A)),
-    send_packet(A, 16#32, <<0, 1, $t, 0, 1, $x>>),
+    send_packet(A, 16#34, <<0, 1, $t, 0, 1, $x>>),
     ?assertEqual({error, closed}, gen_tcp:recv(A, 0, 2000)),
     B = socket(18883),
-    send_packet(B, 16#10, connect_body(#{level => 5})),
+    send_packet(B, 16#10, connect_body(#{level => 6})),
     ?assertEqual({16#20, <<0, 1>>}, recv_packet(B)),
     ?assertEqual({error, closed}, gen_tcp:recv(B, 0, 2000)),
     C = connect(18883, #{keepalive => 1}),
@@ -387,7 +387,7 @@ connect_body(Opts) ->
     <<0, 4, "MQTT", Level, Flags, Keepalive:16, Payload/binary>>.
 
 subscribe(Socket, Filters) ->
-    Body = iolist_to_binary([<<1:16>> | [<<(utf(Filter))/binary, 2>> || Filter <- Filters]]),
+    Body = iolist_to_binary([<<1:16>> | [<<(utf(Filter))/binary, 0>> || Filter <- Filters]]),
     send_packet(Socket, 16#82, Body),
     {16#90, <<1:16, Codes/binary>>} = recv_packet(Socket),
     binary_to_list(Codes).

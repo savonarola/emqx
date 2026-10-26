@@ -25,6 +25,7 @@ configured_limits() ->
         batch_size => 256,
         output_limit => 1024,
         max_packet_size => 1048576,
+        max_inflight => 32,
         worker_threads => erlang:system_info(schedulers)
     },
     maps:map(fun(Key, Default) -> application:get_env(emqx_tokio, Key, Default) end, Defaults).
