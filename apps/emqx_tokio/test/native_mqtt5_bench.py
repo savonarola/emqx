@@ -315,8 +315,8 @@ system_default = tls_defaults
 MinProtocol = TLSv1.3
 MaxProtocol = TLSv1.3
 """)
-    # Point-To-Point-TLS-<N>K.json of the reference: two messages a second per publisher.
-    pairs = rate // PUBLISH_RATE
+    # Use the requested pair count or the reference's two messages per second per publisher.
+    pairs = args.pairs if args.pairs is not None else rate // PUBLISH_RATE
     group = {"protocol_version": 5, "client_count": pairs, "qos": 1,
              "clean_session": True, "topics": "test/topic$clientindex"}
     scenario = {
@@ -325,7 +325,7 @@ MaxProtocol = TLSv1.3
         "subscribers": {**group, "id_prefix": "test-subscriber-"},
         "server": {"hostname": "127.0.0.1", "port": PORT, "username": "", "password": ""},
         "parameters": {"connection_rate": args.connection_rate, "duration_sec": args.duration,
-                       "payload_size": 16, "publish_rate": PUBLISH_RATE,
+                       "payload_size": 16, "publish_rate": rate // pairs,
                        "keep_alive_sec": 300, "max_inflight_messages": 1024},
     }
     (directory / "scenario.json").write_text(json.dumps(scenario, indent=2) + "\n")
@@ -389,12 +389,14 @@ def main():
     parser.add_argument("--client-cpus", required=True)
     parser.add_argument("--image", default=IMAGE)
     parser.add_argument("--duration", type=int, default=600)
+    parser.add_argument("--pairs", type=int, help="Keep this many publisher/subscriber pairs at every rate")
     parser.add_argument("--connection-rate", type=int, default=10000)
     parser.add_argument("--rates", nargs="+", type=int, default=[50000, 75000, 100000])
     parser.add_argument("--modes", nargs="+", choices=MODES, default=["classic", "native-only"])
     args = parser.parse_args()
     args.results = args.results.resolve()
-    assert all(rate > 0 and rate % PUBLISH_RATE == 0 for rate in args.rates)
+    assert args.pairs is None or args.pairs > 0
+    assert all(rate > 0 and rate % (args.pairs or PUBLISH_RATE) == 0 for rate in args.rates)
     assert args.duration > 0 and args.connection_rate > 0
     resource.setrlimit(resource.RLIMIT_NOFILE, (1048576, resource.getrlimit(resource.RLIMIT_NOFILE)[1]))
     original = {key: command(["sysctl", "-n", key]) for key in TUNING}
