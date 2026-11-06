@@ -1489,6 +1489,51 @@ t_storage(Config) ->
 %% Helpers
 %%------------------------------------------------------------------------------
 
+-doc "Reject overlapping backend ownership without restarting the running PostgreSQL backend.".
+t_backend_overlap(Config) ->
+    Raw = ?config(raw, Config),
+    Before = emqx_offline_messages_pg:config(),
+    lists:foreach(
+        fun(Filter) ->
+            ?assertMatch(
+                {error, {overlapping_backend_topics, [_ | _]}},
+                emqx_offline_messages:on_config_changed(#{<<"postgresql">> => Raw}, #{
+                    <<"postgresql">> => Raw,
+                    <<"mysql">> => #{<<"enable">> => true, <<"topics">> => [Filter]}
+                })
+            ),
+            ?assertEqual(Before, emqx_offline_messages_pg:config())
+        end,
+        [<<"offline/#">>, <<"offline/+">>, <<"offline/exact">>, <<"#">>]
+    ).
+
+-doc "Keep backend-scoped pools, writers and readers independent when one runtime stops.".
+t_backend_runtime_isolation(Config) ->
+    %% Use the PostgreSQL adapter for both identities to isolate runtime behavior from SQL dialects.
+    Parsed = ?config(pg_config, Config),
+    Other = Parsed#{
+        backend_id := mysql,
+        topics := [<<"other/#">>],
+        instance := make_ref(),
+        async_batched := true
+    },
+    ok = emqx_omp:start(Other),
+    emqx_common_test_helpers:on_exit(fun() -> emqx_omp:stop(mysql) end),
+    ?assertNotEqual(
+        emqx_omp_store:pool(message_read, Parsed), emqx_omp_store:pool(message_read, Other)
+    ),
+    Sub = client(Config, <<"isolated-sub">>, []),
+    {ok, _, [1]} = emqtt:subscribe(Sub, <<"other/topic">>, 1),
+    Pub = client(Config, <<"isolated-pub">>, []),
+    {ok, _} = emqtt:publish(Pub, <<"other/topic">>, <<"before">>, 1),
+    ?assertEqual([<<"before">>], payloads(receive_messages(1))),
+    ok = emqx_offline_messages_pg:stop(),
+    ?assertEqual(Other, emqx_omp:config(mysql)),
+    {ok, _} = emqtt:publish(Pub, <<"other/topic">>, <<"after">>, 1),
+    ?assertEqual([<<"after">>], payloads(receive_messages(1))),
+    ok = emqtt:disconnect(Sub),
+    ok = emqtt:disconnect(Pub).
+
 -doc "Initialize a caught-up reader with database requests controlled by the test.".
 handler(Config, ReadOptions) ->
     Raw = ?config(raw, Config),
