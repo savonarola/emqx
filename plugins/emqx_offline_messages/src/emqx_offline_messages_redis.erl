@@ -12,8 +12,13 @@
 
 -export([
     on_config_changed/2,
+    parse_change/2,
+    stop_change/1,
+    start_change/1,
     on_health_check/1
 ]).
+
+-export_type([change/0]).
 
 -export([
     on_client_connected/3,
@@ -33,22 +38,49 @@
 
 -type context() :: map().
 
+%% A parsed Redis configuration, ready to start.
+-type prepared() :: #{
+    redis_config := map(),
+    resource_opts := map(),
+    context := context()
+}.
+
+%% Whether the running backend stops, and the parsed configuration that starts afterwards.
+-type change() :: #{stop := boolean(), start := prepared() | undefined}.
+
 %%--------------------------------------------------------------------
 %% API
 %%--------------------------------------------------------------------
 
--spec on_config_changed(map(), map()) -> ok.
-on_config_changed(#{<<"enable">> := false}, #{<<"enable">> := false}) ->
-    ok;
-on_config_changed(#{<<"enable">> := true} = Conf, #{<<"enable">> := true} = Conf) ->
-    ok;
-on_config_changed(#{<<"enable">> := true} = _OldConf, #{<<"enable">> := true} = NewConf) ->
-    ok = stop(),
-    ok = start(NewConf);
-on_config_changed(#{<<"enable">> := true} = _OldConf, #{<<"enable">> := false} = _NewConf) ->
-    ok = stop();
-on_config_changed(#{<<"enable">> := false} = _OldConf, #{<<"enable">> := true} = NewConf) ->
-    ok = start(NewConf).
+-doc "Apply a raw configuration change. A parse error changes nothing.".
+-spec on_config_changed(map(), map()) -> ok | {error, term()}.
+on_config_changed(OldConf, NewConf) ->
+    maybe
+        {ok, Change} ?= parse_change(OldConf, NewConf),
+        ok = stop_change(Change),
+        start_change(Change)
+    end.
+
+-doc "Parse a raw configuration change without changing the running backend.".
+-spec parse_change(map(), map()) -> {ok, change()} | {error, term()}.
+parse_change(Conf, Conf) ->
+    {ok, #{stop => false, start => undefined}};
+parse_change(#{<<"enable">> := Enabled}, NewConf) ->
+    try
+        {ok, #{stop => Enabled, start => prepare(NewConf)}}
+    catch
+        Class:Reason -> {error, {invalid_config, {Class, Reason}}}
+    end.
+
+-doc "Stop the running backend when the change replaces or disables it.".
+-spec stop_change(change()) -> ok.
+stop_change(#{stop := true}) -> stop();
+stop_change(#{stop := false}) -> ok.
+
+-doc "Start the backend with the parsed configuration when the change enables it.".
+-spec start_change(change()) -> ok.
+start_change(#{start := undefined}) -> ok;
+start_change(#{start := Prepared}) -> start(Prepared).
 
 -spec on_health_check(map()) -> ok | {error, binary()}.
 on_health_check(#{<<"enable">> := false}) ->
@@ -65,12 +97,16 @@ stop() ->
     unhook(),
     ok = stop_resource().
 
--spec start(map()) -> ok.
-start(ConfigRaw) ->
-    ?SLOG(info, #{msg => offline_messages_redis_start, config => ConfigRaw}),
-    {RedisConfig, ResourceOpts} = make_redis_resource_config(ConfigRaw),
+-spec start(prepared()) -> ok.
+start(#{redis_config := RedisConfig, resource_opts := ResourceOpts, context := Context}) ->
+    ?SLOG(info, #{msg => offline_messages_redis_start, context => Context}),
     ok = start_resource(RedisConfig, ResourceOpts),
+    hook(Context).
 
+-doc "Build the resource configuration and the hook context of an enabled configuration.".
+-spec prepare(map()) -> prepared() | undefined.
+prepare(#{<<"enable">> := true} = ConfigRaw) ->
+    {RedisConfig, ResourceOpts} = make_redis_resource_config(ConfigRaw),
     Context = #{
         message_key_prefix => maps:get(
             <<"message_key_prefix">>, ConfigRaw, ?DEFAULT_MESSAGE_KEY_PREFIX
@@ -83,7 +119,9 @@ start(ConfigRaw) ->
         ),
         topic_filters => emqx_offline_messages_utils:topic_filters(ConfigRaw)
     },
-    hook(Context).
+    #{redis_config => RedisConfig, resource_opts => ResourceOpts, context => Context};
+prepare(#{<<"enable">> := false}) ->
+    undefined.
 
 %%--------------------------------------------------------------------
 %% Callbacks

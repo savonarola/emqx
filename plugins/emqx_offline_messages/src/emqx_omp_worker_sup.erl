@@ -1,7 +1,7 @@
 %%--------------------------------------------------------------------
 %% Copyright (c) 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
--module(emqx_omp_pg_worker_sup).
+-module(emqx_omp_worker_sup).
 -moduledoc "Supervise a fixed number of indexed workers started with `Module:start_link(Index, Config)`.".
 -behaviour(supervisor).
 -export([child_spec/5, start_link/4, init/1]).
@@ -20,7 +20,7 @@ child_spec(Id, Module, Count, Shutdown, Config) ->
         shutdown => infinity
     }.
 
--spec start_link(module(), pos_integer(), timeout(), emqx_omp_pg_config:config()) ->
+-spec start_link(module(), pos_integer(), timeout(), emqx_omp_backend:config()) ->
     supervisor:startlink_ret().
 start_link(Module, Count, Shutdown, Config) ->
     supervisor:start_link(?MODULE, {Module, Count, Shutdown, Config}).

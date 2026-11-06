@@ -659,7 +659,7 @@
           }},
           {"name": "checkpoint", "default": {}, "$ui": {"label": "$postgresql_checkpoint_label"}, "type": {
             "type": "record", "name": "PostgreSQLCheckpointRecord", "fields": [
-              {"name": "interval", "type": "int", "default": 1000,
+              {"name": "interval", "type": "int", "default": 5000,
                "$ui": {"component": "input-number", "label": "$postgresql_checkpoint_interval_label"}},
               {"name": "max_pending", "type": "int", "default": 100,
                "$ui": {"component": "input-number", "label": "$postgresql_checkpoint_max_pending_label"}}

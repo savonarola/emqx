@@ -191,7 +191,7 @@ t_message_persisted(_Config) ->
 mark_message_persisted(Message) ->
     {ok, emqx_message:mark_persisted(Message)}.
 
-%% Verify that `dispatch_info/2' sends the term unchanged to exact and wildcard subscribers only.
+%% Verify that `dispatch_info/2' preserves the matching exact or wildcard subscription filter.
 t_dispatch_info({init, Config}) ->
     Config;
 t_dispatch_info({'end', _Config}) ->
@@ -204,7 +204,7 @@ t_dispatch_info(_Config) ->
 
     %% A term without subscribers goes nowhere and changes no counters.
     ?assertEqual(ok, emqx_broker:dispatch_info(Topic, Info)),
-    ?assertNotReceive(Info),
+    ?assertNotReceive(#dispatch_info{info = Info}),
 
     %% Exact and wildcard subscribers each receive the term once; shared subscribers do not.
     ok = emqx_broker:subscribe(Topic),
@@ -212,15 +212,15 @@ t_dispatch_info(_Config) ->
     ok = emqx_broker:subscribe(emqx_topic:make_shared_record(<<"g">>, Topic)),
     ok = emqx_hooks:add('message.publish', {?MODULE, mark_message_persisted, []}, ?HP_LOWEST),
     ?assertEqual(ok, emqx_broker:dispatch_info(Topic, Info)),
-    ?assertReceive(Info),
-    ?assertReceive(Info),
-    ?assertNotReceive(Info),
+    ?assertReceive(#dispatch_info{topic = Topic, info = Info}),
+    ?assertReceive(#dispatch_info{topic = <<"t_dispatch_info/+">>, info = Info}),
+    ?assertNotReceive(#dispatch_info{info = Info}),
 
     %% The term is not a delivery, so delivery draining leaves it in the mailbox.
     ?assertEqual(ok, emqx_broker:dispatch_info(Topic, Info)),
     ?assertEqual([], emqx_utils:drain_deliver()),
-    ?assertReceive(Info),
-    ?assertReceive(Info),
+    ?assertReceive(#dispatch_info{topic = Topic, info = Info}),
+    ?assertReceive(#dispatch_info{topic = <<"t_dispatch_info/+">>, info = Info}),
 
     ?assertEqual(Publish, emqx_metrics:val_global('messages.publish')),
     ?assertEqual(Dropped, emqx_metrics:val_global('messages.dropped')),

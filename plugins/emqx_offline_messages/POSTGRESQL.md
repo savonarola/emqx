@@ -59,14 +59,28 @@ Clients that were connected before the backend started must connect or subscribe
 
 ## Subscribing
 
-A subscription to a managed topic must meet all of these conditions:
+A subscription that overlaps the managed topics must meet these conditions:
 
-- The topic is exact. It has no `+` or `#` wildcards.
-- The subscription QoS is 1.
 - The client uses MQTT and a regular in-memory session. Durable sessions are not supported.
+- The topic or filter is not longer than `max_topic_length`.
+- A subscription to an exact topic, without `+` or `#`, uses QoS 1.
 
 The broker rejects other subscriptions that overlap the managed topics with reason code `0x87` (not authorized).
-This includes QoS 0 and QoS 2 subscriptions, wildcard filters, gateway clients and durable sessions.
+This includes exact-topic subscriptions with QoS 0 or QoS 2, gateway clients and durable sessions.
+
+The two kinds of subscription behave differently:
+
+| | Exact topic, for example `offline/device-1` | Wildcard filter, for example `offline/#` or `#` |
+| --- | --- | --- |
+| QoS | 1 | Any |
+| Stored and restored on connect | Yes | Yes |
+| Replays stored messages | Yes, with independent progress | No |
+| Live messages | Yes, in offset order | Yes, through normal session delivery and queue limits. |
+
+A wildcard filter receives live managed messages after their database commit. The session applies
+its normal delivery and queue limits. The plugin does not replay stored messages for wildcard filters.
+A filter such as `#` also receives unmanaged messages through regular routing.
+A client with several matching subscriptions receives one copy per subscription.
 
 Some subscriptions cannot be easily checked by the plugin and receive no stored messages:
 
@@ -75,7 +89,8 @@ Some subscriptions cannot be easily checked by the plugin and receive no stored 
 
 Subscriptions are stored in PostgreSQL:
 
-- When a client connects, the plugin restores its subscriptions to managed topics. This also happens after a clean start.
+- When a client connects, the plugin restores its subscriptions to managed topics and its
+  wildcard filters that overlap them. This also happens after a clean start.
 - An explicit UNSUBSCRIBE deletes the stored subscription.
 - A repeated SUBSCRIBE keeps the stored progress.
 - A subscription that no client uses for `subscription_expiry` (30 days by default) is deleted.
@@ -186,7 +201,7 @@ Durations are in milliseconds. Sizes are in bytes. The defaults are in `priv/con
 | `read.page_max_messages` | Maximum number of messages read from PostgreSQL at once |
 | `read.idle_poll_interval` | How often an idle subscription checks PostgreSQL for missed messages |
 | `read.reorder_timeout`, `read.reorder_max_distance` | How long and for how many messages to wait for an out-of-order message before reading PostgreSQL |
-| `checkpoint.interval` | How often progress is saved |
+| `checkpoint.interval` | How long acknowledged progress can stay unsaved, 5 seconds by default |
 | `checkpoint.max_pending` | Save progress earlier after this many acknowledgements |
 
 ### Retention
@@ -197,7 +212,13 @@ Durations are in milliseconds. Sizes are in bytes. The defaults are in `priv/con
 | `retention.max_messages` | Keep at most this many messages per topic |
 | `retention.interval` | How often the cleanup job runs |
 
-Do not configure the MySQL or Redis backend for topics that the PostgreSQL backend manages.
+PostgreSQL and MySQL can run simultaneously for disjoint topic sets.
+The plugin rejects configuration changes with overlapping PostgreSQL and MySQL topic filters.
+Do not configure Redis for topics managed by either SQL backend.
+
+The SQL backends share MQTT delivery, batch writing, checkpoints and retention policy.
+Each backend has separate connection pools, writers and metrics.
+Changing one backend's configuration restarts only that backend.
 
 ## Writing messages with SQL
 
@@ -288,10 +309,17 @@ Messages already queued for a stalled connection are limited by the broker's `fo
 
 ### Progress
 
-The reader saves the latest acknowledged offset every `checkpoint.interval`,
+The reader saves the latest acknowledged offset `checkpoint.interval` after an acknowledgement,
 after `checkpoint.max_pending` acknowledgements, and on disconnect.
+A subscription without new acknowledgements does not run this timer.
 Saving progress does not wait for the database. A failed save is not retried.
-Saving progress also keeps the subscription from expiring.
+After a crash, a client can receive again the messages acknowledged since the last save.
+
+Saving progress also keeps the subscription from expiring. A connected subscription that saved
+no progress for a third of `subscription_expiry` renews its stored row with the same write.
+Wildcard subscriptions use an upsert to renew their stored rows. Failed writes and missing replies
+are retried. The handler checks configuration changes at least once per second and creates rows
+in replacement backends or namespaces.
 
 ### Connection pools
 

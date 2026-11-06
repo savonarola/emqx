@@ -567,7 +567,8 @@ The route lookup is the same as for a publish. Remote nodes receive `Info`
 through `emqx_broker_info_proto_v1`. Shared subscription routes are skipped.
 No hook, persistence, metric or cluster-link forwarding runs.
 
-Subscribers receive `Info` as an ordinary process message. Channels pass it to
+Subscribers receive `#dispatch_info{topic = Filter, info = Info}` with the matching
+subscription filter. Channels pass it to
 the `client.handle_info` hook. The caller must recover the data by other means
 when a subscriber ignores or loses `Info`.
 """.
@@ -588,10 +589,11 @@ dispatch_info(Topic, Info) when is_binary(Topic) ->
 -doc "Send `Info` to the local subscribers of the topic filter `Topic`.".
 -spec do_dispatch_info(emqx_types:topic(), term()) -> ok.
 do_dispatch_info(Topic, Info) ->
+    RoutedInfo = #dispatch_info{topic = Topic, info = Info},
     Shards = lookup_value(?SUBSCRIBER, {shard, Topic}, []),
     _ = lists:foldl(
-        fun(I, N) -> do_dispatch_chans(Info, subscribers({shard, Topic, I}), N) end,
-        do_dispatch_chans(Info, subscribers(Topic), 0),
+        fun(I, N) -> do_dispatch_chans(RoutedInfo, subscribers({shard, Topic, I}), N) end,
+        do_dispatch_chans(RoutedInfo, subscribers(Topic), 0),
         Shards
     ),
     ok.

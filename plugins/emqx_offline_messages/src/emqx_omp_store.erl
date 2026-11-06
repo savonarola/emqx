@@ -1,24 +1,24 @@
 %%--------------------------------------------------------------------
 %% Copyright (c) 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
--module(emqx_omp_pg_store).
+-module(emqx_omp_store).
 -moduledoc """
-PostgreSQL connection pools, storage operations and the versioned MQTT row encoding.
+Backend-scoped connection pools, storage operations and versioned MQTT row encoding.
 
 The backend uses three pools:
 
-- `omp_pg_message_publish` appends messages. The topic selects the connection.
-- `omp_pg_message_read` reads message pages. The subscription handler selects the connection.
-- `omp_pg_subscription_meta` changes subscription rows. The client ID selects the connection,
+- `message_publish` appends messages. The topic selects the connection.
+- `message_read` reads message pages. The subscription handler selects the connection.
+- `subscription_meta` changes subscription rows. The client ID selects the connection,
   so the operations of one client run in order.
 """.
 
 -include_lib("emqx/include/emqx.hrl").
 -include_lib("emqx/include/emqx_mqtt.hrl").
 -include_lib("snabbkaffe/include/trace.hrl").
--include("emqx_omp_pg.hrl").
+-include("emqx_omp.hrl").
 
--export([pool_specs/1, connect/1, install/1, encode/1, decode/3, dispatch/3]).
+-export([pool_specs/1, connect/1, install/1, encode/1, decode/3, dispatch/3, pool/2]).
 -export([
     health/1,
     append/3,
@@ -26,20 +26,20 @@ The backend uses three pools:
     append_batch/4,
     restore/3,
     unsubscribe/4,
-    checkpoint/4,
-    subscribe_async/7,
-    page_async/6
+    checkpoint/5,
+    subscribe_async/8,
+    page_async/7
 ]).
--export([exec/3, exec_async/3, reply/3]).
+-export([exec/4, exec_async/4, reply/3]).
 
--define(MESSAGE_PUBLISH_POOL, omp_pg_message_publish).
--define(MESSAGE_READ_POOL, omp_pg_message_read).
--define(SUBSCRIPTION_META_POOL, omp_pg_subscription_meta).
+-define(MESSAGE_PUBLISH_POOL, message_publish).
+-define(MESSAGE_READ_POOL, message_read).
+-define(SUBSCRIPTION_META_POOL, subscription_meta).
 
--type config() :: emqx_omp_pg_config:config().
--type namespace() :: emqx_omp_pg_sql:namespace().
--type topic_id() :: emqx_omp_pg_sql:topic_id().
--type offset() :: emqx_omp_pg_sql:offset().
+-type config() :: emqx_omp_backend:config().
+-type namespace() :: emqx_omp_backend:namespace().
+-type topic_id() :: emqx_omp_backend:topic_id().
+-type offset() :: emqx_omp_backend:offset().
 -type error() :: {error, term()}.
 
 %%------------------------------------------------------------------------------
@@ -62,34 +62,16 @@ pool_specs(
     ].
 
 -doc "Open a connection and set its statement timeout. The pools call this to start workers.".
--spec connect(config() | [{config, config()} | term()]) ->
-    {ok, epgsql:connection()} | {error, epgsql:connect_error()}.
+-spec connect(config() | [{config, config()} | term()]) -> {ok, pid()} | error().
 connect(Options) when is_list(Options) ->
     connect(proplists:get_value(config, Options));
-connect(#{connection := Options} = Config) ->
-    case epgsql:connect(Options) of
-        {ok, Conn} ->
-            ok = set_statement_timeout(Conn, Config),
-            {ok, Conn};
-        Error ->
-            Error
-    end.
+connect(#{backend := Backend} = Config) ->
+    Backend:connect(Config).
 
 -doc "Install the packaged schema using a connection that closes after the operation.".
 -spec install(config()) -> ok.
-install(Config) ->
-    {ok, Conn} = connect(Config),
-    try
-        {ok, SQL} = file:read_file(
-            filename:join(code:priv_dir(emqx_offline_messages), "postgresql.sql")
-        ),
-        Results = epgsql:squery(Conn, SQL),
-        [] = [Error || {error, _} = Error <- Results],
-        ok
-    after
-        unlink(Conn),
-        epgsql:close(Conn)
-    end.
+install(#{backend := Backend} = Config) ->
+    Backend:install(Config).
 
 -doc "Check that the database is reachable and has the expected schema version.".
 -spec health(config()) -> ok | error().
@@ -102,26 +84,26 @@ its live copies after the commit.
 """.
 -spec append(namespace(), emqx_types:message(), config()) -> ok | error().
 append(Namespace, Msg, Config) ->
-    emqx_omp_pg_writer:append(Namespace, Msg, Config).
+    emqx_omp_writer:append(Namespace, Msg, Config).
 
 -doc "Store one message, wait for the commit and send its live copy.".
 -spec append_sync(namespace(), emqx_types:message(), config()) -> ok | error().
-append_sync(Namespace, #message{topic = Topic} = Msg, Config) ->
+append_sync(Namespace, #message{topic = Topic} = Msg, #{backend_id := BackendId} = Config) ->
     case append_batch(Namespace, Topic, [encode(Msg)], Config) of
-        {ok, {Id, Offset}} -> dispatch([Msg], {Namespace, Id}, Offset);
+        {ok, {Id, Offset}} -> dispatch([Msg], {{BackendId, Namespace}, Id}, Offset);
         {error, _} = Error -> Error
     end.
 
 -doc "Append encoded messages to `Topic`, wait for the commit and return the first offset.".
 -spec append_batch(
-    namespace(), emqx_types:topic(), [emqx_omp_pg_sql:encoded_message()], config()
+    namespace(), emqx_types:topic(), [emqx_omp_backend:encoded_message()], config()
 ) -> {ok, {topic_id(), offset()}} | error().
 append_batch(Namespace, Topic, Messages, Config) ->
     call(?MESSAGE_PUBLISH_POOL, Topic, append, [Namespace, Topic, Messages], Config).
 
 -doc "Renew the subscriptions of a client and return their topics and options.".
 -spec restore(namespace(), emqx_types:clientid(), config()) ->
-    {ok, [emqx_omp_pg_sql:subscription_row()]} | error().
+    {ok, [emqx_omp_backend:subscription_row()]} | error().
 restore(Namespace, ClientId, Config) ->
     call(?SUBSCRIPTION_META_POOL, ClientId, restore, [Namespace, ClientId], Config).
 
@@ -132,9 +114,15 @@ unsubscribe(Namespace, ClientId, Topic, Config) ->
     call(?SUBSCRIPTION_META_POOL, ClientId, unsubscribe, [Namespace, ClientId, Topic], Config).
 
 -doc "Save acknowledged progress without waiting for the result.".
--spec checkpoint(namespace(), emqx_types:clientid(), topic_id(), offset()) -> ok.
-checkpoint(Namespace, ClientId, TopicId, Offset) ->
-    cast(?SUBSCRIPTION_META_POOL, ClientId, checkpoint, [Namespace, ClientId, TopicId, Offset]).
+-spec checkpoint(namespace(), emqx_types:clientid(), topic_id(), offset(), config()) -> ok.
+checkpoint(Namespace, ClientId, TopicId, Offset, Config) ->
+    cast(
+        ?SUBSCRIPTION_META_POOL,
+        ClientId,
+        checkpoint,
+        [Namespace, ClientId, TopicId, Offset],
+        Config
+    ).
 
 -doc "Create or renew a subscription and send the result to the handler.".
 -spec subscribe_async(
@@ -142,48 +130,55 @@ checkpoint(Namespace, ClientId, TopicId, Offset) ->
     emqx_types:clientid(),
     emqx_types:topic(),
     emqx_types:subopts(),
-    emqx_omp_pg_sql:start_position(),
+    emqx_omp_backend:start_position(),
     emqx_extsub_handler:message_target(),
-    reference()
+    reference(),
+    config()
 ) -> ok.
-subscribe_async(Namespace, ClientId, Topic, SubOpts, Start, Target, Ref) ->
+subscribe_async(Namespace, ClientId, Topic, SubOpts, Start, Target, Ref, Config) ->
     Args = [Namespace, ClientId, Topic, SubOpts, Start],
-    async(?SUBSCRIPTION_META_POOL, ClientId, subscribe, Args, Target, Ref).
+    async(?SUBSCRIPTION_META_POOL, ClientId, subscribe, Args, Target, Ref, Config).
 
 -doc "Read a message page and send the result to the handler.".
 -spec page_async(
-    term(), topic_id(), offset(), pos_integer(), emqx_extsub_handler:message_target(), reference()
+    term(),
+    topic_id(),
+    offset(),
+    pos_integer(),
+    emqx_extsub_handler:message_target(),
+    reference(),
+    config()
 ) -> ok.
-page_async(Key, TopicId, Cursor, Count, Target, Ref) ->
-    ?tp(omp_pg_read_page, #{topic_id => TopicId, cursor => Cursor, count => Count}),
-    async(?MESSAGE_READ_POOL, Key, page, [TopicId, Cursor, Count], Target, Ref).
+page_async(Key, TopicId, Cursor, Count, Target, Ref, Config) ->
+    ?tp(omp_read_page, #{topic_id => TopicId, cursor => Cursor, count => Count}),
+    async(?MESSAGE_READ_POOL, Key, page, [TopicId, Cursor, Count], Target, Ref, Config).
 
 -doc "Run a statement on a pool connection and return errors instead of raising them.".
--spec exec(epgsql:connection(), atom(), [term()]) -> term().
-exec(Conn, Fun, Args) ->
+-spec exec(pid(), module(), atom(), [term()]) -> term().
+exec(Conn, Backend, Fun, Args) ->
     try
-        apply(emqx_omp_pg_sql, Fun, [Conn | Args])
+        apply(Backend, Fun, [Conn | Args])
     catch
         Class:Reason -> {error, {Class, Reason}}
     end.
 
 -doc "Run a statement and wrap its result, because the pool skips the callback for `{error, _}`.".
--spec exec_async(epgsql:connection(), atom(), [term()]) -> {done, term()}.
-exec_async(Conn, Fun, Args) ->
-    {done, exec(Conn, Fun, Args)}.
+-spec exec_async(pid(), module(), atom(), [term()]) -> {done, term()}.
+exec_async(Conn, Backend, Fun, Args) ->
+    {done, exec(Conn, Backend, Fun, Args)}.
 
 -doc "Send the result of an asynchronous statement to the handler.".
 -spec reply({done, term()}, emqx_extsub_handler:message_target(), reference()) -> ok.
 reply({done, Result}, Target, Ref) ->
-    emqx_extsub_handler:send(Target, {pg_result, Ref, Result}).
+    emqx_extsub_handler:send(Target, {result, Ref, Result}).
 
 -doc "Send a committed topic batch as one term, with its first assigned offset.".
--spec dispatch([emqx_types:message(), ...], {namespace(), topic_id()}, offset()) -> ok.
+-spec dispatch([emqx_types:message(), ...], {{atom(), namespace()}, topic_id()}, offset()) -> ok.
 dispatch([#message{topic = Topic} | _] = Messages, {Namespace, Id}, Offset) ->
     emqx_broker:dispatch_info(Topic, ?OMP_LIVE(Namespace, Id, Offset, Messages)).
 
 -doc "Encode MQTT fields and binary properties for the versioned JSON append format.".
--spec encode(emqx_types:message()) -> emqx_omp_pg_sql:encoded_message().
+-spec encode(emqx_types:message()) -> emqx_omp_backend:encoded_message().
 encode(#message{
     id = Id,
     from = From,
@@ -211,7 +206,7 @@ encode(#message{
     }.
 
 -doc "Decode a stored row and validate its MQTT properties before replay.".
--spec decode(emqx_types:topic(), {namespace(), topic_id()}, emqx_omp_pg_sql:page_row()) ->
+-spec decode(emqx_types:topic(), {{atom(), namespace()}, topic_id()}, emqx_omp_backend:page_row()) ->
     {ok, emqx_types:message()} | {error, invalid_row}.
 decode(
     Topic,
@@ -255,30 +250,36 @@ decode(
 %% Private
 %%------------------------------------------------------------------------------
 
-pool_spec(Pool, Size, Config) ->
+pool_spec(Role, Size, Config) ->
+    Pool = pool(Role, Config),
     Options = [{pool_size, Size}, {pool_type, hash}, {auto_reconnect, 1}, {config, Config}],
     ecpool:pool_spec(Pool, Pool, ?MODULE, Options).
 
 -doc "Run a statement on the pool worker selected by `Key` and wait for the result.".
-call(Pool, Key, Fun, Args, #{query_timeout := Timeout}) ->
+call(Role, Key, Fun, Args, #{request_timeout := Timeout, backend := Backend} = Config) ->
+    Pool = pool(Role, Config),
     try
-        ecpool:pick_and_do({Pool, Key}, {?MODULE, exec, [Fun, Args]}, {handover, Timeout + 1000})
+        ecpool:pick_and_do(
+            {Pool, Key}, {?MODULE, exec, [Backend, Fun, Args]}, {handover, Timeout + 1000}
+        )
     catch
         exit:Reason -> {error, Reason}
     end.
 
-cast(Pool, Key, Fun, Args) ->
-    _ = ecpool:pick_and_do({Pool, Key}, {?MODULE, exec, [Fun, Args]}, handover_async),
+cast(Role, Key, Fun, Args, #{backend := Backend} = Config) ->
+    Pool = pool(Role, Config),
+    _ = ecpool:pick_and_do({Pool, Key}, {?MODULE, exec, [Backend, Fun, Args]}, handover_async),
     ok.
 
 -doc """
-Send `{pg_result, Ref, Result}` to the handler. A missing or empty pool fails at once.
+Send `{result, Ref, Result}` to the handler. A missing or empty pool fails at once.
 The pool sends no result when its connection is down, so the caller needs a timeout.
 """.
-async(Pool, Key, Fun, Args, Target, Ref) ->
+async(Role, Key, Fun, Args, Target, Ref, #{backend := Backend} = Config) ->
+    Pool = pool(Role, Config),
     Callback = {?MODULE, reply, [Target, Ref]},
     case
-        ecpool:pick_and_do({Pool, Key}, {?MODULE, exec_async, [Fun, Args]}, {
+        ecpool:pick_and_do({Pool, Key}, {?MODULE, exec_async, [Backend, Fun, Args]}, {
             handover_async, Callback
         })
     of
@@ -286,14 +287,10 @@ async(Pool, Key, Fun, Args, Target, Ref) ->
         _ -> ok
     end.
 
--doc "Set the session statement timeout to `query_timeout` unless the option is disabled.".
-set_statement_timeout(Conn, #{set_statement_timeout := true, query_timeout := Timeout}) ->
-    {ok, _, _} = epgsql:equery(Conn, "SELECT set_config('statement_timeout', $1, false)", [
-        integer_to_binary(Timeout)
-    ]),
-    ok;
-set_statement_timeout(_Conn, #{set_statement_timeout := false}) ->
-    ok.
+-doc "Return the backend-scoped pool name.".
+-spec pool(atom(), config()) -> binary().
+pool(Role, #{backend_id := BackendId}) ->
+    <<"omp_", (atom_to_binary(BackendId))/binary, "_", (atom_to_binary(Role))/binary>>.
 
 sender(From) when is_atom(From) -> atom_to_binary(From);
 sender(From) when is_binary(From) -> From.

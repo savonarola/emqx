@@ -19,8 +19,8 @@ init([]) ->
     ChildSpecs = [
         emqx_metrics_worker:child_spec(?METRICS_WORKER),
         #{
-            id => emqx_omp_pg_sup,
-            start => {emqx_omp_pg_sup, start_link, []},
+            id => emqx_omp_sup,
+            start => {emqx_omp_sup, start_link, []},
             type => supervisor,
             shutdown => infinity
         },

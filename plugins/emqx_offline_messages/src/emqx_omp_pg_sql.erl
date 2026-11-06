@@ -2,12 +2,16 @@
 %% Copyright (c) 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
 -module(emqx_omp_pg_sql).
+-behaviour(emqx_omp_backend).
 -moduledoc """
 Fixed PostgreSQL statements of the offline message backend.
 Each function runs on the given connection and raises an error when a statement fails.
 """.
 
 -export([
+    connect/1,
+    close/1,
+    install/1,
     health/1,
     append/4,
     subscribe/6,
@@ -20,6 +24,7 @@ Each function runs on the given connection and raises an error when a statement 
     consumed_cutoff/3,
     trim/4,
     expire/4,
+    max_client_id_length/0,
     query/3
 ]).
 
@@ -54,16 +59,16 @@ Each function runs on the given connection and raises an error when a statement 
 
 %% The topic tip followed by the message columns, which are `null` when no message follows.
 -type page_row() :: {
-    Tip :: offset(),
-    Offset :: offset() | null,
-    MessageId :: binary() | null,
-    Sender :: binary() | null,
-    QoS :: emqx_types:qos() | null,
-    Retain :: boolean() | null,
-    Payload :: binary() | null,
-    Properties :: binary() | null,
-    PublishedAt :: timestamp_ms() | null,
-    ExpiresAt :: timestamp_ms() | null
+    _Tip :: offset(),
+    _Offset :: offset() | null,
+    _MessageId :: binary() | null,
+    _Sender :: binary() | null,
+    _QoS :: emqx_types:qos() | null,
+    _Retain :: boolean() | null,
+    _Payload :: binary() | null,
+    _Properties :: binary() | null,
+    _PublishedAt :: timestamp_ms() | null,
+    _ExpiresAt :: timestamp_ms() | null
 }.
 
 %% A subscribed topic and its JSON-encoded subscription options.
@@ -72,6 +77,44 @@ Each function runs on the given connection and raises an error when a statement 
 %%------------------------------------------------------------------------------
 %% API
 %%------------------------------------------------------------------------------
+
+-doc "Open a PostgreSQL connection with the configured statement timeout.".
+connect(#{connection := Options} = Config) ->
+    case epgsql:connect(Options) of
+        {ok, Conn} ->
+            case Config of
+                #{set_statement_timeout := true, query_timeout := Timeout} ->
+                    {ok, _, _} = epgsql:equery(
+                        Conn, "SELECT set_config('statement_timeout', $1, false)", [
+                            integer_to_binary(Timeout)
+                        ]
+                    );
+                #{set_statement_timeout := false} ->
+                    ok
+            end,
+            {ok, Conn};
+        Error ->
+            Error
+    end.
+
+-doc "Close a PostgreSQL connection.".
+close(Conn) ->
+    unlink(Conn),
+    epgsql:close(Conn).
+
+-doc "Install the packaged PostgreSQL schema.".
+install(Config) ->
+    {ok, Conn} = connect(Config),
+    try
+        {ok, SQL} = file:read_file(
+            filename:join(code:priv_dir(emqx_offline_messages), "postgresql.sql")
+        ),
+        Results = epgsql:squery(Conn, SQL),
+        [] = [Error || {error, _} = Error <- Results],
+        ok
+    after
+        close(Conn)
+    end.
 
 -doc "Check that the schema version table exists and contains version 1.".
 -spec health(epgsql:connection()) -> ok.
@@ -233,6 +276,10 @@ expire(Conn, Namespace, Expiry, Batch) ->
       LIMIT $3
     )
     """, [Namespace, Expiry, Batch]).
+
+-doc "Return `infinity`, because the `text` client ID column has no length limit.".
+-spec max_client_id_length() -> infinity.
+max_client_id_length() -> infinity.
 
 -doc "Run a parameterized statement and raise an error when it fails.".
 -spec query(epgsql:connection(), epgsql:sql_query(), [epgsql:bind_param()]) ->

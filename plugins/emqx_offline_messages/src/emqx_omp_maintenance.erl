@@ -1,7 +1,7 @@
 %%--------------------------------------------------------------------
 %% Copyright (c) 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
--module(emqx_omp_pg_maintenance).
+-module(emqx_omp_maintenance).
 -moduledoc """
 Delete old messages per topic and expired subscriptions.
 Only the first running node runs the cleanup. During membership changes,
@@ -18,7 +18,7 @@ The worker uses its own connection, so cleanup never waits behind appends.
 -define(EXPIRE_INTERVAL, 3600000).
 
 -doc "Start the cleanup worker.".
--spec start_link(emqx_omp_pg_config:config()) -> gen_server:start_ret().
+-spec start_link(emqx_omp_backend:config()) -> gen_server:start_ret().
 start_link(Config) -> gen_server:start_link(?MODULE, Config, []).
 
 init(#{retention := #{interval := Interval}} = Config) ->
@@ -52,8 +52,8 @@ handle_info({'EXIT', Conn, _Reason}, #{conn := Conn} = State) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, #{conn := Conn}) ->
-    close(Conn).
+terminate(_Reason, #{conn := Conn, config := Config}) ->
+    close(Conn, Config).
 
 %%------------------------------------------------------------------------------
 %% Private
@@ -70,7 +70,7 @@ run(Fun, #{config := Config, conn := Conn0} = State0, Interval) ->
             catch
                 Class:Reason ->
                     failed({Class, Reason}),
-                    close(Conn),
+                    close(Conn, Config),
                     {Interval, State0#{conn := undefined, last_topic := 0}}
             end;
         {error, Reason} ->
@@ -83,7 +83,7 @@ failed(Reason) ->
 
 -doc "Reuse the current connection or report a failed reconnect without stopping cleanup.".
 connection(undefined, Config) ->
-    try emqx_omp_pg_store:connect(Config) of
+    try emqx_omp_store:connect(Config) of
         {ok, Conn} -> {ok, Conn};
         {error, Reason} -> {error, Reason}
     catch
@@ -92,17 +92,17 @@ connection(undefined, Config) ->
 connection(Conn, _Config) ->
     {ok, Conn}.
 
-close(undefined) ->
+close(undefined, _Config) ->
     ok;
-close(Conn) ->
+close(Conn, #{backend := Backend}) ->
     unlink(Conn),
-    _ = catch epgsql:close(Conn),
+    _ = catch Backend:close(Conn),
     ok.
 
 -doc "Process one topic batch and schedule the next batch or retention cycle.".
 cleanup(Conn, #{config := Config, last_topic := After} = State) ->
-    #{namespace := Namespace, retention := #{interval := Interval}} = Config,
-    {ok, Topics} = emqx_omp_pg_sql:topics(Conn, Namespace, After, ?TOPIC_BATCH),
+    #{namespace := Namespace, retention := #{interval := Interval}, backend := Backend} = Config,
+    {ok, Topics} = Backend:topics(Conn, Namespace, After, ?TOPIC_BATCH),
     lists:foreach(fun({Id, Next}) -> trim(Conn, Id, Next, Config) end, Topics),
     case Topics of
         [_ | _] when length(Topics) =:= ?TOPIC_BATCH ->
@@ -116,26 +116,31 @@ cleanup(Conn, #{config := Config, last_topic := After} = State) ->
 trim(Conn, Id, Next, Config) ->
     #{
         retention := #{max_age := MaxAge, max_messages := MaxMessages},
-        new_subscription_start := Start
+        new_subscription_start := Start,
+        backend := Backend
     } = Config,
     Oldest = erlang:system_time(millisecond) - MaxAge,
-    {ok, AgeCutoff} = emqx_omp_pg_sql:age_cutoff(Conn, Id, Next, Oldest),
+    {ok, AgeCutoff} = Backend:age_cutoff(Conn, Id, Next, Oldest),
     %% With `latest`, new subscriptions start at the tip, so acknowledged messages are not needed.
     Cutoffs =
         case Start of
             latest ->
-                {ok, Consumed} = emqx_omp_pg_sql:consumed_cutoff(Conn, Id, Next),
+                {ok, Consumed} = Backend:consumed_cutoff(Conn, Id, Next),
                 [Consumed];
             earliest ->
                 []
         end,
     Cutoff = lists:max([Next - MaxMessages, AgeCutoff | Cutoffs]),
-    {ok, _} = emqx_omp_pg_sql:trim(Conn, Id, Cutoff, ?DELETE_BATCH),
+    {ok, _} = Backend:trim(Conn, Id, Cutoff, ?DELETE_BATCH),
     ok.
 
 -doc "Delete expired subscriptions in batches until the current sweep is complete.".
-expire(Conn, #{config := #{namespace := Namespace, subscription_expiry := Expiry}} = State) ->
-    {ok, Removed} = emqx_omp_pg_sql:expire(Conn, Namespace, Expiry, ?DELETE_BATCH),
+expire(
+    Conn,
+    #{config := #{namespace := Namespace, subscription_expiry := Expiry, backend := Backend}} =
+        State
+) ->
+    {ok, Removed} = Backend:expire(Conn, Namespace, Expiry, ?DELETE_BATCH),
     case Removed >= ?DELETE_BATCH of
         true -> {?NEXT_BATCH_DELAY, State};
         false -> {?EXPIRE_INTERVAL, State}

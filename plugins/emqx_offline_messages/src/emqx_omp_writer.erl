@@ -1,7 +1,7 @@
 %%--------------------------------------------------------------------
 %% Copyright (c) 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
--module(emqx_omp_pg_writer).
+-module(emqx_omp_writer).
 -moduledoc "Topic-affine asynchronous QoS 1/2 batching writers.".
 -behaviour(gen_server).
 -include_lib("emqx/include/logger.hrl").
@@ -15,18 +15,20 @@
 %%------------------------------------------------------------------------------
 
 -doc "Start the batch writer with the given index.".
--spec start_link(non_neg_integer(), emqx_omp_pg_config:config()) -> gen_server:start_ret().
+-spec start_link(non_neg_integer(), emqx_omp_backend:config()) -> gen_server:start_ret().
 start_link(Index, Config) ->
-    gen_server:start_link(name(Index), ?MODULE, Config, []).
+    gen_server:start_link(name(Index, Config), ?MODULE, Config, []).
 
 -doc "Wait for admission to the topic's writer without waiting for the database commit.".
--spec append(emqx_omp_pg_sql:namespace(), emqx_types:message(), emqx_omp_pg_config:config()) ->
+-spec append(emqx_omp_backend:namespace(), emqx_types:message(), emqx_omp_backend:config()) ->
     ok | {error, term()}.
-append(Namespace, #message{topic = Topic, payload = Payload} = Msg, #{writer := Writer}) ->
+append(Namespace, #message{topic = Topic, payload = Payload} = Msg, #{writer := Writer} = Config) ->
     #{pool_size := Size, call_timeout := Timeout} = Writer,
     Index = erlang:phash2({Namespace, Topic}, Size),
     try
-        gen_server:call(name(Index), {append, Namespace, Topic, Msg, byte_size(Payload)}, Timeout)
+        gen_server:call(
+            name(Index, Config), {append, Namespace, Topic, Msg, byte_size(Payload)}, Timeout
+        )
     catch
         exit:Reason -> {error, Reason}
     end.
@@ -81,10 +83,10 @@ terminate(Reason, State) when
 ->
     _ = flush(State),
     ok;
-terminate(_Reason, #{count := Count}) when Count > 0 ->
+terminate(_Reason, #{count := Count, config := Config}) when Count > 0 ->
     %% The crashed flush may have appended part of the buffer. A second append would
     %% store those messages again at new offsets.
-    emqx_offline_messages_pg:count(write_failed, Count),
+    emqx_omp:count(write_failed, Count, Config),
     ?SLOG(error, #{msg => offline_messages_pg_buffer_dropped, count => Count}),
     ok;
 terminate(_Reason, _State) ->
@@ -94,7 +96,7 @@ terminate(_Reason, _State) ->
 %% Private
 %%------------------------------------------------------------------------------
 
-name(Index) -> {via, gproc, {n, l, {?MODULE, Index}}}.
+name(Index, #{backend_id := BackendId}) -> {via, gproc, {n, l, {?MODULE, BackendId, Index}}}.
 
 -doc "Restart the idle flush timer and start the maximum delay timer for the first message.".
 ensure_flush_timer(#{idle := Idle, max := Max0} = State, #{
@@ -115,12 +117,13 @@ flush(#{batches := Batches, idle := Idle, max := Max, config := Config} = State)
     maps:foreach(
         fun({Namespace, Topic}, Batch) ->
             Messages = lists:reverse(Batch),
-            Encoded = [emqx_omp_pg_store:encode(Msg) || Msg <- Messages],
-            case emqx_omp_pg_store:append_batch(Namespace, Topic, Encoded, Config) of
+            Encoded = [emqx_omp_store:encode(Msg) || Msg <- Messages],
+            case emqx_omp_store:append_batch(Namespace, Topic, Encoded, Config) of
                 {ok, {Id, Offset}} ->
-                    dispatch(Messages, {Namespace, Id}, Offset);
+                    #{backend_id := BackendId} = Config,
+                    dispatch(Messages, {{BackendId, Namespace}, Id}, Offset);
                 {error, Reason} ->
-                    emqx_offline_messages_pg:count(write_failed, length(Batch)),
+                    emqx_omp:count(write_failed, length(Batch), Config),
                     ?SLOG_THROTTLE(error, #{
                         msg => offline_messages_pg_batch_failed, topic => Topic, reason => Reason
                     })
@@ -132,7 +135,7 @@ flush(#{batches := Batches, idle := Idle, max := Max, config := Config} = State)
 
 -doc "Send live copies of a committed batch. On failure, log it; subscribers read the batch later.".
 dispatch(Messages, Identity, Offset) ->
-    try emqx_omp_pg_store:dispatch(Messages, Identity, Offset) of
+    try emqx_omp_store:dispatch(Messages, Identity, Offset) of
         ok -> ok
     catch
         Class:Reason ->

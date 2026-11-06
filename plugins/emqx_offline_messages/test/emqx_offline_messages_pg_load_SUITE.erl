@@ -51,7 +51,7 @@ t_delivery_load(Config) ->
         end
      || N <- lists:seq(1, 50)
     ],
-    ok = meck:new(emqx_omp_pg_store, [passthrough, no_link]),
+    ok = meck:new(emqx_omp_store, [passthrough, no_link]),
     Start = erlang:monotonic_time(millisecond),
     timer:sleep(1500),
     Elapsed = erlang:monotonic_time(millisecond) - Start,
@@ -60,24 +60,24 @@ t_delivery_load(Config) ->
     ?assert(IdleReads >= 100),
     ?assert(IdleReads =< 200),
     lists:foreach(fun emqtt:disconnect/1, Idle),
-    meck:unload(emqx_omp_pg_store),
+    meck:unload(emqx_omp_store),
 
     %% Measure post-commit live delivery latency and verify that it needs no page reads.
     Read1 = Read0#{<<"idle_poll_interval">> := 60000},
     ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{<<"read">> => Read1}),
     Topic = <<"offline/latency">>,
     Fast = subscribe(Config, <<"fast-probe">>, Topic, []),
-    ok = meck:new(emqx_omp_pg_store, [passthrough, no_link]),
+    ok = meck:new(emqx_omp_store, [passthrough, no_link]),
     Conn = ?config(db, Config),
     Namespace = ?config(namespace, Config),
     Latencies = [
         begin
             Msg = emqx_message:make(<<"probe">>, 1, Topic, integer_to_binary(N)),
             {ok, {Id, Offset}} = emqx_omp_pg_sql:append(Conn, Namespace, Topic, [
-                emqx_omp_pg_store:encode(Msg)
+                emqx_omp_store:encode(Msg)
             ]),
             CommittedAt = erlang:monotonic_time(microsecond),
-            ok = emqx_omp_pg_store:dispatch([Msg], {Namespace, Id}, Offset),
+            ok = emqx_omp_store:dispatch([Msg], {{postgresql, Namespace}, Id}, Offset),
             [_] = emqx_offline_messages_pg_SUITE:receive_messages(1),
             erlang:monotonic_time(microsecond) - CommittedAt
         end
@@ -86,7 +86,7 @@ t_delivery_load(Config) ->
     LiveReads = page_reads(),
     ?assertEqual(0, LiveReads),
     ok = emqtt:disconnect(Fast),
-    meck:unload(emqx_omp_pg_store),
+    meck:unload(emqx_omp_store),
 
     %% Queue live copies while the channel is suspended and measure its mailbox growth.
     SlowTopic = <<"offline/slow-probe">>,
@@ -137,13 +137,13 @@ subscribe(Config, Id, Topic, Options) ->
     Client = emqx_offline_messages_pg_SUITE:client(Config, Id, Options),
     ?assertWaitEvent(
         emqtt:subscribe(Client, Topic, 1),
-        #{?snk_kind := omp_pg_page, clientid := Id, dirty := false},
+        #{?snk_kind := omp_page, clientid := Id, dirty := false},
         5000
     ),
     Client.
 
 page_reads() ->
-    meck:num_calls(emqx_omp_pg_store, exec_async, ['_', page, '_']).
+    meck:num_calls(emqx_omp_store, exec_async, ['_', '_', page, '_']).
 
 percentiles(Values) ->
     Sorted = lists:sort(Values),

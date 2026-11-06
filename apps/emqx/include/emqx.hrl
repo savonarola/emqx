@@ -60,6 +60,12 @@
     message :: emqx_types:message()
 }).
 
+%% An opaque term routed to a channel through a subscription filter.
+-record(dispatch_info, {
+    topic :: emqx_types:topic(),
+    info :: term()
+}).
+
 %%--------------------------------------------------------------------
 %% Route
 %%--------------------------------------------------------------------

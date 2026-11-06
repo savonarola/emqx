@@ -85,7 +85,7 @@ postgresql {
         reorder_timeout = 50
         idle_poll_interval = 30000
     }
-    checkpoint { interval = 1000, max_pending = 100 }
+    checkpoint { interval = 5000, max_pending = 100 }
     retention { max_age = 604800000, max_messages = 1000000, interval = 60000 }
     subscription_expiry = 2592000000
 }
