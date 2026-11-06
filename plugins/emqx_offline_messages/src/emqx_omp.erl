@@ -11,7 +11,6 @@
 -include("emqx_omp.hrl").
 
 -export([
-    on_config_changed/3,
     apply_changes/1,
     parse_changes/1,
     stop_changes/1,
@@ -27,32 +26,28 @@
     start/1,
     stop/1
 ]).
--export([on_publish/1, on_connected/2, on_session/2, on_authorize/4, on_info/3]).
+-export([on_publish/1, on_connected/2, on_session/2, on_authorize/4, on_info/3, guard_publish/1]).
 
--export_type([backend_id/0, update/0]).
+-export_type([backend_id/0, config/0, update/0]).
 
--define(BACKENDS, [postgresql, mysql]).
+-define(SQL_BACKENDS, [postgresql, mysql]).
 -define(EXTSUB_HANDLERS, [emqx_omp_extsub, emqx_omp_live]).
 
--type backend_id() :: postgresql | mysql.
+-type backend_id() :: postgresql | mysql | redis.
+-type config() :: emqx_omp_backend:config() | emqx_offline_messages_redis:config().
 %% A changed backend with its new configuration, or `undefined` when it is disabled.
--type update() :: {backend_id(), emqx_omp_backend:config() | undefined}.
+-type update() :: {backend_id(), config() | undefined}.
 
 %%------------------------------------------------------------------------------
 %% API
 %%------------------------------------------------------------------------------
 
--doc "Apply a raw configuration change of one backend.".
--spec on_config_changed(module(), map(), map()) -> ok | {error, term()}.
-on_config_changed(Parser, Old, New) ->
-    apply_changes([{Parser, Old, New}]).
-
 -doc """
 Apply raw configuration changes of several backends as one operation.
-Each change is `{Parser, Old, New}`. A parse error changes nothing.
+A parse error changes nothing.
 A failed start keeps the hooks, logs the error and fails the health check.
 """.
--spec apply_changes([{module(), map(), map()}]) -> ok | {error, term()}.
+-spec apply_changes([#config_change{}]) -> ok | {error, term()}.
 apply_changes(Changes) ->
     case parse_changes(Changes) of
         {ok, Updates} ->
@@ -65,14 +60,14 @@ apply_changes(Changes) ->
 
 -doc """
 Parse the changed configurations without changing any backend.
-Each change is `{Parser, Old, New}`. A disabled backend gets the configuration `undefined`.
+A disabled backend gets the configuration `undefined`.
 """.
--spec parse_changes([{module(), map(), map()}]) -> {ok, [update()]} | {error, term()}.
+-spec parse_changes([#config_change{}]) -> {ok, [update()]} | {error, term()}.
 parse_changes(Changes) ->
     try
         {ok, [
-            {Parser:backend_id(), parse_enabled(Parser, New)}
-         || {Parser, Old, New} <- Changes,
+            {Id, parse_enabled(Module, New)}
+         || #config_change{id = Id, module = Module, old = Old, new = New} <- Changes,
             Old =/= New
         ]}
     catch
@@ -101,7 +96,7 @@ start_changes(Updates) ->
                 ?METRICS_WORKER, BackendId, [write_failed, rejected, skipped]
             )
         end,
-        [Update || {_, #{}} = Update <- Updates]
+        [Update || {Id, #{}} = Update <- Updates, Id =/= redis]
     ),
     %% Replace all configurations in one step, so that no topic has two owners at any time.
     Configs = lists:foldl(fun update_config/2, configs_map(), Updates),
@@ -114,10 +109,10 @@ start_changes(Updates) ->
 
 -doc """
 Start or restart the backend for a parsed `Config`.
-The config and the hooks are active before the runtime starts. Managed QoS 1/2 publishes
-fail until the runtime is running, and they keep failing when the start fails.
+For SQL backends, the config and hooks are active before the runtime starts. Managed QoS 1/2
+publishes fail until the runtime is running, and they keep failing when the start fails.
 """.
--spec start(emqx_omp_backend:config()) -> ok | {error, {atom(), term()}}.
+-spec start(config()) -> ok | {error, {atom(), term()}}.
 start(#{backend_id := BackendId} = Config) ->
     Updates = [{BackendId, Config}],
     ok = stop_changes(Updates),
@@ -150,18 +145,18 @@ on_health_check(_, _) ->
     ok.
 
 -doc "Return the configuration of the running backend.".
--spec config(backend_id()) -> emqx_omp_backend:config() | undefined.
+-spec config(backend_id()) -> config() | undefined.
 config(BackendId) ->
     case configs_map() of
         #{BackendId := Config} -> Config;
         #{} -> undefined
     end.
 
--doc "Return all configured storage runtimes from one consistent snapshot.".
+-doc "Return the SQL delivery configurations from one consistent snapshot.".
 -spec configs() -> [emqx_omp_backend:config()].
 configs() ->
     Configs = configs_map(),
-    [Config || Id <- ?BACKENDS, #{Id := Config} <- [Configs]].
+    [Config || Id <- ?SQL_BACKENDS, #{Id := Config} <- [Configs]].
 
 -doc "Find the backend that owns an exact topic.".
 -spec find(emqx_types:topic()) -> emqx_omp_backend:config() | undefined.
@@ -202,10 +197,29 @@ count(Name, N, #{backend_id := BackendId}) ->
 %% Hooks
 %%------------------------------------------------------------------------------
 
+-doc "Reject Redis-managed publishes while its runtime is being replaced or failed to start.".
+guard_publish(Msg) ->
+    case config(redis) of
+        #{runtime_ready := true} ->
+            {ok, Msg};
+        #{context := #{topic_filters := Filters}} ->
+            case emqx_offline_messages_utils:need_persist_message(Msg, Filters) of
+                true ->
+                    {stop,
+                        emqx_message:set_headers(
+                            #{should_disconnect => true, allow_publish => false}, Msg
+                        )};
+                false ->
+                    {ok, Msg}
+            end;
+        undefined ->
+            {ok, Msg}
+    end.
+
 -doc "Pass committed wildcard batches to normal session delivery with their matching filter.".
 on_info(
     _ClientInfo,
-    #dispatch_info{topic = Filter, info = ?OMP_LIVE(_, _, _, Batch)},
+    #dispatch_info{topic = Filter, info = #omp_live{messages = Batch}},
     #{deliver := Delivers} = Acc
 ) when is_binary(Filter) ->
     case emqx_topic:wildcard(Filter) of
@@ -336,6 +350,7 @@ parse_enabled(Parser, #{<<"enable">> := true} = New) -> Parser:parse(New);
 parse_enabled(_Parser, _New) -> undefined.
 
 update_config({BackendId, undefined}, Configs) -> maps:remove(BackendId, Configs);
+update_config({redis, Config}, Configs) -> Configs#{redis => Config#{runtime_ready => false}};
 update_config({BackendId, Config}, Configs) -> Configs#{BackendId => Config}.
 
 configs_map() -> persistent_term:get(?MODULE, #{}).
@@ -371,6 +386,14 @@ update_hooks(_Configs) ->
         hooks()
     ).
 
+stop_runtime(redis) ->
+    case config(redis) of
+        undefined ->
+            ok;
+        #{} = Config ->
+            persistent_term:put(?MODULE, (configs_map())#{redis := Config#{runtime_ready => false}}),
+            emqx_offline_messages_redis:stop()
+    end;
 stop_runtime(BackendId) ->
     case whereis(emqx_omp_sup) of
         undefined -> ok;
@@ -393,6 +416,9 @@ start_runtime(#{backend_id := BackendId} = Config) ->
     end.
 
 -doc "Install the schema when requested and check the started database pools.".
+do_start_runtime(#{backend_id := redis} = Config) ->
+    ok = emqx_offline_messages_redis:start(Config),
+    persistent_term:put(?MODULE, (configs_map())#{redis := Config#{runtime_ready => true}});
 do_start_runtime(#{init_default_schema := Install} = Config) ->
     case Install of
         true -> ok = emqx_omp_store:install(Config);
@@ -403,6 +429,7 @@ do_start_runtime(#{init_default_schema := Install} = Config) ->
 
 hooks() ->
     [
+        {'message.publish', guard_publish, ?HP_HIGHEST + 1},
         {'message.publish', on_publish, ?HP_LOWEST - 1},
         {'client.handle_info', on_info, ?HP_LOWEST},
         {'client.connected', on_connected, ?HP_LOWEST},

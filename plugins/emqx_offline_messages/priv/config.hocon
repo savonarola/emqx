@@ -9,20 +9,36 @@ mysql {
         keyfile = "/certs/mysql-client.key"
     }
     server = "mysql:3306"
-    pool_size = 8
     username = "emqx"
     password = "public"
     database = "emqx"
     topics = []
     init_default_schema = false
-    insert_message_sql = "insert into mqtt_msg(msgid, sender, topic, qos, retain, payload, arrived) values(${id}, ${from}, ${topic}, ${qos}, ${flags.retain}, ${payload}, FROM_UNIXTIME(${timestamp}/1000))"
-    delete_message_sql = "delete from mqtt_msg where msgid = ${id}"
-    select_message_sql = "select * from mqtt_msg where topic = ${topic}"
-    insert_subscription_sql = "insert into mqtt_sub(clientid, topic, qos) values(${clientid}, ${topic}, ${qos}) on duplicate key update qos = ${qos}"
-    select_subscriptions_sql = "select topic, qos from mqtt_sub where clientid = ${clientid}"
-    delete_subscription_sql = "delete from mqtt_sub where clientid = ${clientid} and topic = ${topic}"
-    batch_size = 1
-    batch_time = 100
+    namespace = ""
+    async_batched = false
+    max_topic_length = 1024
+    new_subscription_start = earliest
+    query_timeout = 5000
+    message_publish_pool_size = 8
+    message_read_pool_size = 8
+    subscription_meta_pool_size = 8
+    writer {
+        pool_size = 4
+        min_flush_timeout = 5
+        max_flush_timeout = 50
+        flush_max_messages = 1000
+        flush_max_bytes = 1048576
+        call_timeout = 5000
+    }
+    read {
+        page_max_messages = 100
+        reorder_max_distance = 32
+        reorder_timeout = 50
+        idle_poll_interval = 30000
+    }
+    checkpoint { interval = 5000, max_pending = 100 }
+    retention { max_age = 604800000, max_messages = 1000000, interval = 60000 }
+    subscription_expiry = 2592000000
 }
 
 redis {

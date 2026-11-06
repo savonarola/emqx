@@ -1,12 +1,12 @@
 # Offline Messages
 
 This plugin stores messages in an external database and replays them to subscribers.
-MySQL and Redis store selected QoS 1/2 messages for offline replay.
-PostgreSQL stores matching QoS 1/2 publishes and tracks independent progress for each client.
+MySQL and PostgreSQL store matching QoS 1/2 publishes and track independent progress for each client.
+Redis stores selected QoS 1/2 messages for offline replay.
 
 Supported backends:
 
-- MySQL
+- [MySQL](MYSQL.md), with ordered live delivery and replay, and independent progress for each client
 - Redis
 - [PostgreSQL](POSTGRESQL.md), with ordered live delivery and replay, and independent progress for each client
 
@@ -18,10 +18,13 @@ The plugin is configured through the standard EMQX plugin configuration API:
 
 The defaults are in `priv/config.hocon`. The plugin configuration schema is `priv/config_schema.avsc`.
 
-The MySQL and Redis backends only persist messages when:
+The backends only persist messages when:
 
 - the publish QoS is greater than `0`
-- the topic matches one of the configured `message.topic_filter`s
+- the topic matches one of the configured `topics` filters
+
+MySQL and PostgreSQL can run simultaneously with disjoint topic filters.
+The plugin rejects overlapping topic filters between these two backends.
 
 ## Build And Test
 
@@ -34,38 +37,15 @@ make
 Run this plugin's Common Test suite:
 
 ```bash
-make plugins/emqx_offline_messages-ct
+./scripts/ct/run.sh --app plugins/emqx_offline_messages
 ```
 
 ## Database Schema
 
 ### MySQL
 
-```sql
-CREATE TABLE IF NOT EXISTS `mqtt_msg` (
-  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `msgid` varchar(64) DEFAULT NULL,
-  `topic` varchar(180) NOT NULL,
-  `sender` varchar(64) DEFAULT NULL,
-  `qos` tinyint(1) NOT NULL DEFAULT '0',
-  `retain` tinyint(1) DEFAULT NULL,
-  `payload` blob,
-  `arrived` datetime NOT NULL,
-  PRIMARY KEY (`id`),
-  INDEX topic_index(`topic`)
-)
-ENGINE=InnoDB DEFAULT CHARSET=utf8MB4;
-```
-
-```sql
-CREATE TABLE IF NOT EXISTS `mqtt_sub` (
-  `clientid` varchar(64) NOT NULL,
-  `topic` varchar(180) NOT NULL,
-  `qos` tinyint(1) NOT NULL DEFAULT '0',
-  PRIMARY KEY (`clientid`, `topic`)
-)
-ENGINE=InnoDB DEFAULT CHARSET=utf8MB4;
-```
+Use `priv/mysql.sql` or enable `mysql.init_default_schema` to provision the tables at startup.
+See [MySQL](MYSQL.md) for requirements and conversion from the legacy tables.
 
 ### Redis
 

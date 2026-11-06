@@ -79,7 +79,7 @@ init_per_testcase(Case, Config) ->
 
 end_per_testcase(_Case, Config) ->
     emqx_common_test_helpers:call_janitor(),
-    ok = emqx_offline_messages_pg:stop(),
+    ok = emqx_omp:stop(postgresql),
     epgsql:close(?config(db, Config)),
     meck:unload(),
     snabbkaffe:stop(),
@@ -97,11 +97,19 @@ t_publish_success(Config) ->
     ?assertEqual([{1, <<"one">>}, {2, <<"two">>}], messages(Config, Topic)),
     ?assertReceive(#dispatch_info{
         topic = Topic,
-        info = ?OMP_LIVE({postgresql, Namespace}, _, 1, [#message{payload = <<"one">>}])
+        info = #omp_live{
+            namespace = {postgresql, Namespace},
+            offset = 1,
+            messages = [#message{payload = <<"one">>}]
+        }
     }),
     ?assertReceive(#dispatch_info{
         topic = Topic,
-        info = ?OMP_LIVE({postgresql, Namespace}, _, 2, [#message{payload = <<"two">>}])
+        info = #omp_live{
+            namespace = {postgresql, Namespace},
+            offset = 2,
+            messages = [#message{payload = <<"two">>}]
+        }
     }),
     %% The broker does not route the original message to subscribers.
     ?assertNotReceive({deliver, Topic, _}),
@@ -121,7 +129,7 @@ t_qos0_publish(Config) ->
     {ok, _, _} = emqx_broker:publish2(emqx_message:make(<<"p">>, 0, Topic, <<"original">>), #{}),
     %% Check that persistence neither intercepts nor duplicates the message.
     ?assertReceive({deliver, Topic, #message{qos = 0, payload = <<"transformed">>}}),
-    ?assertNotReceive(#dispatch_info{info = ?OMP_LIVE(_, _, _, _)}),
+    ?assertNotReceive(#dispatch_info{info = #omp_live{}}),
     ?assertEqual([], messages(Config, Topic)),
     ?assertEqual(Before + 1, emqx_metrics:val_global('messages.publish')),
     ?assertMatch(
@@ -159,7 +167,7 @@ t_rejected_publish_not_stored(Config) ->
         emqx_message:make(<<"p">>, 1, Topic, <<"accepted">>)
     ),
     ?assertReceive(#dispatch_info{
-        topic = Topic, info = ?OMP_LIVE(_, _, 1, [#message{payload = <<"accepted">>}])
+        topic = Topic, info = #omp_live{offset = 1, messages = [#message{payload = <<"accepted">>}]}
     }),
     ?assertEqual([{1, <<"accepted">>}], messages(Config, Topic)).
 
@@ -170,7 +178,14 @@ transform_publish(Msg) ->
 t_qos0_without_runtime(Config) ->
     %% Enable batching and stop only the runtime so the publish hook remains active.
     Raw = ?config(raw, Config),
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{<<"async_batched">> => true}),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql,
+            module = emqx_omp_pg_config,
+            old = Raw,
+            new = Raw#{<<"async_batched">> => true}
+        }
+    ]),
     ok = emqx_omp_sup:stop(postgresql),
     Topic = <<"offline/qos0-without-runtime">>,
     ok = emqx:subscribe(Topic),
@@ -178,7 +193,7 @@ t_qos0_without_runtime(Config) ->
     %% Check regular delivery without a storage write or live batch.
     {ok, _, _} = emqx_broker:publish2(emqx_message:make(<<"p">>, 0, Topic, <<"ordinary">>)),
     ?assertReceive({deliver, Topic, #message{qos = 0, payload = <<"ordinary">>}}),
-    ?assertNotReceive(#dispatch_info{info = ?OMP_LIVE(_, _, _, _)}),
+    ?assertNotReceive(#dispatch_info{info = #omp_live{}}),
     ?assertEqual([], messages(Config, Topic)).
 
 -doc "Check ordered pagination and that each client's cursor follows its own acknowledgements.".
@@ -525,9 +540,14 @@ t_async_ack_before_commit(Config) ->
         <<"max_flush_timeout">> => 60000,
         <<"flush_max_messages">> => 2
     },
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{
-        <<"async_batched">> => true, <<"writer">> => Writer
-    }),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql,
+            module = emqx_omp_pg_config,
+            old = Raw,
+            new = Raw#{<<"async_batched">> => true, <<"writer">> => Writer}
+        }
+    ]),
     Topic = <<"offline/async-commit">>,
     append(Config, Topic, [<<"initial">>]),
     ok = emqx:subscribe(Topic),
@@ -540,28 +560,36 @@ t_async_ack_before_commit(Config) ->
     ?assertMatch({ok, #{reason_code := 0}}, emqtt:publish(Pub, Topic, <<"one">>, 1)),
     ?assertMatch({ok, #{reason_code := 0}}, emqtt:publish(Pub, Topic, <<"two">>, 2)),
     ?assertEqual([{1, <<"initial">>}], messages(Config, Topic)),
-    ?assertNotReceive(#dispatch_info{info = ?OMP_LIVE(_, _, _, _)}),
+    ?assertNotReceive(#dispatch_info{info = #omp_live{}}),
     %% Commit the lock transaction and verify one dispatch for the committed batch.
     sql(Conn, "COMMIT", []),
     ?assertReceive(
         #dispatch_info{
             topic = Topic,
-            info = ?OMP_LIVE(_, _, 2, [
-                #message{payload = <<"one">>}, #message{payload = <<"two">>}
-            ])
+            info = #omp_live{
+                offset = 2,
+                messages = [
+                    #message{payload = <<"one">>}, #message{payload = <<"two">>}
+                ]
+            }
         }
     ),
     ?assertEqual([{1, <<"initial">>}, {2, <<"one">>}, {3, <<"two">>}], messages(Config, Topic)),
-    ?assertNotReceive(#dispatch_info{info = ?OMP_LIVE(_, _, _, _)}),
+    ?assertNotReceive(#dispatch_info{info = #omp_live{}}),
     ok = emqtt:disconnect(Pub).
 
 -doc "Check that authorization mounts the topic once with and without `include_mountpoint`.".
 t_authorize_include_mountpoint(Config) ->
     %% Manage a mounted topic filter and prepare an unsupported QoS 0 subscribe action.
     Raw = ?config(raw, Config),
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{
-        <<"topics">> => [<<"tenant/offline/#">>]
-    }),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql,
+            module = emqx_omp_pg_config,
+            old = Raw,
+            new = Raw#{<<"topics">> => [<<"tenant/offline/#">>]}
+        }
+    ]),
     ClientInfo = #{protocol => mqtt, mountpoint => <<"tenant/">>},
     Subscribe = #{action_type => subscribe, qos => 0},
     Authorize = fun(Topic) ->
@@ -611,8 +639,12 @@ t_start_failure(Config) ->
     %% Keep the hooks active while starting against an unreachable database port.
     Raw = ?config(raw, Config),
     Bad = Raw#{<<"port">> => 1, <<"init_default_schema">> => false},
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Bad),
-    ?assertMatch({error, _}, emqx_offline_messages_pg:on_health_check(Bad)),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql, module = emqx_omp_pg_config, old = Raw, new = Bad
+        }
+    ]),
+    ?assertMatch({error, _}, emqx_omp:on_health_check(postgresql, Bad)),
     %% Check that a managed publish disconnects instead of using ordinary routing.
     Topic = <<"offline/start-failure">>,
     ok = emqx:subscribe(Topic),
@@ -626,10 +658,14 @@ t_start_failure(Config) ->
     after 5000 -> ct:fail(not_disconnected)
     end,
     ?assertNotReceive({deliver, Topic, _}),
-    ?assertNotReceive(#dispatch_info{info = ?OMP_LIVE(_, _, _, _)}),
+    ?assertNotReceive(#dispatch_info{info = #omp_live{}}),
     %% A later config change starts the backend.
-    ok = emqx_offline_messages_pg:on_config_changed(Bad, Raw),
-    ?assertEqual(ok, emqx_offline_messages_pg:on_health_check(Raw)),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql, module = emqx_omp_pg_config, old = Bad, new = Raw
+        }
+    ]),
+    ?assertEqual(ok, emqx_omp:on_health_check(postgresql, Raw)),
     ?assertEqual([], messages(Config, Topic)).
 
 -doc "Check that count and byte thresholds flush async batches and dispatch each as one term.".
@@ -645,9 +681,14 @@ t_async_thresholds(Config) ->
                 <<"flush_max_messages">> => Count,
                 <<"flush_max_bytes">> => Bytes
             },
-            ok = emqx_offline_messages_pg:on_config_changed(#{}, Raw#{
-                <<"async_batched">> => true, <<"writer">> => Writer
-            }),
+            ok = emqx_omp:apply_changes([
+                #config_change{
+                    id = postgresql,
+                    module = emqx_omp_pg_config,
+                    old = #{},
+                    new = Raw#{<<"async_batched">> => true, <<"writer">> => Writer}
+                }
+            ]),
             Pub = client(Config, Name, []),
             Topic = <<"offline/", Name/binary>>,
             ok = emqx:subscribe(Topic),
@@ -661,12 +702,15 @@ t_async_thresholds(Config) ->
             ?assertReceive(
                 #dispatch_info{
                     topic = Topic,
-                    info = ?OMP_LIVE(_, _, 1, [
-                        #message{payload = <<"abc">>}, #message{payload = <<"def">>}
-                    ])
+                    info = #omp_live{
+                        offset = 1,
+                        messages = [
+                            #message{payload = <<"abc">>}, #message{payload = <<"def">>}
+                        ]
+                    }
                 }
             ),
-            ?assertNotReceive(#dispatch_info{info = ?OMP_LIVE(_, _, _, _)}),
+            ?assertNotReceive(#dispatch_info{info = #omp_live{}}),
             ok = emqx:unsubscribe(Topic),
             ok = emqtt:disconnect(Pub)
         end,
@@ -683,9 +727,14 @@ t_writer_shutdown(Config) ->
     Writer = #{
         <<"pool_size">> => 1, <<"min_flush_timeout">> => 60000, <<"max_flush_timeout">> => 60000
     },
-    ok = emqx_offline_messages_pg:on_config_changed(#{}, Raw#{
-        <<"async_batched">> => true, <<"writer">> => Writer
-    }),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql,
+            module = emqx_omp_pg_config,
+            old = #{},
+            new = Raw#{<<"async_batched">> => true, <<"writer">> => Writer}
+        }
+    ]),
     Topic = <<"offline/shutdown">>,
     ok = emqx:subscribe(Topic),
     emqx_common_test_helpers:on_exit(fun() -> emqx:unsubscribe(Topic) end),
@@ -694,12 +743,12 @@ t_writer_shutdown(Config) ->
     ),
     ?assertEqual([], messages(Config, Topic)),
     %% Stop the backend and verify one committed dispatch.
-    ok = emqx_offline_messages_pg:stop(),
+    ok = emqx_omp:stop(postgresql),
     ?assertEqual([{1, <<"buffered">>}], messages(Config, Topic)),
     ?assertReceive(#dispatch_info{
-        topic = Topic, info = ?OMP_LIVE(_, _, 1, [#message{payload = <<"buffered">>}])
+        topic = Topic, info = #omp_live{offset = 1, messages = [#message{payload = <<"buffered">>}]}
     }),
-    ?assertNotReceive(#dispatch_info{info = ?OMP_LIVE(_, _, _, _)}).
+    ?assertNotReceive(#dispatch_info{info = #omp_live{}}).
 
 -doc "Check that a writer crash counts buffered messages as failed and stores no batch twice.".
 t_writer_crash(Config) ->
@@ -711,9 +760,14 @@ t_writer_crash(Config) ->
         <<"max_flush_timeout">> => 60000,
         <<"flush_max_messages">> => 2
     },
-    ok = emqx_offline_messages_pg:on_config_changed(#{}, Raw#{
-        <<"async_batched">> => true, <<"writer">> => Writer
-    }),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql,
+            module = emqx_omp_pg_config,
+            old = #{},
+            new = Raw#{<<"async_batched">> => true, <<"writer">> => Writer}
+        }
+    ]),
     %% The second append of the flush crashes the writer after the first one committed.
     Appends = counters:new(1, []),
     ok = meck:new(emqx_omp_store, [passthrough, no_link]),
@@ -791,7 +845,7 @@ t_takeover_live(Config) ->
 -doc "Check that a request to a missing pool fails at once so the handler can retry.".
 t_async_missing_pool(Config) ->
     %% Stop the pools, send a page read and check its immediate error callback.
-    ok = emqx_offline_messages_pg:stop(),
+    ok = emqx_omp:stop(postgresql),
     Ref = make_ref(),
     Target = emqx_extsub_handler:message_target(make_ref()),
     ok = emqx_omp_store:page_async(key, 1, 0, 1, Target, Ref, ?config(pg_config, Config)),
@@ -808,10 +862,17 @@ t_reload(Config) ->
     ?retry(50, 100, ?assertEqual(1, cursor(Config, <<"reload">>, Topic))),
     %% Reload configuration and verify continued delivery through the recreated reader.
     Raw = ?config(raw, Config),
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{<<"message_read_pool_size">> => 2}),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql,
+            module = emqx_omp_pg_config,
+            old = Raw,
+            new = Raw#{<<"message_read_pool_size">> => 2}
+        }
+    ]),
     append(Config, Topic, [<<"after">>]),
     ?assertEqual([<<"after">>], payloads(receive_messages(1))),
-    ?assertEqual(ok, emqx_offline_messages_pg:on_health_check(Raw)),
+    ?assertEqual(ok, emqx_omp:on_health_check(postgresql, Raw)),
     ok = emqtt:disconnect(Sub).
 
 -doc "Check that the HTTP publish handler reports a committed message as persisted.".
@@ -879,7 +940,14 @@ t_retention_batches(Config) ->
     append(Config, Topic, lists:duplicate(2100, <<"payload">>)),
     Raw = ?config(raw, Config),
     Retention = #{<<"max_messages">> => 2, <<"interval">> => 100},
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{<<"retention">> => Retention}),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql,
+            module = emqx_omp_pg_config,
+            old = Raw,
+            new = Raw#{<<"retention">> => Retention}
+        }
+    ]),
     ?retry(50, 100, ?assertEqual([2099, 2100], [N || {N, _} <- messages(Config, Topic)])).
 
 -doc "Check that age retention removes the expired prefix and stops at the first recent row.".
@@ -920,12 +988,23 @@ t_consumed_cleanup(Config) ->
     Raw = ?config(raw, Config),
     Retention = #{<<"interval">> => 100},
     %% With `earliest`, acknowledged messages within retention stay readable.
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{<<"retention">> => Retention}),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql,
+            module = emqx_omp_pg_config,
+            old = Raw,
+            new = Raw#{<<"retention">> => Retention}
+        }
+    ]),
     timer:sleep(500),
     ?assertEqual([1, 2, 3], [N || {N, _} <- messages(Config, Topic)]),
     %% With `latest`, messages acknowledged by every subscriber are removed.
     Latest = Raw#{<<"retention">> => Retention, <<"new_subscription_start">> => <<"latest">>},
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Latest),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql, module = emqx_omp_pg_config, old = Raw, new = Latest
+        }
+    ]),
     ?retry(50, 100, ?assertEqual([2, 3], [N || {N, _} <- messages(Config, Topic)])),
     %% A topic without subscriptions keeps no messages with `latest`.
     sql(Conn, "DELETE FROM mqtt_pg_subscription", []),
@@ -973,7 +1052,14 @@ t_consumed_cleanup_race(Config) ->
 t_subscription_expiry(Config) ->
     %% Create one connected subscriber and one inactive database subscription.
     Raw = ?config(raw, Config),
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{<<"subscription_expiry">> => 600}),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql,
+            module = emqx_omp_pg_config,
+            old = Raw,
+            new = Raw#{<<"subscription_expiry">> => 600}
+        }
+    ]),
     Topic = <<"offline/expiry">>,
     Namespace = ?config(namespace, Config),
     Conn = ?config(db, Config),
@@ -1106,7 +1192,11 @@ t_live_mqtt(Config) ->
     Topic = <<"offline/live-mqtt">>,
     Raw = ?config(raw, Config),
     Read = #{<<"page_max_messages">> => 2, <<"idle_poll_interval">> => 1000},
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{<<"read">> => Read}),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql, module = emqx_omp_pg_config, old = Raw, new = Raw#{<<"read">> => Read}
+        }
+    ]),
     Sub = client(Config, <<"live-mqtt">>, []),
     ?assertWaitEvent(
         emqtt:subscribe(Sub, Topic, 1),
@@ -1153,8 +1243,15 @@ t_cluster_routing(Config) ->
     Read = #{<<"page_max_messages">> => 2, <<"idle_poll_interval">> => 60000},
     lists:foreach(
         fun(Node) ->
-            ok = rpc:call(Node, emqx_offline_messages_pg, on_config_changed, [
-                #{}, Raw#{<<"read">> => Read}
+            ok = rpc:call(Node, emqx_omp, apply_changes, [
+                [
+                    #config_change{
+                        id = postgresql,
+                        module = emqx_omp_pg_config,
+                        old = #{},
+                        new = Raw#{<<"read">> => Read}
+                    }
+                ]
             ]),
             ok = rpc:call(
                 Node,
@@ -1295,9 +1392,9 @@ t_live_batch_demand(Config) ->
     {Handler0, Context0, {Namespace, Id} = Identity} = handler(Config, #{}),
     Context1 = Context0#{desired_message_count := 3},
     Terms = live(Identity, lists:seq(1, 5)),
-    Batch = [Msg || ?OMP_LIVE(_, _, _, [Msg]) <- Terms],
+    Batch = [Msg || #omp_live{messages = [Msg]} <- Terms],
     {ok, Handler1, Messages} = live_info(Handler0, Context1, [
-        ?OMP_LIVE(Namespace, Id, 1, Batch)
+        #omp_live{namespace = Namespace, topic_id = Id, offset = 1, messages = Batch}
     ]),
     ?assertEqual([1, 2, 3], offsets(Messages)),
     %% Restore demand and check that recovery starts after the accepted prefix.
@@ -1308,7 +1405,7 @@ t_live_batch_demand(Config) ->
     ?assertEqual([4, 5], offsets(Recovered)),
     %% A repeated batch cannot return offsets already delivered or recovered.
     {ok, Handler4, []} = live_info(Handler3, Context0, [
-        ?OMP_LIVE(Namespace, Id, 1, Batch)
+        #omp_live{namespace = Namespace, topic_id = Id, offset = 1, messages = Batch}
     ]),
     no_read(),
     ok = emqx_omp_extsub:handle_terminate(Handler4).
@@ -1492,7 +1589,7 @@ t_storage(Config) ->
 -doc "Reject overlapping backend ownership without restarting the running PostgreSQL backend.".
 t_backend_overlap(Config) ->
     Raw = ?config(raw, Config),
-    Before = emqx_offline_messages_pg:config(),
+    Before = emqx_omp:config(postgresql),
     lists:foreach(
         fun(Filter) ->
             ?assertMatch(
@@ -1502,7 +1599,7 @@ t_backend_overlap(Config) ->
                     <<"mysql">> => #{<<"enable">> => true, <<"topics">> => [Filter]}
                 })
             ),
-            ?assertEqual(Before, emqx_offline_messages_pg:config())
+            ?assertEqual(Before, emqx_omp:config(postgresql))
         end,
         [<<"offline/#">>, <<"offline/+">>, <<"offline/exact">>, <<"#">>]
     ).
@@ -1527,7 +1624,7 @@ t_backend_runtime_isolation(Config) ->
     Pub = client(Config, <<"isolated-pub">>, []),
     {ok, _} = emqtt:publish(Pub, <<"other/topic">>, <<"before">>, 1),
     ?assertEqual([<<"before">>], payloads(receive_messages(1))),
-    ok = emqx_offline_messages_pg:stop(),
+    ok = emqx_omp:stop(postgresql),
     ?assertEqual(Other, emqx_omp:config(mysql)),
     {ok, _} = emqtt:publish(Pub, <<"other/topic">>, <<"after">>, 1),
     ?assertEqual([<<"after">>], payloads(receive_messages(1))),
@@ -1545,7 +1642,11 @@ handler(Config, ReadOptions) ->
         },
         ReadOptions
     ),
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{<<"read">> => Read}),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql, module = emqx_omp_pg_config, old = Raw, new = Raw#{<<"read">> => Read}
+        }
+    ]),
     Parent = self(),
     ok = meck:new(emqx_omp_store, [passthrough, no_link]),
     %% Capture requests as `{Statement, Args}` so the test can run them on its own connection.
@@ -1629,23 +1730,25 @@ live_info(Handler0, Context, Terms) ->
 -doc "Build one-message live batches with payloads that identify their assigned offsets.".
 live({Namespace, Id}, Offsets) ->
     [
-        ?OMP_LIVE(
-            Namespace,
-            Id,
-            Offset,
-            [
+        #omp_live{
+            namespace = Namespace,
+            topic_id = Id,
+            offset = Offset,
+            messages = [
                 emqx_message:make(
                     <<"publisher">>, 1, <<"offline/handler">>, integer_to_binary(Offset)
                 )
             ]
-        )
+        }
      || Offset <- Offsets
     ].
 
 offsets(Messages) ->
     [Offset || #message{headers = #{omp_position := {_, _, Offset}}} <- Messages].
 
-db_row(Tip, ?OMP_LIVE(_, _, Offset, [#message{id = Id, payload = Payload, timestamp = Published}])) ->
+db_row(Tip, #omp_live{
+    offset = Offset, messages = [#message{id = Id, payload = Payload, timestamp = Published}]
+}) ->
     {Tip, Offset, Id, <<"publisher">>, 1, false, Payload,
         emqx_utils_json:encode(#{version => 1, values => #{}}), Published, null}.
 

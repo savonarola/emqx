@@ -94,7 +94,15 @@ init_per_group(mysql_tcp, Config) ->
 init_per_group(mysql_ssl, Config) ->
     set_backend(mysql_ssl, Config);
 init_per_group(mysql_cleanup, Config) ->
-    set_backend(mysql_tcp, Config);
+    Config0 = set_backend(mysql_tcp, Config),
+    PluginConfig0 = ?config(plugin_config, Config0),
+    PluginConfig1 = emqx_utils_maps:deep_put(
+        [<<"mysql">>, <<"new_subscription_start">>], PluginConfig0, <<"latest">>
+    ),
+    PluginConfig = emqx_utils_maps:deep_put(
+        [<<"mysql">>, <<"retention">>, <<"interval">>], PluginConfig1, 50
+    ),
+    ?set_config(plugin_config, PluginConfig, Config0);
 init_per_group(redis_tcp, Config) ->
     set_backend(redis_tcp, Config);
 init_per_group(redis_ssl, Config) ->
@@ -125,7 +133,8 @@ end_per_testcase(_Case, Config) ->
     PluginConfig = ?config(plugin_config, Config),
     ok = emqx_offline_messages:on_config_changed(PluginConfig, empty_plugin_config()).
 
-t_different_subscribers(_Config) ->
+-doc "Keep independent MySQL history while Redis removes acknowledged messages.".
+t_different_subscribers(Config) ->
     Topic = unique_topic(),
     Payload = unique_payload(),
 
@@ -142,7 +151,10 @@ t_different_subscribers(_Config) ->
 
     ClientSub1 = emqtt_connect(),
     {ok, _, [1]} = emqtt:subscribe(ClientSub1, Topic, 1),
-    ?assertNotReceive({publish, #{payload := Payload}}, 1000),
+    case ?config(backend, Config) of
+        mysql -> ?assertReceive({publish, #{payload := Payload}}, 1000);
+        redis -> ?assertNotReceive({publish, #{payload := Payload}}, 1000)
+    end,
     ok = emqtt:stop(ClientSub1).
 
 t_subscription_persistence(_Config) ->
@@ -217,6 +229,7 @@ t_message_order(_Config) ->
     InvalidOrder = lists:filter(fun({A, B}) -> A =/= B end, lists:zip(Expected, Messages)),
     ?assertEqual([], InvalidOrder, "Messages were received in the wrong order").
 
+-doc "Delete consumed MySQL history in latest mode and remove an explicit subscription.".
 t_mysql_table_cleanup(_Config) ->
     ClientId = unique_clientid(),
     Topic = unique_topic(),
@@ -238,8 +251,16 @@ t_mysql_table_cleanup(_Config) ->
     ok = emqtt:stop(ClientSub1),
     ct:sleep(500),
 
-    ?assertEqual([#{<<"COUNT(*)">> => 0}], mysql_query(<<"SELECT COUNT(*) FROM mqtt_msg">>)),
-    ?assertEqual([#{<<"COUNT(*)">> => 0}], mysql_query(<<"SELECT COUNT(*) FROM mqtt_sub">>)).
+    ?retry(
+        20,
+        100,
+        ?assertEqual(
+            [#{<<"COUNT(*)">> => 0}], mysql_query(<<"SELECT COUNT(*) FROM mqtt_omp_message">>)
+        )
+    ),
+    ?assertEqual(
+        [#{<<"COUNT(*)">> => 0}], mysql_query(<<"SELECT COUNT(*) FROM mqtt_omp_subscription">>)
+    ).
 
 t_redis_table_cleanup(_Config) ->
     ClientId = unique_clientid(),
@@ -375,14 +396,24 @@ set_redis_ssl_enabled(Config0) ->
 set_batch_size(BatchSize, Config) ->
     Backend = ?config(backend, Config),
     PluginConfig0 = ?config(plugin_config, Config),
-    PluginConfig = emqx_utils_maps:deep_put(
-        [atom_to_binary(Backend), <<"batch_size">>], PluginConfig0, BatchSize
-    ),
+    PluginConfig =
+        case Backend of
+            mysql ->
+                PluginConfig1 = emqx_utils_maps:deep_put(
+                    [<<"mysql">>, <<"async_batched">>], PluginConfig0, BatchSize > 1
+                ),
+                emqx_utils_maps:deep_put(
+                    [<<"mysql">>, <<"writer">>, <<"flush_max_messages">>], PluginConfig1, BatchSize
+                );
+            redis ->
+                emqx_utils_maps:deep_put([<<"redis">>, <<"batch_size">>], PluginConfig0, BatchSize)
+        end,
     ?set_config(plugin_config, PluginConfig, Config).
 
 cleanup_backend(mysql) ->
-    ok = mysql_query_ok(<<"DELETE FROM mqtt_msg">>),
-    ok = mysql_query_ok(<<"DELETE FROM mqtt_sub">>);
+    ok = mysql_query_ok(<<"DELETE FROM mqtt_omp_message">>),
+    ok = mysql_query_ok(<<"DELETE FROM mqtt_omp_subscription">>),
+    ok = mysql_query_ok(<<"DELETE FROM mqtt_omp_topic">>);
 cleanup_backend(redis) ->
     {ok, Pid} = redis_client(),
     try
@@ -408,28 +439,12 @@ plugin_config() ->
             <<"server">> => <<"mysql:3306">>,
             <<"username">> => <<"root">>,
             <<"password">> => <<"public">>,
-            <<"pool_size">> => 8,
+            <<"message_publish_pool_size">> => 2,
+            <<"message_read_pool_size">> => 2,
+            <<"subscription_meta_pool_size">> => 2,
             <<"database">> => <<"mqtt">>,
             <<"init_default_schema">> => true,
-            <<"select_message_sql">> => <<"select * from mqtt_msg where topic = ${topic}">>,
-            <<"delete_message_sql">> => <<"delete from mqtt_msg where msgid = ${id}">>,
-            <<"insert_message_sql">> => <<
-                "insert into mqtt_msg(msgid, sender, topic, qos, retain, payload, arrived) "
-                "values(${id}, ${from}, ${topic}, ${qos}, ${flags.retain}, "
-                "${payload}, FROM_UNIXTIME(${timestamp}/1000))"
-            >>,
-            <<"insert_subscription_sql">> => <<
-                "insert into mqtt_sub(clientid, topic, qos) "
-                "values(${clientid}, ${topic}, ${qos}) on duplicate key update qos = ${qos}"
-            >>,
-            <<"select_subscriptions_sql">> => <<
-                "select topic, qos from mqtt_sub where clientid = ${clientid}"
-            >>,
-            <<"delete_subscription_sql">> => <<
-                "delete from mqtt_sub where clientid = ${clientid} and topic = ${topic}"
-            >>,
-            <<"batch_size">> => 1,
-            <<"batch_time">> => 50
+            <<"checkpoint">> => #{<<"interval">> => 50, <<"max_pending">> => 1}
         },
         <<"redis">> => #{
             <<"enable">> => false,
@@ -515,14 +530,7 @@ mysql_query_raw(Query) ->
     end.
 
 mysql_client() ->
-    Opts = [
-        {host, ?MYSQL_HOST},
-        {port, ?MYSQL_PORT},
-        {user, ?MYSQL_USERNAME},
-        {password, ?MYSQL_PASSWORD},
-        {database, ?MYSQL_DATABASE}
-    ],
-    {ok, Pid} = mysql:start_link(Opts),
+    {ok, Pid} = emqx_omp_store:connect(emqx_omp:config(mysql)),
     Pid.
 
 redis_client() ->

@@ -11,14 +11,13 @@
 -include("emqx_offline_messages.hrl").
 
 -export([
-    on_config_changed/2,
-    parse_change/2,
-    stop_change/1,
-    start_change/1,
+    parse/1,
+    stop/0,
+    start/1,
     on_health_check/1
 ]).
 
--export_type([change/0]).
+-export_type([config/0]).
 
 -export([
     on_client_connected/3,
@@ -39,48 +38,16 @@
 -type context() :: map().
 
 %% A parsed Redis configuration, ready to start.
--type prepared() :: #{
+-type config() :: #{
+    backend_id := redis,
     redis_config := map(),
     resource_opts := map(),
     context := context()
 }.
 
-%% Whether the running backend stops, and the parsed configuration that starts afterwards.
--type change() :: #{stop := boolean(), start := prepared() | undefined}.
-
 %%--------------------------------------------------------------------
 %% API
 %%--------------------------------------------------------------------
-
--doc "Apply a raw configuration change. A parse error changes nothing.".
--spec on_config_changed(map(), map()) -> ok | {error, term()}.
-on_config_changed(OldConf, NewConf) ->
-    maybe
-        {ok, Change} ?= parse_change(OldConf, NewConf),
-        ok = stop_change(Change),
-        start_change(Change)
-    end.
-
--doc "Parse a raw configuration change without changing the running backend.".
--spec parse_change(map(), map()) -> {ok, change()} | {error, term()}.
-parse_change(Conf, Conf) ->
-    {ok, #{stop => false, start => undefined}};
-parse_change(#{<<"enable">> := Enabled}, NewConf) ->
-    try
-        {ok, #{stop => Enabled, start => prepare(NewConf)}}
-    catch
-        Class:Reason -> {error, {invalid_config, {Class, Reason}}}
-    end.
-
--doc "Stop the running backend when the change replaces or disables it.".
--spec stop_change(change()) -> ok.
-stop_change(#{stop := true}) -> stop();
-stop_change(#{stop := false}) -> ok.
-
--doc "Start the backend with the parsed configuration when the change enables it.".
--spec start_change(change()) -> ok.
-start_change(#{start := undefined}) -> ok;
-start_change(#{start := Prepared}) -> start(Prepared).
 
 -spec on_health_check(map()) -> ok | {error, binary()}.
 on_health_check(#{<<"enable">> := false}) ->
@@ -97,15 +64,15 @@ stop() ->
     unhook(),
     ok = stop_resource().
 
--spec start(prepared()) -> ok.
+-spec start(config()) -> ok.
 start(#{redis_config := RedisConfig, resource_opts := ResourceOpts, context := Context}) ->
     ?SLOG(info, #{msg => offline_messages_redis_start, context => Context}),
     ok = start_resource(RedisConfig, ResourceOpts),
     hook(Context).
 
 -doc "Build the resource configuration and the hook context of an enabled configuration.".
--spec prepare(map()) -> prepared() | undefined.
-prepare(#{<<"enable">> := true} = ConfigRaw) ->
+-spec parse(map()) -> config().
+parse(ConfigRaw) ->
     {RedisConfig, ResourceOpts} = make_redis_resource_config(ConfigRaw),
     Context = #{
         message_key_prefix => maps:get(
@@ -119,9 +86,12 @@ prepare(#{<<"enable">> := true} = ConfigRaw) ->
         ),
         topic_filters => emqx_offline_messages_utils:topic_filters(ConfigRaw)
     },
-    #{redis_config => RedisConfig, resource_opts => ResourceOpts, context => Context};
-prepare(#{<<"enable">> := false}) ->
-    undefined.
+    #{
+        backend_id => redis,
+        redis_config => RedisConfig,
+        resource_opts => ResourceOpts,
+        context => Context
+    }.
 
 %%--------------------------------------------------------------------
 %% Callbacks

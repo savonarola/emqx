@@ -79,7 +79,7 @@ run(Fun, #{config := Config, conn := Conn0} = State0, Interval) ->
     end.
 
 failed(Reason) ->
-    ?SLOG(warning, #{msg => offline_messages_pg_cleanup_failed, reason => Reason}).
+    ?SLOG(warning, #{msg => offline_messages_cleanup_failed, reason => Reason}).
 
 -doc "Reuse the current connection or report a failed reconnect without stopping cleanup.".
 connection(undefined, Config) ->

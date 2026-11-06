@@ -175,7 +175,9 @@ reply({done, Result}, Target, Ref) ->
 -doc "Send a committed topic batch as one term, with its first assigned offset.".
 -spec dispatch([emqx_types:message(), ...], {{atom(), namespace()}, topic_id()}, offset()) -> ok.
 dispatch([#message{topic = Topic} | _] = Messages, {Namespace, Id}, Offset) ->
-    emqx_broker:dispatch_info(Topic, ?OMP_LIVE(Namespace, Id, Offset, Messages)).
+    emqx_broker:dispatch_info(Topic, #omp_live{
+        namespace = Namespace, topic_id = Id, offset = Offset, messages = Messages
+    }).
 
 -doc "Encode MQTT fields and binary properties for the versioned JSON append format.".
 -spec encode(emqx_types:message()) -> emqx_omp_backend:encoded_message().

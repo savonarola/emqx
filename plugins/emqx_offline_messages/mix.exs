@@ -39,7 +39,7 @@ defmodule EMQXOfflineMessages.MixProject do
 
   def application do
     [
-      extra_applications: [:epgsql, :ecpool, :emqx_extsub],
+      extra_applications: [:epgsql, :mysql, :ecpool, :emqx_extsub],
       mod: {:emqx_offline_messages_app, []}
     ]
   end
@@ -64,7 +64,7 @@ defmodule EMQXOfflineMessages.MixProject do
   defp emqx_plugin do
     [
       rel_vsn: version(),
-      external_apps: [:epgsql, :ecpool, :emqx_extsub],
+      external_apps: [:epgsql, :mysql, :ecpool, :emqx_extsub],
       metadata: [
         authors: ["EMQX"],
         builder: [

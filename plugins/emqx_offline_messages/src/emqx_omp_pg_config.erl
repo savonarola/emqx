@@ -6,7 +6,7 @@
 -behaviour(hocon_schema).
 -include_lib("typerefl/include/types.hrl").
 -include_lib("hocon/include/hoconsc.hrl").
--export([namespace/0, roots/0, fields/1, desc/1, parse/1, backend_id/0]).
+-export([namespace/0, roots/0, fields/1, desc/1, parse/1]).
 
 -export_type([config/0, raw_config/0]).
 
@@ -63,11 +63,12 @@
     retention := retention_config(),
     subscription_expiry := pos_integer(),
     connection := epgsql:connect_opts_map(),
+    backend := emqx_omp_pg_sql,
+    backend_id := postgresql,
     instance := reference()
 }.
 
 namespace() -> omp_pg.
-backend_id() -> postgresql.
 roots() -> [config].
 desc(_) -> undefined.
 

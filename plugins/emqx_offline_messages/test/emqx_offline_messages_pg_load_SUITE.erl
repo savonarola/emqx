@@ -31,6 +31,7 @@ in the CT private directory.
 -include_lib("emqx/include/emqx.hrl").
 -include_lib("emqx/include/asserts.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
+-include("../include/emqx_omp.hrl").
 
 all() -> [t_delivery_load].
 init_per_suite(Config) -> emqx_offline_messages_pg_SUITE:init_per_suite(Config).
@@ -43,7 +44,11 @@ t_delivery_load(Config) ->
     %% Measure page reads for 50 idle subscriptions over three poll intervals.
     Raw = ?config(raw, Config),
     Read0 = #{<<"page_max_messages">> => 2, <<"idle_poll_interval">> => 500},
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{<<"read">> => Read0}),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql, module = emqx_omp_pg_config, old = Raw, new = Raw#{<<"read">> => Read0}
+        }
+    ]),
     Idle = [
         begin
             Id = <<"idle-", (integer_to_binary(N))/binary>>,
@@ -64,7 +69,11 @@ t_delivery_load(Config) ->
 
     %% Measure post-commit live delivery latency and verify that it needs no page reads.
     Read1 = Read0#{<<"idle_poll_interval">> := 60000},
-    ok = emqx_offline_messages_pg:on_config_changed(Raw, Raw#{<<"read">> => Read1}),
+    ok = emqx_omp:apply_changes([
+        #config_change{
+            id = postgresql, module = emqx_omp_pg_config, old = Raw, new = Raw#{<<"read">> => Read1}
+        }
+    ]),
     Topic = <<"offline/latency">>,
     Fast = subscribe(Config, <<"fast-probe">>, Topic, []),
     ok = meck:new(emqx_omp_store, [passthrough, no_link]),

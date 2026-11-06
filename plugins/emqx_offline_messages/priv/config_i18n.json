@@ -74,53 +74,8 @@
         "en": "Initialize the default schema for the database",
         "zh": "初始化数据库的默认架构"
     },
-    "$mysql_insert_message_sql_label": {
-        "en": "MySQL Insert Message SQL",
-        "zh": "MySQL 插入消息 SQL"
-    },
-    "$mysql_insert_message_sql_desc": {
-        "en": "SQL statement for inserting messages",
-        "zh": "用于插入消息的 SQL 语句"
-    },
-    "$mysql_delete_message_sql_label": {
-        "en": "MySQL Delete Message SQL",
-        "zh": "MySQL 删除消息 SQL"
-    },
-    "$mysql_delete_message_sql_desc": {
-        "en": "SQL statement for deleting messages",
-        "zh": "用于删除消息的 SQL 语句"
-    },
-    "$mysql_select_message_sql_label": {
-        "en": "MySQL Select Message SQL",
-        "zh": "MySQL 查询消息 SQL"
-    },
-    "$mysql_select_message_sql_desc": {
-        "en": "SQL statement for retrieving messages",
-        "zh": "用于检索消息的 SQL 语句"
-    },
-    "$mysql_insert_subscription_sql_label": {
-        "en": "MySQL Insert Subscription SQL",
-        "zh": "MySQL 插入订阅 SQL"
-    },
-    "$mysql_insert_subscription_sql_desc": {
-        "en": "SQL statement for inserting subscriptions",
-        "zh": "用于插入订阅的 SQL 语句"
-    },
-    "$mysql_select_subscriptions_sql_label": {
-        "en": "MySQL Select Subscriptions SQL",
-        "zh": "MySQL 查询订阅 SQL"
-    },
-    "$mysql_select_subscriptions_sql_desc": {
-        "en": "SQL statement for retrieving subscriptions",
-        "zh": "用于检索订阅的 SQL 语句"
-    },
-    "$mysql_delete_subscription_sql_label": {
-        "en": "MySQL Delete Subscription SQL",
-        "zh": "MySQL 删除订阅 SQL"
-    },
-    "$mysql_delete_subscription_sql_desc": {
-        "en": "SQL statement for deleting subscriptions",
-        "zh": "用于删除订阅的 SQL 语句"
+    "$mysql_async_batched_desc": {
+        "en": "Acknowledge QoS 1/2 publishes after buffer admission, before MySQL commits them. A failed flush can lose acknowledged messages. QoS 0 uses regular broker dispatch."
     },
     "$mysql_server_label": {
         "en": "MySQL Server",
@@ -138,14 +93,6 @@
         "en": "MySQL Database",
         "zh": "MySQL 数据库"
     },
-    "$mysql_pool_size_label": {
-        "en": "MySQL Pool Size",
-        "zh": "MySQL 连接池大小"
-    },
-    "$mysql_pool_size_desc": {
-        "en": "MySQL connection pool size",
-        "zh": "MySQL 连接池大小"
-    },
     "$mysql_username_label": {
         "en": "MySQL Username",
         "zh": "MySQL 用户名"
@@ -161,22 +108,6 @@
     "$mysql_password_desc": {
         "en": "MySQL Password",
         "zh": "MySQL 密码"
-    },
-    "$mysql_batch_size_label": {
-        "en": "MySQL Batch Size",
-        "zh": "MySQL 批量大小"
-    },
-    "$mysql_batch_size_desc": {
-        "en": "Number of messages to batch before writing",
-        "zh": "写入前批量处理的消息数量"
-    },
-    "$mysql_batch_time_label": {
-        "en": "MySQL Batch Time (ms)",
-        "zh": "MySQL 批量时间 (ms)"
-    },
-    "$mysql_batch_time_desc": {
-        "en": "Maximum time in milliseconds to wait before writing a batch",
-        "zh": "写入批量数据前等待的最大时间（毫秒）"
     },
     "$mysql_query_mode_label": {
         "en": "MySQL Query Mode",

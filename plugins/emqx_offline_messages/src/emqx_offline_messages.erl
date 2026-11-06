@@ -5,6 +5,7 @@
 -module(emqx_offline_messages).
 
 -include("emqx_offline_messages.hrl").
+-include("emqx_omp.hrl").
 -include_lib("emqx/include/logger.hrl").
 
 -behaviour(gen_server).
@@ -137,12 +138,12 @@ handle_on_config_changed(OldConf, NewConf) ->
         {error, _} = Error -> Error
     end.
 
--doc "Reject intersecting topic filters before changing either storage runtime.".
+-doc "Reject intersecting topic filters before changing any storage runtime.".
 -spec validate_backends(map()) -> ok | {error, term()}.
 validate_backends(Config) ->
     Enabled = [
         {Id, maps:get(<<"topics">>, Raw, [])}
-     || Id <- [<<"postgresql">>, <<"mysql">>],
+     || Id <- [<<"postgresql">>, <<"mysql">>, <<"redis">>],
         #{<<"enable">> := true} = Raw <- [maps:get(Id, Config, #{})]
     ],
     Overlaps = [
@@ -164,37 +165,30 @@ apply_config_changed(OldConf, NewConf) ->
         msg => "offline_messages_config_changed", old_conf => OldConf, new_conf => NewConf
     }),
     DefaultConf = #{<<"enable">> => false},
-    Section = fun(Key, Conf) -> maps:get(Key, Conf, DefaultConf) end,
-    SQLChanges = [
-        {emqx_omp_pg_config, Section(<<"postgresql">>, OldConf), Section(<<"postgresql">>, NewConf)}
+    Changes = [
+        #config_change{
+            id = Id,
+            module = Module,
+            old = maps:get(atom_to_binary(Id), OldConf, DefaultConf),
+            new = maps:get(atom_to_binary(Id), NewConf, DefaultConf)
+        }
+     || {Id, Module} <- [
+            {mysql, emqx_omp_mysql_config},
+            {postgresql, emqx_omp_pg_config},
+            {redis, emqx_offline_messages_redis}
+        ]
     ],
-    %% Parse every backend first, so that an invalid configuration changes nothing.
-    maybe
-        {ok, SQLUpdates} ?= emqx_omp:parse_changes(SQLChanges),
-        {ok, RedisChange} ?=
-            emqx_offline_messages_redis:parse_change(
-                Section(<<"redis">>, OldConf), Section(<<"redis">>, NewConf)
-            ),
-        %% Stop every changed backend before any starts, so that a topic moved between
-        %% backends never has two owners.
-        ok = emqx_omp:stop_changes(SQLUpdates),
-        ok = emqx_offline_messages_redis:stop_change(RedisChange),
-        _ = emqx_omp:start_changes(SQLUpdates),
-        ok = emqx_offline_messages_redis:start_change(RedisChange),
-        emqx_offline_messages_mysql:on_config_changed(
-            Section(<<"mysql">>, OldConf), Section(<<"mysql">>, NewConf)
-        )
-    end.
+    emqx_omp:apply_changes(Changes).
 
 handle_on_health_check() ->
     Config = current_config(),
     DefaultConf = #{<<"enable">> => false},
     MysqlConf = maps:get(<<"mysql">>, Config, DefaultConf),
     RedisConf = maps:get(<<"redis">>, Config, DefaultConf),
-    MysqlStatus = emqx_offline_messages_mysql:on_health_check(MysqlConf),
+    MysqlStatus = emqx_omp:on_health_check(mysql, MysqlConf),
     RedisStatus = emqx_offline_messages_redis:on_health_check(RedisConf),
-    PgStatus = emqx_offline_messages_pg:on_health_check(
-        maps:get(<<"postgresql">>, Config, DefaultConf)
+    PgStatus = emqx_omp:on_health_check(
+        postgresql, maps:get(<<"postgresql">>, Config, DefaultConf)
     ),
     Errors =
         status_to_error_list(MysqlStatus) ++ status_to_error_list(RedisStatus) ++

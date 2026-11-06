@@ -87,7 +87,7 @@ terminate(_Reason, #{count := Count, config := Config}) when Count > 0 ->
     %% The crashed flush may have appended part of the buffer. A second append would
     %% store those messages again at new offsets.
     emqx_omp:count(write_failed, Count, Config),
-    ?SLOG(error, #{msg => offline_messages_pg_buffer_dropped, count => Count}),
+    ?SLOG(error, #{msg => offline_messages_buffer_dropped, count => Count}),
     ok;
 terminate(_Reason, _State) ->
     ok.
@@ -125,7 +125,7 @@ flush(#{batches := Batches, idle := Idle, max := Max, config := Config} = State)
                 {error, Reason} ->
                     emqx_omp:count(write_failed, length(Batch), Config),
                     ?SLOG_THROTTLE(error, #{
-                        msg => offline_messages_pg_batch_failed, topic => Topic, reason => Reason
+                        msg => offline_messages_batch_failed, topic => Topic, reason => Reason
                     })
             end
         end,
@@ -140,6 +140,6 @@ dispatch(Messages, Identity, Offset) ->
     catch
         Class:Reason ->
             ?SLOG_THROTTLE(error, #{
-                msg => offline_messages_pg_dispatch_failed, class => Class, reason => Reason
+                msg => offline_messages_dispatch_failed, class => Class, reason => Reason
             })
     end.

@@ -156,7 +156,10 @@ info(
         Handler0,
     Context,
     {generic, #dispatch_info{
-        topic = Topic, info = ?OMP_LIVE({BackendId, Namespace}, Id, Offset, Batch)
+        topic = Topic,
+        info = #omp_live{
+            namespace = {BackendId, Namespace}, topic_id = Id, offset = Offset, messages = Batch
+        }
     }}
 ) when Id =/= undefined ->
     #{desired_message_count := Demand} = Context,
@@ -390,7 +393,7 @@ row({_, Offset, _, _, _, _, _, _, _, Expiry} = Row, {Handler0, Messages}) ->
         {error, Reason} ->
             emqx_omp:count(skipped, 1, Config),
             ?SLOG(error, #{
-                msg => offline_messages_pg_decode_failed,
+                msg => offline_messages_decode_failed,
                 topic => Topic,
                 offset => Offset,
                 reason => Reason
@@ -506,7 +509,7 @@ retry(Handler) ->
 
 report_ack(Ack, Config) when is_integer(Ack), Ack >= 16#80 ->
     emqx_omp:count(rejected, 1, Config),
-    ?SLOG_THROTTLE(warning, #{msg => offline_messages_pg_rejected, reason_code => Ack});
+    ?SLOG_THROTTLE(warning, #{msg => offline_messages_rejected, reason_code => Ack});
 report_ack(_, _) ->
     ok.
 
@@ -514,5 +517,5 @@ log_error(_Operation, {ok, _}) ->
     ok;
 log_error(Operation, Error) ->
     ?SLOG_THROTTLE(error, #{
-        msg => offline_messages_pg_query_failed, operation => Operation, reason => Error
+        msg => offline_messages_query_failed, operation => Operation, reason => Error
     }).
