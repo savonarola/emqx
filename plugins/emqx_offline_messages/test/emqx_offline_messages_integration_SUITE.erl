@@ -35,18 +35,21 @@
 all() ->
     [
         {group, mysql_tcp},
+        {group, mariadb_tcp},
         {group, mysql_ssl},
         {group, redis_tcp},
         {group, redis_ssl},
         {group, redis_sentinel},
         {group, redis_cluster},
         {group, mysql_cleanup},
-        {group, redis_cleanup}
+        {group, mariadb_cleanup},
+        {group, redis_cleanup},
+        {group, redis_lifecycle}
     ].
 
 groups() ->
     emqx_common_test_helpers:nested_groups([
-        [redis_sentinel, redis_cluster, redis_tcp, redis_ssl, mysql_tcp, mysql_ssl],
+        [redis_sentinel, redis_cluster, redis_tcp, redis_ssl, mysql_tcp, mysql_ssl, mariadb_tcp],
         [buffered, unbuffered],
         [
             t_different_subscribers,
@@ -57,12 +60,15 @@ groups() ->
     ]) ++
         [
             {mysql_cleanup, [], [t_mysql_table_cleanup]},
-            {redis_cleanup, [], [t_redis_table_cleanup]}
+            {mariadb_cleanup, [], [t_mysql_table_cleanup]},
+            {redis_cleanup, [], [t_redis_table_cleanup]},
+            {redis_lifecycle, [], [t_redis_lifecycle, t_redis_replacement_guard]}
         ].
 
 init_per_suite(Config) ->
     ok = wait_for_tcp_servers([
         {?MYSQL_HOST, ?MYSQL_PORT},
+        {"mariadb", ?MYSQL_PORT},
         {?MYSQL_TLS_HOST, ?MYSQL_TLS_PORT},
         {?REDIS_HOST, ?REDIS_PORT},
         {?REDIS_TLS_HOST, ?REDIS_TLS_PORT},
@@ -91,10 +97,17 @@ end_per_suite(Config) ->
 
 init_per_group(mysql_tcp, Config) ->
     set_backend(mysql_tcp, Config);
+init_per_group(mariadb_tcp, Config) ->
+    set_backend(mariadb_tcp, Config);
 init_per_group(mysql_ssl, Config) ->
     set_backend(mysql_ssl, Config);
-init_per_group(mysql_cleanup, Config) ->
-    Config0 = set_backend(mysql_tcp, Config),
+init_per_group(Group, Config) when Group =:= mysql_cleanup; Group =:= mariadb_cleanup ->
+    Server =
+        case Group of
+            mysql_cleanup -> mysql_tcp;
+            mariadb_cleanup -> mariadb_tcp
+        end,
+    Config0 = set_backend(Server, Config),
     PluginConfig0 = ?config(plugin_config, Config0),
     PluginConfig1 = emqx_utils_maps:deep_put(
         [<<"mysql">>, <<"new_subscription_start">>], PluginConfig0, <<"latest">>
@@ -112,6 +125,8 @@ init_per_group(redis_sentinel, Config) ->
 init_per_group(redis_cluster, Config) ->
     set_backend(redis_cluster, Config);
 init_per_group(redis_cleanup, Config) ->
+    set_backend(redis_tcp, Config);
+init_per_group(redis_lifecycle, Config) ->
     set_backend(redis_tcp, Config);
 init_per_group(buffered, Config) ->
     set_batch_size(10, Config);
@@ -156,6 +171,48 @@ t_different_subscribers(Config) ->
         redis -> ?assertNotReceive({publish, #{payload := Payload}}, 1000)
     end,
     ok = emqtt:stop(ClientSub1).
+
+-doc "Keep Redis in the common config lifecycle across unchanged, updated and disabled configs.".
+t_redis_lifecycle(Config) ->
+    Old = ?config(plugin_config, Config),
+    Parsed = emqx_omp:config(redis),
+    ?assertMatch(#{backend_id := redis}, Parsed),
+    ?assertEqual([], emqx_omp:configs()),
+    ok = emqx_offline_messages:on_config_changed(Old, Old),
+    ?assertEqual(Parsed, emqx_omp:config(redis)),
+    New = emqx_utils_maps:deep_put([<<"redis">>, <<"topics">>], Old, [<<"changed/#">>]),
+    ok = emqx_offline_messages:on_config_changed(Old, New),
+    ?assertMatch(
+        #{context := #{topic_filters := [[<<"changed">>, '#']]}}, emqx_omp:config(redis)
+    ),
+    Pub = emqtt_connect(),
+    {ok, _} = emqtt:publish(Pub, <<"changed/topic">>, <<"stored">>, 1),
+    Sub = emqtt_connect(),
+    {ok, _, [1]} = emqtt:subscribe(Sub, <<"changed/topic">>, 1),
+    ?assertReceive({publish, #{payload := <<"stored">>}}, 1000),
+    ok = emqtt:stop(Sub),
+    ok = emqtt:stop(Pub),
+    ok = emqx_offline_messages:on_config_changed(New, empty_plugin_config()),
+    ?assertEqual(undefined, emqx_omp:config(redis)).
+
+-doc "Reject managed Redis publishes while its runtime is stopped or fails to restart.".
+t_redis_replacement_guard(_Config) ->
+    Parsed = emqx_omp:config(redis),
+    Updates = [{redis, Parsed}],
+    Topic = unique_topic(),
+    Msg = emqx_message:make(<<"p">>, 1, Topic, <<"guarded">>),
+    ok = emqx_omp:stop_changes(Updates),
+    try
+        ?assertMatch({error, disconnect, _}, emqx_broker:publish2(Msg)),
+        ok = meck:new(emqx_offline_messages_redis, [passthrough, no_link]),
+        ok = meck:expect(emqx_offline_messages_redis, start, fun(_) -> error(unavailable) end),
+        ?assertMatch([{redis, {error, _}}], emqx_omp:start_changes(Updates)),
+        ?assertMatch({error, disconnect, _}, emqx_broker:publish2(Msg))
+    after
+        meck:unload(emqx_offline_messages_redis),
+        [{redis, ok}] = emqx_omp:start_changes(Updates)
+    end,
+    ?assertMatch({ok, _, _}, emqx_broker:publish2(Msg)).
 
 t_subscription_persistence(_Config) ->
     ClientId = unique_clientid(),
@@ -287,11 +344,16 @@ t_redis_table_cleanup(_Config) ->
     ?assertEqual({ok, []}, eredis:q(Pid, [<<"KEYS">>, <<"mqtt:msg:*">>])),
     ?assertEqual({ok, []}, eredis:q(Pid, [<<"KEYS">>, <<"mqtt:sub:*">>])).
 
-set_backend(mysql_tcp, Config) ->
+set_backend(Server, Config) when Server =:= mysql_tcp; Server =:= mariadb_tcp ->
+    Address =
+        case Server of
+            mysql_tcp -> <<"mysql:3306">>;
+            mariadb_tcp -> <<"mariadb:3306">>
+        end,
     PluginConfig0 = ?config(plugin_config, Config),
     PluginConfig1 = emqx_utils_maps:deep_put([<<"mysql">>, <<"enable">>], PluginConfig0, true),
     PluginConfig2 = emqx_utils_maps:deep_put(
-        [<<"mysql">>, <<"server">>], PluginConfig1, <<"mysql:3306">>
+        [<<"mysql">>, <<"server">>], PluginConfig1, Address
     ),
     PluginConfig3 = emqx_utils_maps:deep_put(
         [<<"mysql">>, <<"ssl">>, <<"enable">>], PluginConfig2, false

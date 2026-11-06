@@ -1,4 +1,5 @@
 mysql
+mariadb
 redis
 redis_cluster
 pgsql

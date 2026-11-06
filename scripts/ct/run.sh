@@ -158,6 +158,9 @@ for dep in ${CT_DEPS}; do
             FILES+=( '.ci/docker-compose-file/docker-compose-mysql-tcp.yaml'
                      '.ci/docker-compose-file/docker-compose-mysql-tls.yaml' )
             ;;
+        mariadb)
+            FILES+=( '.ci/docker-compose-file/docker-compose-mariadb.yaml' )
+            ;;
         pgsql)
             FILES+=( '.ci/docker-compose-file/docker-compose-pgsql-tcp.yaml'
                      '.ci/docker-compose-file/docker-compose-pgsql-tls.yaml' )

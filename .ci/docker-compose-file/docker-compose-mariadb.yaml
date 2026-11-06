@@ -1,0 +1,20 @@
+services:
+  mariadb_server:
+    container_name: mariadb
+    image: public.ecr.aws/docker/library/mariadb:${MARIADB_TAG:-10.6}
+    restart: always
+    environment:
+      MARIADB_ROOT_PASSWORD: public
+      MARIADB_DATABASE: mqtt
+    networks:
+      - emqx_bridge
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
+    command:
+      - --bind-address=0.0.0.0
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --max-allowed-packet=128M
