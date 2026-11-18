@@ -13,6 +13,15 @@ client connects again. The channel delivers committed messages through the norma
 -include_lib("emqx/include/emqx_mqtt.hrl").
 -include_lib("emqx/include/logger.hrl").
 
+%% The handler checks configuration changes at least this often.
+-ifdef(TEST).
+-define(CONFIG_CHECK_INTERVAL, 500).
+-else.
+-define(CONFIG_CHECK_INTERVAL, 300000).
+-endif.
+%% Delay before a failed subscription write is repeated.
+-define(RETRY_DELAY, 1000).
+
 -export([
     handle_subscribe/4, handle_unsubscribe/4, handle_terminate/1, handle_info/3, handle_delivered/4
 ]).
@@ -23,7 +32,7 @@ client connects again. The channel delivers committed messages through the norma
     target :: emqx_extsub_handler:message_target(),
     subopts :: emqx_types:subopts(),
     requests = #{} :: #{emqx_omp:backend_id() => map()},
-    renew_timer :: reference() | undefined
+    sync_timer :: reference() | undefined
 }).
 
 %%------------------------------------------------------------------------------
@@ -40,7 +49,7 @@ handle_subscribe(_Type, Context, undefined, Filter) ->
         [_ | _] = Configs ->
             SubOpts = maps:with([qos, nl, rap, rh, subid], Options),
             Live = #live{filter = Filter, clientid = ClientId, target = Target, subopts = SubOpts},
-            {ok, renew(Live, Configs)};
+            {ok, sync(Live, Configs)};
         _ ->
             ignore
     end.
@@ -57,8 +66,8 @@ handle_unsubscribe(unsubscribe, _Context, #live{filter = Filter, clientid = Clie
 handle_unsubscribe(disconnect, _Context, Live, _Filter) ->
     Live.
 
--doc "Cancel the renewal timer.".
-handle_terminate(#live{renew_timer = Timer}) ->
+-doc "Cancel the sync timer.".
+handle_terminate(#live{sync_timer = Timer}) ->
     emqx_utils:cancel_timer(Timer),
     ok.
 
@@ -66,28 +75,26 @@ handle_terminate(#live{renew_timer = Timer}) ->
 handle_delivered(Live, _Context, _Msg, _Ack) ->
     {ok, Live}.
 
--doc "Handle subscription replies and retry or renew writes on the maintenance timer.".
+-doc "Handle subscription replies, and retry failed writes and check configuration on the timer.".
 handle_info(#live{requests = Requests} = Live, _Context, {result, Ref, Result}) ->
     Updated = maps:map(
         fun
-            (_, #{ref := RequestRef, interval := Interval} = Request) when RequestRef =:= Ref ->
-                Delay =
-                    case Result of
-                        {ok, _} ->
-                            Interval;
-                        _ ->
-                            log_error(subscribe, Result),
-                            1000
-                    end,
-                maps:remove(ref, Request#{due := now_ms() + Delay});
+            (_, #{ref := RequestRef, instance := Instance}) when RequestRef =:= Ref ->
+                case Result of
+                    {ok, _} ->
+                        #{instance => Instance};
+                    _ ->
+                        log_error(subscribe, Result),
+                        #{instance => Instance, due => now_ms() + ?RETRY_DELAY}
+                end;
             (_, Request) ->
                 Request
         end,
         Requests
     ),
-    {ok, Live#live{requests = Updated}};
-handle_info(#live{filter = Filter, clientid = ClientId} = Live, _Context, renew) ->
-    {ok, renew(Live#live{renew_timer = undefined}, configs(Filter, ClientId))};
+    {ok, schedule(Live#live{requests = Updated})};
+handle_info(#live{filter = Filter, clientid = ClientId} = Live, _Context, sync) ->
+    {ok, sync(Live#live{sync_timer = undefined}, configs(Filter, ClientId))};
 handle_info(Live, _Context, _Info) ->
     {ok, Live}.
 
@@ -102,26 +109,37 @@ subscribe(Filter, ClientId, SubOpts, Target, #{namespace := Namespace} = Config)
     ),
     Ref.
 
--doc "Upsert due subscriptions and replace requests from earlier configuration instances.".
-renew(#live{requests = Requests, target = Target} = Live, Configs) ->
+-doc """
+Store the subscription in backends that do not have it yet, and repeat failed or unanswered
+writes. A new configuration instance stores the subscription again.
+""".
+sync(#live{requests = Requests} = Live, Configs) ->
     Now = now_ms(),
     Updated = maps:from_list([
-        {BackendId, renew_request(Live, Config, maps:get(BackendId, Requests, #{}), Now)}
+        {BackendId, sync_request(Live, Config, maps:get(BackendId, Requests, #{}), Now)}
      || #{backend_id := BackendId} = Config <- Configs
     ]),
-    Delay = lists:min([1000 | [renew_interval(C) || C <- Configs]]),
-    Live#live{
-        requests = Updated,
-        renew_timer = emqx_extsub_handler:send_after(Delay, Target, renew)
-    }.
+    schedule(Live#live{requests = Updated}).
 
-renew_request(
-    _Live, #{instance := Instance}, #{instance := Instance, due := Due} = Request, Now
-) when
-    Due > Now
+-doc "Schedule the next run at the earliest due request, or after the configuration check interval.".
+schedule(#live{requests = Requests, target = Target, sync_timer = Timer} = Live) ->
+    emqx_utils:cancel_timer(Timer),
+    Now = now_ms(),
+    Next = lists:min([
+        Now + ?CONFIG_CHECK_INTERVAL | [Due || #{due := Due} <- maps:values(Requests)]
+    ]),
+    Live#live{sync_timer = emqx_extsub_handler:send_after(max(1, Next - Now), Target, sync)}.
+
+-doc """
+Keep a stored subscription and a request that is not due yet. A pending request is due when
+its reply is overdue.
+""".
+sync_request(_Live, #{instance := Instance}, #{instance := Instance} = Request, Now) when
+    not is_map_key(due, Request);
+    map_get(due, Request) > Now
 ->
     Request;
-renew_request(
+sync_request(
     #live{filter = Filter, clientid = ClientId, subopts = SubOpts, target = Target},
     #{instance := Instance, request_timeout := Timeout} = Config,
     _Request,
@@ -130,11 +148,8 @@ renew_request(
     #{
         instance => Instance,
         ref => subscribe(Filter, ClientId, SubOpts, Target, Config),
-        due => Now + Timeout + 1000,
-        interval => renew_interval(Config)
+        due => Now + Timeout + ?RETRY_DELAY
     }.
-
-renew_interval(#{subscription_expiry := Expiry}) -> max(1, Expiry div 3).
 
 now_ms() -> erlang:monotonic_time(millisecond).
 

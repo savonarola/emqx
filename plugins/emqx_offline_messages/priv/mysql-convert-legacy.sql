@@ -44,12 +44,12 @@ UPDATE mqtt_omp_topic t SET next_offset = (
 ) WHERE t.namespace = CAST(@omp_namespace AS BINARY);
 
 INSERT INTO mqtt_omp_subscription
-    (namespace, client_id, topic_id, subopts, ack_offset, updated_at)
+    (namespace, client_id, topic_id, subopts, ack_offset)
 SELECT CAST(@omp_namespace AS BINARY), CAST(s.clientid AS BINARY), t.topic_id,
        CASE WHEN s.topic LIKE '%+%' OR s.topic LIKE '%#%'
             THEN CONCAT('{"qos": ', COALESCE(s.qos, 0), '}')
             ELSE '{"qos": 1}' END,
-       0, UTC_TIMESTAMP(3)
+       0
 FROM mqtt_sub s JOIN mqtt_omp_topic t
   ON t.namespace = CAST(@omp_namespace AS BINARY) AND t.topic = CAST(s.topic AS BINARY);
 

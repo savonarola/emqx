@@ -93,7 +93,8 @@ Subscriptions are stored in PostgreSQL:
   wildcard filters that overlap them. This also happens after a clean start.
 - An explicit UNSUBSCRIBE deletes the stored subscription.
 - A repeated SUBSCRIBE keeps the stored progress.
-- A subscription that no client uses for `subscription_expiry` (30 days by default) is deleted.
+- A disconnect keeps the stored subscription. The plugin does not delete subscriptions of
+  clients that do not connect again.
 
 A new subscription starts according to `new_subscription_start`:
 
@@ -153,6 +154,8 @@ The cleanup job deletes old messages for each topic. A message is deleted when a
 
 With `earliest`, acknowledged messages stay until the age or count limit removes them, because a new subscriber reads them.
 With `latest`, a topic without subscriptions keeps no messages.
+With `latest`, a subscription of a client that does not connect again keeps the messages that
+it has not acknowledged until the age or count limit removes them. Delete such subscriptions in SQL to release them earlier.
 
 The cleanup job runs every `retention.interval` (1 minute by default) on one node of the cluster.
 
@@ -181,7 +184,6 @@ Durations are in milliseconds. Sizes are in bytes. The defaults are in `priv/con
 | `max_topic_length` | Maximum length of a managed topic name |
 | `new_subscription_start` | Where a new subscription starts: `earliest` or `latest` |
 | `async_batched` | Acknowledge publishers before the write. See [Publishing](#publishing) |
-| `subscription_expiry` | Delete stored subscriptions that are not used for this time |
 | `init_default_schema` | Create the schema at startup. Use for development only |
 
 ### Write batching (`async_batched = true` only)
@@ -315,11 +317,9 @@ A subscription without new acknowledgements does not run this timer.
 Saving progress does not wait for the database. A failed save is not retried.
 After a crash, a client can receive again the messages acknowledged since the last save.
 
-Saving progress also keeps the subscription from expiring. A connected subscription that saved
-no progress for a third of `subscription_expiry` renews its stored row with the same write.
-Wildcard subscriptions use an upsert to renew their stored rows. Failed writes and missing replies
-are retried. The handler checks configuration changes at least once per second and creates rows
-in replacement backends or namespaces.
+Wildcard subscriptions are stored with an upsert. Failed writes and missing replies are retried.
+The handler checks configuration changes every 5 minutes, and creates rows in replacement
+backends or namespaces.
 
 ### Connection pools
 

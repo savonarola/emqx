@@ -17,7 +17,6 @@
     "$postgresql_message_publish_pool_size_label": {"en": "Message publish connection pool size"},
     "$postgresql_message_read_pool_size_label": {"en": "Message read connection pool size"},
     "$postgresql_subscription_meta_pool_size_label": {"en": "Subscription connection pool size"},
-    "$postgresql_subscription_expiry_label": {"en": "Subscription expiry (ms)"},
     "$postgresql_ssl_label": {"en": "TLS"},
     "$postgresql_ssl_enable_label": {"en": "Enable TLS"},
     "$postgresql_ssl_verify_label": {"en": "Certificate verification"},

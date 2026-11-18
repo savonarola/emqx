@@ -38,7 +38,6 @@ mysql {
     }
     checkpoint { interval = 5000, max_pending = 100 }
     retention { max_age = 604800000, max_messages = 1000000, interval = 60000 }
-    subscription_expiry = 2592000000
 }
 
 redis {
@@ -103,5 +102,4 @@ postgresql {
     }
     checkpoint { interval = 5000, max_pending = 100 }
     retention { max_age = 604800000, max_messages = 1000000, interval = 60000 }
-    subscription_expiry = 2592000000
 }

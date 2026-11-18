@@ -39,7 +39,6 @@ groups() ->
                 t_retention,
                 t_wildcard_live,
                 t_wildcard_restore,
-                t_wildcard_renewal,
                 t_wildcard_batch,
                 t_wildcard_retry,
                 t_wildcard_missing_reply,
@@ -368,21 +367,7 @@ t_retention(Config) ->
     ?assertMatch({ok, [{3, 3, _, _, _, _, _, _, _, _}]}, Backend:page(Conn, Id, 0, 10)),
     ?assertMatch({ok, [{1, 1, _, _, _, _, _, _, _, _}]}, Backend:page(Conn, OtherId, 0, 10)),
     ?assertEqual({ok, 1}, Backend:trim(Conn, Id, 4, 1)),
-    ?assertEqual({ok, {Id, 4}}, Backend:append(Conn, Namespace, Topic, [Msg])),
-    %% Expire only inactive subscriptions in the selected namespace.
-    {Table, Parameter} =
-        case Backend of
-            emqx_omp_pg_sql -> {"mqtt_pg_subscription", "$1"};
-            emqx_omp_mysql_sql -> {"mqtt_omp_subscription", "?"}
-        end,
-    {ok, _} = Backend:query(
-        Conn,
-        ["UPDATE ", Table, " SET updated_at = '2000-01-01 00:00:00' WHERE topic_id = ", Parameter],
-        [Id]
-    ),
-    ?assertEqual({ok, 0}, Backend:expire(Conn, <<"other">>, 1000, 1)),
-    ?assertEqual({ok, 1}, Backend:expire(Conn, Namespace, 1000, 1)),
-    ?assertEqual({ok, []}, Backend:restore(Conn, Namespace, <<"a">>)).
+    ?assertEqual({ok, {Id, 4}}, Backend:append(Conn, Namespace, Topic, [Msg])).
 
 -doc "Deliver live copies once per wildcard subscription with its QoS, and never from storage.".
 t_wildcard_live(Config) ->
@@ -442,28 +427,6 @@ t_wildcard_restore(Config) ->
     ok = emqtt:disconnect(Monitor1),
     ok = emqtt:disconnect(Pub).
 
--doc "Renew a connected wildcard subscription, so that expiry removes only inactive rows.".
-t_wildcard_renewal(Config) ->
-    Backend = ?config(backend, Config),
-    Conn = ?config(db, Config),
-    Raw = ?config(raw, Config),
-    #{backend_id := Id, namespace := Namespace} = ?config(parsed, Config),
-    ok = emqx_omp:start(parse(Id, Raw#{<<"subscription_expiry">> => 600})),
-    ClientId = <<"wildcard-renewal">>,
-    Filter = <<"contract/renewal/#">>,
-    %% Store a connected wildcard subscription and an inactive exact subscription.
-    Monitor = client(Config, ClientId, []),
-    {ok, _, [1]} = emqtt:subscribe(Monitor, Filter, 1),
-    ?retry(50, 100, ?assertMatch({ok, [{Filter, _}]}, Backend:restore(Conn, Namespace, ClientId))),
-    {ok, _} = Backend:subscribe(
-        Conn, Namespace, <<"inactive">>, <<"contract/renewal/x">>, #{qos => 1}, earliest
-    ),
-    %% After the expiry time, only the inactive row expires.
-    timer:sleep(700),
-    ?assertEqual({ok, 1}, Backend:expire(Conn, Namespace, 600, 1000)),
-    ?assertMatch({ok, [{Filter, _}]}, Backend:restore(Conn, Namespace, ClientId)),
-    ok = emqtt:disconnect(Monitor).
-
 -doc "Queue an entire committed wildcard batch while the receive window allows one message.".
 t_wildcard_batch(Config) ->
     Sub = client(Config, <<"wildcard-batch">>, [{properties, #{'Receive-Maximum' => 1}}]),
@@ -522,12 +485,12 @@ t_wildcard_config_change(Config) ->
     Backend = ?config(backend, Config),
     Conn = ?config(db, Config),
     #{namespace := Namespace, backend_id := BackendId} = ?config(parsed, Config),
+    Raw0 = ?config(raw, Config),
     Sub = client(Config, ClientId, []),
     {ok, _, [1]} = emqtt:subscribe(Sub, Filter, 1),
     ?retry(50, 100, ?assertMatch({ok, [{Filter, _}]}, Backend:restore(Conn, Namespace, ClientId))),
     NewNamespace = <<Namespace/binary, "-replacement">>,
-    Raw = (?config(raw, Config))#{<<"namespace">> := NewNamespace},
-    ok = emqx_omp:start(parse(BackendId, Raw)),
+    ok = emqx_omp:start(parse(BackendId, Raw0#{<<"namespace">> := NewNamespace})),
     ?retry(
         50, 100, ?assertMatch({ok, [{Filter, _}]}, Backend:restore(Conn, NewNamespace, ClientId))
     ),
@@ -613,8 +576,8 @@ t_consumed_cleanup_race(Config) ->
     ?assertNotReceive({appended, _}, 200),
     {ok, _} = Backend:query(Conn1, """
     INSERT INTO mqtt_omp_subscription
-      (namespace, client_id, topic_id, subopts, ack_offset, updated_at)
-    VALUES (?, 'new', ?, '{}', 2, UTC_TIMESTAMP(3))
+      (namespace, client_id, topic_id, subopts, ack_offset)
+    VALUES (?, 'new', ?, '{}', 2)
     """, [Namespace, TopicId]),
     {ok, _} = Backend:query(Conn1, "COMMIT", []),
     ?assertReceive({appended, {ok, {TopicId, 3}}}, 5000),

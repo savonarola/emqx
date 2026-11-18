@@ -106,8 +106,6 @@
            "$ui": {"component": "input-number", "label": "$postgresql_message_read_pool_size_label"}},
           {"name": "subscription_meta_pool_size", "type": "int", "default": 8,
            "$ui": {"component": "input-number", "label": "$postgresql_subscription_meta_pool_size_label"}},
-          {"name": "subscription_expiry", "type": "long", "default": 2592000000,
-           "$ui": {"component": "input-number", "label": "$postgresql_subscription_expiry_label"}},
           {"name": "writer", "default": {}, "$ui": {"label": "$postgresql_writer_label"}, "type": {
             "type": "record", "name": "MySQLWriterRecord", "fields": [
               {"name": "pool_size", "type": "int", "default": 4,
@@ -568,8 +566,6 @@
            "$ui": {"component": "input-number", "label": "$postgresql_message_read_pool_size_label"}},
           {"name": "subscription_meta_pool_size", "type": "int", "default": 8,
            "$ui": {"component": "input-number", "label": "$postgresql_subscription_meta_pool_size_label"}},
-          {"name": "subscription_expiry", "type": "long", "default": 2592000000,
-           "$ui": {"component": "input-number", "label": "$postgresql_subscription_expiry_label"}},
           {"name": "ssl", "default": {}, "$ui": {"label": "$postgresql_ssl_label"}, "type": {
             "type": "record", "name": "PostgreSQLSSLRecord", "fields": [
               {"name": "enable", "type": "boolean", "default": false,

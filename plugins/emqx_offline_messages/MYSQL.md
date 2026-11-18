@@ -57,7 +57,7 @@ mysql {
 
 Connection settings are `server`, `database`, `username`, `password`, `ssl` and `query_timeout`.
 Delivery settings match PostgreSQL: `namespace`, `topics`, `async_batched`, `max_topic_length`,
-`new_subscription_start`, `writer`, `read`, `checkpoint`, `retention` and `subscription_expiry`.
+`new_subscription_start`, `writer`, `read`, `checkpoint` and `retention`.
 The three connection pool settings are `message_publish_pool_size`, `message_read_pool_size`
 and `subscription_meta_pool_size`.
 MySQL does not have the PostgreSQL `set_statement_timeout` setting.

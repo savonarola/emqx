@@ -38,14 +38,13 @@ CREATE TABLE IF NOT EXISTS mqtt_omp_message (
 ) ENGINE=InnoDB;
 
 -- One row per client and topic with the last acknowledged offset.
--- updated_at is UTC. Subscriptions not renewed within subscription_expiry are deleted.
+-- An explicit UNSUBSCRIBE deletes the row.
 CREATE TABLE IF NOT EXISTS mqtt_omp_subscription (
     namespace VARBINARY(256) NOT NULL,
     client_id VARBINARY(2048) NOT NULL,
     topic_id BIGINT NOT NULL,
     subopts BLOB NOT NULL,
     ack_offset BIGINT NOT NULL,
-    updated_at DATETIME(3) NOT NULL,
     PRIMARY KEY (namespace, client_id, topic_id),
     KEY subscription_topic (topic_id)
 ) ENGINE=InnoDB;

@@ -1048,45 +1048,6 @@ t_consumed_cleanup_race(Config) ->
     {ok, _} = emqx_omp_pg_sql:checkpoint(Conn0, Namespace, <<"old">>, Id, 3),
     ?assertEqual({ok, 3}, emqx_omp_pg_sql:consumed_cutoff(Conn0, Id, 4)).
 
--doc "Check that inactive subscriptions expire while active subscriptions renew their rows.".
-t_subscription_expiry(Config) ->
-    %% Create one connected subscriber and one inactive database subscription.
-    Raw = ?config(raw, Config),
-    ok = emqx_omp:apply_changes([
-        #config_change{
-            id = postgresql,
-            module = emqx_omp_pg_config,
-            old = Raw,
-            new = Raw#{<<"subscription_expiry">> => 600}
-        }
-    ]),
-    Topic = <<"offline/expiry">>,
-    Namespace = ?config(namespace, Config),
-    Conn = ?config(db, Config),
-    Sub = client(Config, <<"active">>, []),
-    {ok, _, [1]} = emqtt:subscribe(Sub, Topic, 1),
-    ?retry(20, 100, ?assertEqual(0, cursor(Config, <<"active">>, Topic))),
-    {ok, _} = emqx_omp_pg_sql:subscribe(
-        Conn, Namespace, <<"inactive">>, Topic, #{qos => 1}, earliest
-    ),
-    timer:sleep(700),
-    %% Expire the inactive row while the connected reader renews its subscription.
-    {ok, 1} = emqx_omp_pg_sql:expire(Conn, Namespace, 600, 1000),
-    ?assertEqual(undefined, cursor(Config, <<"inactive">>, Topic)),
-    ?assertEqual(0, cursor(Config, <<"active">>, Topic)),
-    ?assertEqual(
-        [],
-        sql(
-            Conn,
-            "SELECT indexname FROM pg_indexes WHERE indexname = 'mqtt_pg_subscription_updated'",
-            []
-        )
-    ),
-    append(Config, Topic, [<<"still-active">>]),
-    %% Check that the renewed subscription still receives new messages.
-    ?assertEqual([<<"still-active">>], payloads(receive_messages(1))),
-    ok = emqtt:disconnect(Sub).
-
 -doc "Check that replay keeps offset order under an MQTT receive maximum of one.".
 t_inflight_backpressure(Config) ->
     %% Set receive maximum one and append three messages for replay.
@@ -1167,7 +1128,7 @@ t_config_schema(_Config) ->
 
 -doc "Check that cleanup does not remove another namespace's messages or subscriptions.".
 t_retention_namespace(Config) ->
-    %% Store independent history and an inactive subscription in another namespace.
+    %% Store independent history and a subscription in another namespace.
     Conn = ?config(db, Config),
     Namespace = ?config(namespace, Config),
     Topic = <<"offline/namespaces">>,
@@ -1177,11 +1138,9 @@ t_retention_namespace(Config) ->
     {ok, _} = emqx_omp_pg_sql:subscribe(
         Conn, <<"another-deployment">>, <<"other">>, Topic, #{qos => 1}, earliest
     ),
-    sql(Conn, "UPDATE mqtt_pg_subscription SET updated_at = now() - interval '1 day'", []),
     %% Clean the current namespace and check that the other namespace is unaffected.
     {ok, [{Id, 3}]} = emqx_omp_pg_sql:topics(Conn, Namespace, 0, 100),
     {ok, 1} = emqx_omp_pg_sql:trim(Conn, Id, 2, 1000),
-    {ok, 0} = emqx_omp_pg_sql:expire(Conn, Namespace, 1000, 1000),
     ?assertEqual([{2, <<"two">>}], messages(Config, Topic)),
     ?assertEqual([{1, <<"other-one">>}, {2, <<"other-two">>}], messages(OtherConfig, Topic)),
     ?assertEqual(0, cursor(OtherConfig, <<"other">>, Topic)).

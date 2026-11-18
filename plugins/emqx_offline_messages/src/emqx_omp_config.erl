@@ -24,8 +24,7 @@ fields(config) ->
         {writer, mk(hoconsc:ref(?MODULE, writer), #{})},
         {read, mk(hoconsc:ref(?MODULE, read), #{})},
         {checkpoint, mk(hoconsc:ref(?MODULE, checkpoint), #{})},
-        {retention, mk(hoconsc:ref(?MODULE, retention), #{})},
-        {subscription_expiry, mk(pos_integer(), 2592000000)}
+        {retention, mk(hoconsc:ref(?MODULE, retention), #{})}
     ];
 fields(writer) ->
     [

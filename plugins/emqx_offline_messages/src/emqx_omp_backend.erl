@@ -66,7 +66,7 @@
 -callback restore(connection(), namespace(), emqx_types:clientid()) -> result([subscription_row()]).
 -callback unsubscribe(connection(), namespace(), emqx_types:clientid(), emqx_types:topic()) ->
     result(non_neg_integer()).
-%% Checkpoints renew subscriptions and never move progress backwards.
+%% Checkpoints never move progress backwards.
 -callback checkpoint(connection(), namespace(), emqx_types:clientid(), topic_id(), offset()) ->
     result(non_neg_integer()).
 -callback page(connection(), topic_id(), offset(), pos_integer()) -> result([page_row()]).
@@ -75,7 +75,5 @@
 -callback age_cutoff(connection(), topic_id(), offset(), integer()) -> result(offset()).
 -callback consumed_cutoff(connection(), topic_id(), offset()) -> result(offset()).
 -callback trim(connection(), topic_id(), offset(), pos_integer()) -> result(non_neg_integer()).
--callback expire(connection(), namespace(), pos_integer(), pos_integer()) ->
-    result(non_neg_integer()).
 %% The largest client ID, in bytes, that the backend can store.
 -callback max_client_id_length() -> pos_integer() | infinity.

@@ -3,7 +3,7 @@
 %%--------------------------------------------------------------------
 -module(emqx_omp_maintenance).
 -moduledoc """
-Delete old messages per topic and expired subscriptions.
+Delete old messages per topic.
 Only the first running node runs the cleanup. During membership changes,
 two nodes can run it at the same time. The deletes are idempotent.
 The worker uses its own connection, so cleanup never waits behind appends.
@@ -15,7 +15,6 @@ The worker uses its own connection, so cleanup never waits behind appends.
 -define(NEXT_BATCH_DELAY, 10).
 -define(TOPIC_BATCH, 100).
 -define(DELETE_BATCH, 1000).
--define(EXPIRE_INTERVAL, 3600000).
 
 -doc "Start the cleanup worker.".
 -spec start_link(emqx_omp_backend:config()) -> gen_server:start_ret().
@@ -25,7 +24,6 @@ init(#{retention := #{interval := Interval}} = Config) ->
     %% A connection failure must not stop the worker.
     process_flag(trap_exit, true),
     _ = erlang:send_after(Interval, self(), cleanup),
-    _ = erlang:send_after(?EXPIRE_INTERVAL, self(), expire),
     {ok, #{config => Config, conn => undefined, last_topic => 0}}.
 
 handle_call(_Request, _From, State) -> {reply, {error, unsupported}, State}.
@@ -38,14 +36,6 @@ handle_info(cleanup, #{config := #{retention := #{interval := Interval}}} = Stat
             false -> {Interval, State0}
         end,
     _ = erlang:send_after(Delay, self(), cleanup),
-    {noreply, State};
-handle_info(expire, State0) ->
-    {Delay, State} =
-        case is_leader() of
-            true -> run(fun expire/2, State0, ?EXPIRE_INTERVAL);
-            false -> {?EXPIRE_INTERVAL, State0}
-        end,
-    _ = erlang:send_after(Delay, self(), expire),
     {noreply, State};
 handle_info({'EXIT', Conn, _Reason}, #{conn := Conn} = State) ->
     {noreply, State#{conn := undefined}};
@@ -133,15 +123,3 @@ trim(Conn, Id, Next, Config) ->
     Cutoff = lists:max([Next - MaxMessages, AgeCutoff | Cutoffs]),
     {ok, _} = Backend:trim(Conn, Id, Cutoff, ?DELETE_BATCH),
     ok.
-
--doc "Delete expired subscriptions in batches until the current sweep is complete.".
-expire(
-    Conn,
-    #{config := #{namespace := Namespace, subscription_expiry := Expiry, backend := Backend}} =
-        State
-) ->
-    {ok, Removed} = Backend:expire(Conn, Namespace, Expiry, ?DELETE_BATCH),
-    case Removed >= ?DELETE_BATCH of
-        true -> {?NEXT_BATCH_DELAY, State};
-        false -> {?EXPIRE_INTERVAL, State}
-    end.

@@ -5,9 +5,10 @@
 - Allow PostgreSQL and MySQL to run simultaneously with disjoint topic filters.
 - Accept wildcard subscriptions over SQL-managed topics at any QoS. They are stored and restored
   on connect, and they receive live messages without replay.
-- Save subscriber progress only while acknowledgements are unsaved. Idle subscriptions run only
-  a renewal timer at a third of `subscription_expiry`. The `checkpoint.interval` default changes
-  from 1 to 5 seconds.
+- Save subscriber progress only while acknowledgements are unsaved. Idle subscriptions do not
+  write to the database. The `checkpoint.interval` default changes from 1 to 5 seconds.
+- Remove the PostgreSQL `subscription_expiry` setting. Only an explicit UNSUBSCRIBE deletes a
+  stored subscription.
 - Replace MySQL `pool_size`, `batch_size` and `batch_time` with separate connection pool and writer settings.
 
 Breaking changes:

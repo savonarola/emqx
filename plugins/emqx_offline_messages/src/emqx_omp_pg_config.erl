@@ -61,7 +61,6 @@
     read := read_config(),
     checkpoint := checkpoint_config(),
     retention := retention_config(),
-    subscription_expiry := pos_integer(),
     connection := epgsql:connect_opts_map(),
     backend := emqx_omp_pg_sql,
     backend_id := postgresql,

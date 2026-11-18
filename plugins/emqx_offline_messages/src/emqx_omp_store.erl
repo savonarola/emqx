@@ -101,7 +101,7 @@ append_sync(Namespace, #message{topic = Topic} = Msg, #{backend_id := BackendId}
 append_batch(Namespace, Topic, Messages, Config) ->
     call(?MESSAGE_PUBLISH_POOL, Topic, append, [Namespace, Topic, Messages], Config).
 
--doc "Renew the subscriptions of a client and return their topics and options.".
+-doc "Return the subscriptions of a client with their topics and options.".
 -spec restore(namespace(), emqx_types:clientid(), config()) ->
     {ok, [emqx_omp_backend:subscription_row()]} | error().
 restore(Namespace, ClientId, Config) ->
@@ -124,7 +124,7 @@ checkpoint(Namespace, ClientId, TopicId, Offset, Config) ->
         Config
     ).
 
--doc "Create or renew a subscription and send the result to the handler.".
+-doc "Create or update a subscription and send the result to the handler.".
 -spec subscribe_async(
     namespace(),
     emqx_types:clientid(),

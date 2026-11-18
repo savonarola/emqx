@@ -19,7 +19,6 @@
     age_cutoff/4,
     consumed_cutoff/3,
     trim/4,
-    expire/4,
     max_client_id_length/0,
     query/3
 ]).
@@ -122,7 +121,7 @@ append(Conn, Namespace, Topic, [_ | _] = Messages) ->
     {ok, First} = call_append(Conn, SQL, ?TRANSACTION_RETRIES),
     {ok, {TopicId, First}}.
 
--doc "Create or renew a subscription while serializing its starting position with appends.".
+-doc "Create or update a subscription while serializing its starting position with appends.".
 -spec subscribe(
     connection(),
     namespace(),
@@ -143,9 +142,9 @@ subscribe(Conn, Namespace, ClientId, Topic, SubOpts, Start) ->
         Options = emqx_utils_json:encode(SubOpts),
         {ok, _} = query(Conn, """
         INSERT INTO mqtt_omp_subscription
-          (namespace, client_id, topic_id, subopts, ack_offset, updated_at)
-        VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP(3))
-        ON DUPLICATE KEY UPDATE subopts = ?, updated_at = UTC_TIMESTAMP(3)
+          (namespace, client_id, topic_id, subopts, ack_offset)
+        VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE subopts = ?
         """, [Namespace, ClientId, Id, Options, Ack, Options]),
         {ok, [{Cursor}]} = query(Conn, """
         SELECT ack_offset FROM mqtt_omp_subscription
@@ -154,20 +153,14 @@ subscribe(Conn, Namespace, ClientId, Topic, SubOpts, Start) ->
         {ok, #{topic_id => Id, cursor => Cursor}}
     end).
 
--doc "Renew and return a client's subscriptions in one transaction.".
+-doc "Return a client's subscriptions with their topics and options.".
 -spec restore(connection(), namespace(), emqx_types:clientid()) ->
     {ok, [emqx_omp_backend:subscription_row()]}.
 restore(Conn, Namespace, ClientId) ->
-    transaction(Conn, fun() ->
-        {ok, _} = query(Conn, """
-        UPDATE mqtt_omp_subscription SET updated_at = UTC_TIMESTAMP(3)
-        WHERE namespace = ? AND client_id = ?
-        """, [Namespace, ClientId]),
-        query(Conn, """
-        SELECT t.topic, s.subopts FROM mqtt_omp_subscription s
-        JOIN mqtt_omp_topic t USING (topic_id) WHERE s.namespace = ? AND s.client_id = ?
-        """, [Namespace, ClientId])
-    end).
+    query(Conn, """
+    SELECT t.topic, s.subopts FROM mqtt_omp_subscription s
+    JOIN mqtt_omp_topic t USING (topic_id) WHERE s.namespace = ? AND s.client_id = ?
+    """, [Namespace, ClientId]).
 
 -doc "Remove an explicitly unsubscribed topic.".
 -spec unsubscribe(connection(), namespace(), emqx_types:clientid(), emqx_types:topic()) ->
@@ -178,13 +171,13 @@ unsubscribe(Conn, Namespace, ClientId, Topic) ->
     WHERE s.namespace = ? AND s.client_id = ? AND t.topic = ?
     """, [Namespace, ClientId, Topic]).
 
--doc "Renew a subscription and save progress without moving it backwards.".
+-doc "Save progress without moving it backwards.".
 -spec checkpoint(connection(), namespace(), emqx_types:clientid(), topic_id(), offset()) ->
     {ok, non_neg_integer()}.
 checkpoint(Conn, Namespace, ClientId, TopicId, Offset) ->
     query(Conn, """
     UPDATE mqtt_omp_subscription
-    SET ack_offset = GREATEST(ack_offset, ?), updated_at = UTC_TIMESTAMP(3)
+    SET ack_offset = GREATEST(ack_offset, ?)
     WHERE namespace = ? AND client_id = ? AND topic_id = ?
     """, [Offset, Namespace, ClientId, TopicId]).
 
@@ -239,15 +232,6 @@ consumed_cutoff(Conn, TopicId, Next) ->
 -doc "Delete the retained prefix in bounded batches.".
 -spec trim(connection(), topic_id(), offset(), pos_integer()) -> {ok, non_neg_integer()}.
 trim(Conn, TopicId, Cutoff, Batch) -> trim(Conn, TopicId, Cutoff, Batch, 0).
-
--doc "Delete a bounded batch of inactive subscriptions.".
--spec expire(connection(), namespace(), pos_integer(), pos_integer()) -> {ok, non_neg_integer()}.
-expire(Conn, Namespace, Expiry, Batch) ->
-    query(Conn, """
-    DELETE FROM mqtt_omp_subscription
-    WHERE namespace = ? AND updated_at < TIMESTAMPADD(MICROSECOND, ?, UTC_TIMESTAMP(3))
-    LIMIT ?
-    """, [Namespace, -Expiry * 1000, Batch]).
 
 -doc "Return the largest client ID, in bytes, that the subscription table can store.".
 -spec max_client_id_length() -> pos_integer().

@@ -37,15 +37,11 @@
     reorder_buffer = #{},
     reorder_timer,
     last_activity = 0,
-    %% Time when the last checkpoint was sent. Each checkpoint also renews the subscription row.
-    checkpoint_sent_at = 0,
     %% Keeps reference to the current async read request (at most one may be pending).
     %% `{Ref, initialize | page, Timer}`.
     pending,
     %% Armed only while acknowledgements are unsent.
     flush_timer,
-    %% Renews the subscription row when no checkpoint was sent for a third of the expiry.
-    renew_timer,
     retry_timer,
     retry_delay,
     idle_timer,
@@ -104,7 +100,6 @@ handle_unsubscribe(disconnect, _Context, Handler0, _TopicFilter) ->
 handle_terminate(#h{pending = Pending} = Handler) ->
     _ = clear_reorder_buffer(Handler),
     emqx_utils:cancel_timer(Handler#h.flush_timer),
-    emqx_utils:cancel_timer(Handler#h.renew_timer),
     emqx_utils:cancel_timer(Handler#h.retry_timer),
     emqx_utils:cancel_timer(Handler#h.idle_timer),
     case Pending of
@@ -176,8 +171,6 @@ info(Handler, Context, retry) ->
 info(Handler, _Context, flush) ->
     ?tp(omp_checkpoint_flush, #{clientid => Handler#h.clientid, topic => Handler#h.topic}),
     {ok, flush(Handler#h{flush_timer = undefined})};
-info(Handler, _Context, renew) ->
-    {ok, renew(Handler#h{renew_timer = undefined})};
 info(#h{config = #{read := #{idle_poll_interval := Interval}}} = Handler0, _Context, idle) ->
     #h{dirty = Dirty, last_activity = Last, idle_jitter = Jitter} = Handler0,
     Handler = Handler0#h{
@@ -198,7 +191,6 @@ info(Handler, _Context, _Info) ->
 -doc "Apply a database result, release consecutive buffered copies and schedule more reads.".
 result(Handler, initialize, {ok, #{topic_id := Id, cursor := Cursor}}) ->
     #h{config = #{read := #{idle_poll_interval := Interval}}} = Handler,
-    Now = now_ms(),
     Init = Handler#h{
         %% Spread the polls of handlers that start together after a mass reconnect.
         idle_jitter = rand:uniform(max(1, Interval div 2)) - 1,
@@ -206,11 +198,10 @@ result(Handler, initialize, {ok, #{topic_id := Id, cursor := Cursor}}) ->
         offset_cursor = Cursor,
         offset_acked = Cursor,
         offset_sent_to_commit = Cursor,
-        last_activity = Now,
-        checkpoint_sent_at = Now,
+        last_activity = now_ms(),
         retry_delay = undefined
     },
-    {ok, nudge(ensure_idle_timer(ensure_renew_timer(Init)))};
+    {ok, nudge(ensure_idle_timer(Init))};
 result(Handler0, page, {ok, [_ | _] = Rows}) ->
     %% Decode the rows and advance the cursor over them.
     {Handler1, Messages0} = lists:foldl(fun row/2, {Handler0, []}, Rows),
@@ -420,29 +411,6 @@ ensure_flush_timer(
 ensure_flush_timer(Handler) ->
     Handler.
 
--doc "Renew the subscription row unless a checkpoint renewed it within a third of the expiry.".
-renew(#h{config = #{subscription_expiry := Expiry}, checkpoint_sent_at = SentAt} = Handler0) ->
-    Handler =
-        case now_ms() - SentAt >= Expiry div 3 of
-            true -> checkpoint(Handler0);
-            false -> Handler0
-        end,
-    ensure_renew_timer(Handler).
-
--doc "Schedule the next renewal a third of the expiry after the last checkpoint.".
-ensure_renew_timer(
-    #h{
-        renew_timer = undefined,
-        config = #{subscription_expiry := Expiry},
-        checkpoint_sent_at = SentAt,
-        target = Target
-    } = Handler
-) ->
-    Delay = max(1, SentAt + Expiry div 3 - now_ms()),
-    Handler#h{renew_timer = emqx_extsub_handler:send_after(Delay, Target, renew)};
-ensure_renew_timer(Handler) ->
-    Handler.
-
 -doc "Schedule the next idle poll from recent activity and the initial reconnect jitter.".
 ensure_idle_timer(
     #h{
@@ -475,7 +443,7 @@ checkpoint(
         Handler
 ) ->
     ok = emqx_omp_store:checkpoint(Namespace, ClientId, Id, Acked, Config),
-    Handler#h{offset_sent_to_commit = Acked, checkpoint_sent_at = now_ms()}.
+    Handler#h{offset_sent_to_commit = Acked}.
 
 unsent_ack_count(#h{offset_acked = Acked, offset_sent_to_commit = Sent}) ->
     Acked - Sent.

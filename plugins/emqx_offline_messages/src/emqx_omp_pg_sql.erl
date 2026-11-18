@@ -23,7 +23,6 @@ Each function runs on the given connection and raises an error when a statement 
     age_cutoff/4,
     consumed_cutoff/3,
     trim/4,
-    expire/4,
     max_client_id_length/0,
     query/3
 ]).
@@ -166,21 +165,19 @@ subscribe(Conn, Namespace, ClientId, Topic, SubOpts, Start) ->
         INSERT INTO mqtt_pg_subscription(namespace, client_id, topic_id, subopts, ack_offset)
         VALUES ($1, $2, $3, $4::jsonb, $5)
         ON CONFLICT (namespace, client_id, topic_id) DO UPDATE
-        SET subopts = EXCLUDED.subopts, updated_at = now()
+        SET subopts = EXCLUDED.subopts
         RETURNING ack_offset
         """, [Namespace, ClientId, Id, emqx_utils_json:encode(SubOpts), Ack]),
         {ok, #{topic_id => Id, cursor => Cursor}}
     end).
 
--doc "Renew the client's subscriptions and return their topics and options.".
+-doc "Return the client's subscriptions with their topics and options.".
 -spec restore(epgsql:connection(), namespace(), emqx_types:clientid()) ->
     {ok, [subscription_row()]}.
 restore(Conn, Namespace, ClientId) ->
     query(Conn, """
-    WITH touched AS (
-      UPDATE mqtt_pg_subscription SET updated_at = now()
-      WHERE namespace = $1 AND client_id = $2 RETURNING topic_id, subopts
-    ) SELECT t.topic, s.subopts FROM touched s JOIN mqtt_pg_topic t USING (topic_id)
+    SELECT t.topic, s.subopts FROM mqtt_pg_subscription s JOIN mqtt_pg_topic t USING (topic_id)
+    WHERE s.namespace = $1 AND s.client_id = $2
     """, [Namespace, ClientId]).
 
 -doc "Delete the subscription of a client to a topic.".
@@ -192,13 +189,13 @@ unsubscribe(Conn, Namespace, ClientId, Topic) ->
     WHERE s.topic_id = t.topic_id AND s.namespace = $1 AND s.client_id = $2 AND t.topic = $3
     """, [Namespace, ClientId, Topic]).
 
--doc "Save acknowledged progress. Progress never moves backwards, and the update renews the row.".
+-doc "Save acknowledged progress. Progress never moves backwards.".
 -spec checkpoint(
     epgsql:connection(), namespace(), emqx_types:clientid(), topic_id(), offset()
 ) -> {ok, non_neg_integer()}.
 checkpoint(Conn, Namespace, ClientId, TopicId, Offset) ->
     query(Conn, """
-    UPDATE mqtt_pg_subscription SET ack_offset = GREATEST(ack_offset, $4), updated_at = now()
+    UPDATE mqtt_pg_subscription SET ack_offset = GREATEST(ack_offset, $4)
     WHERE namespace = $1 AND client_id = $2 AND topic_id = $3
     """, [Namespace, ClientId, TopicId, Offset]).
 
@@ -264,18 +261,6 @@ trim(Conn, TopicId, Cutoff, Batch) ->
         {ok, [{null, null}]} -> {ok, 0};
         {ok, [{Min, Max}]} -> trim_range(Conn, TopicId, Min, Max, Batch, 0)
     end.
-
--doc "Delete up to `Batch` subscriptions that no client renewed within `Expiry` milliseconds.".
--spec expire(epgsql:connection(), namespace(), pos_integer(), pos_integer()) ->
-    {ok, Removed :: non_neg_integer()}.
-expire(Conn, Namespace, Expiry, Batch) ->
-    query(Conn, """
-    DELETE FROM mqtt_pg_subscription WHERE ctid IN (
-      SELECT ctid FROM mqtt_pg_subscription
-      WHERE namespace = $1 AND updated_at < now() - $2 * interval '1 millisecond'
-      LIMIT $3
-    )
-    """, [Namespace, Expiry, Batch]).
 
 -doc "Return `infinity`, because the `text` client ID column has no length limit.".
 -spec max_client_id_length() -> infinity.

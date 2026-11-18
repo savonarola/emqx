@@ -45,8 +45,6 @@ CREATE TABLE IF NOT EXISTS mqtt_pg_subscription (
     topic_id bigint NOT NULL REFERENCES mqtt_pg_topic,
     subopts jsonb NOT NULL,
     ack_offset bigint NOT NULL,
-    -- Renewed by active subscribers; old rows are deleted after subscription_expiry.
-    updated_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (namespace, client_id, topic_id)
 ) WITH (fillfactor = 80);
 -- Used by cleanup to find the lowest acknowledged offset of a topic.
