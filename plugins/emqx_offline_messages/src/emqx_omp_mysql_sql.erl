@@ -93,7 +93,8 @@ the reserved offsets. A deadlock rolls the transaction back, so the query is rep
     {ok, {topic_id(), offset()}}.
 append(Conn, Namespace, Topic, [_ | _] = Messages) ->
     TopicId = ensure_topic(Conn, Namespace, Topic),
-    Id = integer_to_binary(TopicId),
+    %% Values enter the text only through `sql_int/1` and `sql_bin/1`.
+    Id = sql_int(TopicId),
     Rows = [
         append_row(Id, Index, Message)
      || {Index, Message} <- lists:enumerate(0, Messages)
@@ -106,7 +107,7 @@ append(Conn, Namespace, Topic, [_ | _] = Messages) ->
         Id,
         " FOR UPDATE;\n"
         "UPDATE mqtt_omp_topic SET next_offset = next_offset + ",
-        integer_to_binary(length(Messages)),
+        sql_int(length(Messages)),
         " WHERE topic_id = ",
         Id,
         ";\n"
@@ -347,31 +348,32 @@ append_row(Id, Index, #{
 }) ->
     Values = [
         Id,
-        ["@omp_first + ", integer_to_binary(Index)],
-        from_base64(MessageId),
-        from_base64(base64:encode(Sender)),
-        integer_to_binary(QoS),
-        retain_value(Retain),
-        from_base64(Payload),
-        from_base64(base64:encode(emqx_utils_json:encode(Properties))),
-        integer_to_binary(Published),
+        ["@omp_first + ", sql_int(Index)],
+        sql_bin(base64:decode(MessageId)),
+        sql_bin(Sender),
+        sql_int(QoS),
+        sql_int(retain_value(Retain)),
+        sql_bin(base64:decode(Payload)),
+        sql_bin(emqx_utils_json:encode(Properties)),
+        sql_int(Published),
         case Expiry of
             null -> <<"NULL">>;
-            _ -> integer_to_binary(Expiry)
+            _ -> sql_int(Expiry)
         end
     ],
     ["(", lists:join(", ", Values), ")"].
 
--doc """
-Return an SQL expression that decodes a base64 string.
-Base64 text needs no escaping. The check keeps any other text from ending the literal.
-""".
-from_base64(Base64) ->
-    nomatch = binary:match(Base64, [<<"'">>, <<"\\">>]),
-    ["FROM_BASE64('", Base64, "')"].
+-doc "Return an integer as an SQL literal. Any other term fails.".
+sql_int(Int) when is_integer(Int) -> integer_to_binary(Int).
 
-retain_value(true) -> <<"1">>;
-retain_value(false) -> <<"0">>.
+-doc """
+Return bytes as an SQL expression. The base64 alphabet has no quote or backslash, so the
+literal needs no escaping in any `sql_mode` or connection character set.
+""".
+sql_bin(Bin) when is_binary(Bin) -> ["FROM_BASE64('", base64:encode(Bin), "')"].
+
+retain_value(true) -> 1;
+retain_value(false) -> 0.
 
 -doc """
 Take the database-wide installation lock, waiting at most `Timeout` milliseconds.

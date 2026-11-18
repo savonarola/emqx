@@ -60,6 +60,7 @@ backend_cases(Id) when Id =:= mysql; Id =:= mariadb ->
         t_provision_failure,
         t_missing_schema_version,
         t_append_binary_values,
+        t_append_sql_text,
         t_append_failure_unlocks,
         t_schema_lock_timeout,
         t_consumed_cleanup,
@@ -1017,6 +1018,27 @@ t_append_binary_values(Config) ->
     ?assertEqual(Payload, element(7, Row)),
     {ok, Decoded} = emqx_omp_store:decode(Topic, {{BackendId, Namespace}, Id}, Row),
     ?assertEqual(Props, emqx_message:get_header(properties, Decoded)).
+
+-doc "Reject SQL text in fields that must be base64, and store the same text as message data.".
+t_append_sql_text(Config) ->
+    Conn = ?config(db, Config),
+    #{namespace := Namespace} = ?config(parsed, Config),
+    Topic = <<"contract/sql-text">>,
+    Text = <<"'); DROP TABLE mqtt_omp_message; -- \\">>,
+    Msg = emqx_omp_store:encode(emqx_message:make(Text, 1, Topic, Text)),
+    {ok, {Id, 1}} = emqx_omp_mysql_sql:append(Conn, Namespace, Topic, [Msg]),
+    %% Text in a base64 field fails the append before any SQL is sent.
+    lists:foreach(
+        fun(Field) ->
+            ?assertException(
+                error, _, emqx_omp_mysql_sql:append(Conn, Namespace, Topic, [Msg#{Field := Text}])
+            )
+        end,
+        [message_id, payload]
+    ),
+    {ok, Rows} = emqx_omp_mysql_sql:page(Conn, Id, 0, 10),
+    ?assertMatch([{1, 1, _, Text, _, _, Text, _, _, _}], Rows),
+    ?assertEqual({ok, {Id, 2}}, emqx_omp_mysql_sql:append(Conn, Namespace, Topic, [Msg])).
 
 -doc "Release the topic row lock after a failed append and keep its offsets unused.".
 t_append_failure_unlocks(Config) ->
