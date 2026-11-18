@@ -59,7 +59,9 @@ backend_cases(Id) when Id =:= mysql; Id =:= mariadb ->
     [
         t_legacy_conversion,
         t_provision_failure,
-        t_missing_procedure,
+        t_missing_schema_version,
+        t_append_binary_values,
+        t_append_failure_unlocks,
         t_schema_lock_timeout,
         t_consumed_cleanup,
         t_consumed_cleanup_race,
@@ -1001,6 +1003,8 @@ t_provision_failure(Config) ->
         SQL("DROP USER 'omp_readonly'@'%'")
     end),
     {ok, _} = SQL("GRANT SELECT ON mqtt.* TO 'omp_readonly'@'%'"),
+    %% Without the schema version, the plugin installs the schema again.
+    {ok, _} = SQL("DELETE FROM mqtt_omp_schema"),
     Raw = ?config(raw, Config),
     ReadOnly = Raw#{<<"username">> => <<"omp_readonly">>},
     ok = emqx_omp:apply_changes([
@@ -1016,19 +1020,57 @@ t_provision_failure(Config) ->
         )
     ).
 
--doc "Fail the MySQL health check without the append procedure and recreate it on installation.".
-t_missing_procedure(Config) ->
+-doc "Fail the MySQL health check without the schema version and restore it on installation.".
+t_missing_schema_version(Config) ->
     Conn = ?config(db, Config),
     #{namespace := Namespace} = Parsed = ?config(parsed, Config),
-    Topic = <<"contract/procedure">>,
+    Topic = <<"contract/schema-version">>,
     Msg = emqx_omp_store:encode(emqx_message:make(<<"p">>, 1, Topic, <<"data">>)),
     {ok, {Id, 1}} = emqx_omp_mysql_sql:append(Conn, Namespace, Topic, [Msg]),
-    %% A missing procedure fails the health check.
-    {ok, _} = emqx_omp_mysql_sql:query(Conn, "DROP PROCEDURE omp_append", []),
+    %% A missing schema version fails the health check.
+    {ok, _} = emqx_omp_mysql_sql:query(Conn, "DELETE FROM mqtt_omp_schema", []),
     ?assertException(error, _, emqx_omp_mysql_sql:health(Conn)),
-    %% Installation recreates the procedure and keeps the stored messages.
+    %% Installation restores the version and keeps the stored messages.
     ok = emqx_omp_mysql_sql:install(Parsed),
     ok = emqx_omp_mysql_sql:health(Conn),
+    ?assertEqual({ok, {Id, 2}}, emqx_omp_mysql_sql:append(Conn, Namespace, Topic, [Msg])).
+
+-doc "Store every byte value and SQL quote characters in MySQL binary fields unchanged.".
+t_append_binary_values(Config) ->
+    Conn = ?config(db, Config),
+    #{namespace := Namespace, backend_id := BackendId} = ?config(parsed, Config),
+    Topic = <<"contract/binary-values">>,
+    Payload = <<<<Byte>> || Byte <- lists:seq(0, 255)>>,
+    Sender = <<"p'\"\\;", 0>>,
+    Props = #{'User-Property' => [{<<"k'\\">>, <<"v\";">>}]},
+    Msg = emqx_message:set_header(
+        properties, Props, emqx_message:make(Sender, 1, Topic, Payload)
+    ),
+    {ok, {Id, 1}} = emqx_omp_mysql_sql:append(
+        Conn, Namespace, Topic, [emqx_omp_store:encode(Msg)]
+    ),
+    {ok, [Row]} = emqx_omp_mysql_sql:page(Conn, Id, 0, 1),
+    ?assertEqual(Sender, element(4, Row)),
+    ?assertEqual(Payload, element(7, Row)),
+    {ok, Decoded} = emqx_omp_store:decode(Topic, {{BackendId, Namespace}, Id}, Row),
+    ?assertEqual(Props, emqx_message:get_header(properties, Decoded)).
+
+-doc "Release the topic row lock after a failed append and keep its offsets unused.".
+t_append_failure_unlocks(Config) ->
+    Conn = ?config(db, Config),
+    #{namespace := Namespace} = Parsed = ?config(parsed, Config),
+    {ok, Other} = emqx_omp_mysql_sql:connect(Parsed),
+    emqx_common_test_helpers:on_exit(fun() -> emqx_omp_mysql_sql:close(Other) end),
+    Topic = <<"contract/append-failure">>,
+    Msg = emqx_omp_store:encode(emqx_message:make(<<"p">>, 1, Topic, <<"data">>)),
+    {ok, {Id, 1}} = emqx_omp_mysql_sql:append(Conn, Namespace, Topic, [Msg]),
+    %% The CHECK constraint fails the insert after the topic row is locked and updated.
+    ?assertException(error, _, emqx_omp_mysql_sql:append(Conn, Namespace, Topic, [Msg#{qos := 3}])),
+    ?assertNot(mysql:in_transaction(Conn)),
+    Lock = "SELECT next_offset FROM mqtt_omp_topic WHERE topic_id = ? FOR UPDATE NOWAIT",
+    {ok, _} = emqx_omp_mysql_sql:query(Other, "BEGIN", []),
+    ?assertEqual({ok, [{2}]}, emqx_omp_mysql_sql:query(Other, Lock, [Id])),
+    {ok, _} = emqx_omp_mysql_sql:query(Other, "ROLLBACK", []),
     ?assertEqual({ok, {Id, 2}}, emqx_omp_mysql_sql:append(Conn, Namespace, Topic, [Msg])).
 
 -doc "Fail MySQL installation after `query_timeout` while another connection installs.".

@@ -9,9 +9,8 @@ See [PostgreSQL](POSTGRESQL.md) for the shared subscription, replay, batching an
 
 - EMQX 7.0 or later on every node.
 - MySQL 8.0 or later, or MariaDB 10.6 or later, with InnoDB.
-  One `omp_append` stored procedure appends message batches on all these servers.
-  It reads its JSON argument with `JSON_TABLE`. Tables use no JSON column type and no foreign keys.
-  The test suite runs against MySQL 8.4. The schema, procedure, queries and legacy conversion
+  Tables use no JSON column type and no foreign keys. The schema has no stored routines.
+  The test suite runs against MySQL 8.4. The schema, queries and legacy conversion
   were also checked manually on MariaDB 10.6 and 10.11. Other servers are not tested.
 - The same plugin version, namespace and topic configuration on all nodes serving those topics.
 - Topic names of at most 2048 bytes.
@@ -26,20 +25,20 @@ Create a database and an account with access to it. Install the packaged schema:
 mysql -h mysql.example.net -u owner -p mqtt < priv/mysql.sql
 ```
 
-The schema owner needs `CREATE`, `INDEX`, `INSERT`, `CREATE ROUTINE` and `ALTER ROUTINE` privileges.
-The plugin account needs `SELECT`, `INSERT`, `UPDATE`, `DELETE` and `EXECUTE` privileges:
+The schema owner needs `CREATE`, `INDEX` and `INSERT` privileges.
+The plugin account needs `SELECT`, `INSERT`, `UPDATE` and `DELETE` privileges:
 
 ```sql
-GRANT SELECT, INSERT, UPDATE, DELETE, EXECUTE ON mqtt.* TO 'emqx'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON mqtt.* TO 'emqx'@'%';
 ```
 
 Alternatively, set `init_default_schema = true`. The plugin installs the schema at startup when
-the schema version or the `omp_append` procedure is missing. The plugin account then also needs
+the schema version is missing. The plugin account then also needs
 the schema owner privileges. Installation is serialized across plugin nodes.
 A node waits at most `query_timeout`, rounded up to whole seconds, for another node's installation.
 If the wait ends first, the start fails and the backend health check fails.
 The plugin does not change a complete schema.
-A failed installation, a missing procedure or an incompatible schema version fails the backend health check.
+A failed installation or an incompatible schema version fails the backend health check.
 The plugin does not create the database or database account.
 
 ```hocon
@@ -78,7 +77,7 @@ TLS verifies the server certificate and host name by default: `verify = verify_p
 Without a trusted CA certificate, the connection fails.
 
 MySQL limits the size of one statement with `max_allowed_packet`.
-A batch of messages is sent in one `omp_append` call with base64-encoded payloads.
+A batch of messages is sent in one multi-statement query with base64-encoded payloads.
 Set `max_allowed_packet` above 1.4 times `writer.flush_max_bytes` plus the largest expected payload.
 
 PostgreSQL and MySQL can run simultaneously. Their topic filters must not overlap.

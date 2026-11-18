@@ -54,8 +54,7 @@ close(Conn) ->
 -doc """
 Install the packaged schema unless it is already complete.
 Installation is serialized across nodes. A node waits at most `query_timeout` for another
-node's installation. A complete schema is never changed, because other nodes can be calling
-its procedure.
+node's installation. A complete schema is never changed.
 """.
 -spec install(config()) -> ok.
 install(#{query_timeout := Timeout} = Config) ->
@@ -69,10 +68,7 @@ install(#{query_timeout := Timeout} = Config) ->
                 {ok, SQL} = file:read_file(
                     filename:join(code:priv_dir(emqx_offline_messages), "mysql.sql")
                 ),
-                lists:foreach(
-                    fun(Statement) -> {ok, _} = query(Conn, Statement, []) end,
-                    statements(SQL)
-                ),
+                {ok, _} = query(Conn, SQL, []),
                 health(Conn)
         end
     after
@@ -80,35 +76,51 @@ install(#{query_timeout := Timeout} = Config) ->
         close(Conn)
     end.
 
--doc "Check the schema version and that the account can see the append procedure.".
+-doc "Check the schema version.".
 -spec health(connection()) -> ok.
 health(Conn) ->
     {ok, [{1}]} = query(Conn, "SELECT version FROM mqtt_omp_schema", []),
-    {ok, [{1}]} = query(Conn, """
-    SELECT COUNT(*) FROM information_schema.ROUTINES
-    WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_NAME = 'omp_append'
-      AND ROUTINE_TYPE = 'PROCEDURE'
-    """, []),
     ok.
 
 -doc """
-Commit a batch with consecutive offsets in one call of the `omp_append` procedure.
-The procedure holds the topic row lock only on the server. A deadlock rolls the call back,
-so the call is repeated.
+Commit a batch at consecutive offsets.
+The transaction is sent as one multi-statement query, so the topic row lock is held for one
+round trip. The lock makes other appends to the topic wait until commit. A rollback releases
+the reserved offsets. A deadlock rolls the transaction back, so the query is repeated.
 """.
 -spec append(connection(), namespace(), emqx_types:topic(), [
     emqx_omp_backend:encoded_message(), ...
 ]) ->
     {ok, {topic_id(), offset()}}.
 append(Conn, Namespace, Topic, [_ | _] = Messages) ->
-    %% A text query needs no separate statement preparation round trip.
-    Batch = emqx_utils_json:encode([append_message(Message) || Message <- Messages]),
-    SQL = [
-        "CALL omp_append(",
-        lists:join(", ", [mysql:encode(Conn, Value) || Value <- [Namespace, Topic, Batch]]),
-        ")"
+    TopicId = ensure_topic(Conn, Namespace, Topic),
+    Id = integer_to_binary(TopicId),
+    Rows = [
+        append_row(Id, Index, Message)
+     || {Index, Message} <- lists:enumerate(0, Messages)
     ],
-    call_append(Conn, SQL, ?TRANSACTION_RETRIES).
+    %% The reset makes a missing topic row fail the insert instead of reusing an old offset.
+    SQL = [
+        "SET @omp_first = NULL;\n"
+        "START TRANSACTION;\n"
+        "SELECT next_offset INTO @omp_first FROM mqtt_omp_topic WHERE topic_id = ",
+        Id,
+        " FOR UPDATE;\n"
+        "UPDATE mqtt_omp_topic SET next_offset = next_offset + ",
+        integer_to_binary(length(Messages)),
+        " WHERE topic_id = ",
+        Id,
+        ";\n"
+        "INSERT INTO mqtt_omp_message\n"
+        "(topic_id, msg_offset, message_id, sender, qos, retain, payload, properties,"
+        " published_at, expires_at) VALUES\n",
+        lists:join(",\n", Rows),
+        ";\n"
+        "COMMIT;\n"
+        "SELECT @omp_first"
+    ],
+    {ok, First} = call_append(Conn, SQL, ?TRANSACTION_RETRIES),
+    {ok, {TopicId, First}}.
 
 -doc "Create or renew a subscription while serializing its starting position with appends.".
 -spec subscribe(
@@ -296,16 +308,50 @@ select_topic_tx(Conn, Namespace, Topic) ->
         {ok, []} -> not_found
     end.
 
--doc "Call `omp_append` and repeat the call after a deadlock rolled it back.".
-call_append(Conn, SQL, Retries) ->
-    case mysql:query(Conn, SQL) of
-        {ok, _Columns, [[TopicId, First]]} -> {ok, {TopicId, First}};
-        {error, {?ER_LOCK_DEADLOCK, _, _}} when Retries > 0 -> call_append(Conn, SQL, Retries - 1);
-        {error, Reason} -> error({mysql, Reason})
+-doc """
+Return the topic ID, and create the topic row for a new topic first.
+The read takes no lock, so it does not wait for appends to the topic.
+""".
+ensure_topic(Conn, Namespace, Topic) ->
+    case select_topic_id(Conn, Namespace, Topic) of
+        {ok, [{Id}]} ->
+            Id;
+        {ok, []} ->
+            %% A concurrent creation of the same row turns this insert into a no-op.
+            {ok, _} = query(Conn, """
+            INSERT INTO mqtt_omp_topic(namespace, topic) VALUES (?, ?)
+            ON DUPLICATE KEY UPDATE topic_id = topic_id
+            """, [Namespace, Topic]),
+            {ok, [{Id}]} = select_topic_id(Conn, Namespace, Topic),
+            Id
     end.
 
--doc "Flatten an encoded message to the scalar-only JSON object read by `omp_append`.".
-append_message(#{
+select_topic_id(Conn, Namespace, Topic) ->
+    query(
+        Conn,
+        "SELECT topic_id FROM mqtt_omp_topic WHERE namespace = ? AND topic = ?",
+        [Namespace, Topic]
+    ).
+
+-doc """
+Run the append transaction and return the first offset.
+A failed statement stops the query and can leave the transaction open, so it is rolled back.
+The query is repeated after a deadlock.
+""".
+call_append(Conn, SQL, Retries) ->
+    case mysql:query(Conn, SQL) of
+        {ok, _Columns, [[First]]} when is_integer(First) ->
+            {ok, First};
+        {error, Reason} ->
+            ok = mysql:query(Conn, <<"ROLLBACK">>),
+            case Reason of
+                {?ER_LOCK_DEADLOCK, _, _} when Retries > 0 -> call_append(Conn, SQL, Retries - 1);
+                _ -> error({mysql, Reason})
+            end
+    end.
+
+-doc "Format an encoded message as a row of the append insert at offset `@omp_first + Index`.".
+append_row(Id, Index, #{
     message_id := MessageId,
     sender := Sender,
     qos := QoS,
@@ -315,22 +361,33 @@ append_message(#{
     published_at := Published,
     expires_at := Expiry
 }) ->
-    Message = #{
-        message_id => MessageId,
-        sender => Sender,
-        qos => QoS,
-        retain => retain_value(Retain),
-        payload => Payload,
-        properties => emqx_utils_json:encode(Properties),
-        published_at => Published
-    },
-    case Expiry of
-        null -> Message;
-        _ -> Message#{expires_at => Expiry}
-    end.
+    Values = [
+        Id,
+        ["@omp_first + ", integer_to_binary(Index)],
+        from_base64(MessageId),
+        from_base64(base64:encode(Sender)),
+        integer_to_binary(QoS),
+        retain_value(Retain),
+        from_base64(Payload),
+        from_base64(base64:encode(emqx_utils_json:encode(Properties))),
+        integer_to_binary(Published),
+        case Expiry of
+            null -> <<"NULL">>;
+            _ -> integer_to_binary(Expiry)
+        end
+    ],
+    ["(", lists:join(", ", Values), ")"].
 
-retain_value(true) -> 1;
-retain_value(false) -> 0.
+-doc """
+Return an SQL expression that decodes a base64 string.
+Base64 text needs no escaping. The check keeps any other text from ending the literal.
+""".
+from_base64(Base64) ->
+    nomatch = binary:match(Base64, [<<"'">>, <<"\\">>]),
+    ["FROM_BASE64('", Base64, "')"].
+
+retain_value(true) -> <<"1">>;
+retain_value(false) -> <<"0">>.
 
 -doc """
 Take the database-wide installation lock, waiting at most `Timeout` milliseconds.
@@ -346,40 +403,12 @@ lock_schema(Conn, Timeout) ->
         {error, Reason} -> error({mysql, Reason})
     end.
 
--doc "Return `true` when the schema version and the append procedure are present.".
+-doc "Return `true` when the schema version is present.".
 is_installed(Conn) ->
     try health(Conn) of
         ok -> true
     catch
         error:_ -> false
-    end.
-
--doc """
-Split a schema file into statements like the mysql client.
-A statement ends with the current delimiter at the end of a line.
-A `DELIMITER` line changes the delimiter.
-""".
-statements(SQL) ->
-    statements(binary:split(SQL, <<"\n">>, [global]), <<";">>, [], []).
-
-statements([], _Delimiter, Lines, Statements) ->
-    <<>> = string:trim(iolist_to_binary(Lines)),
-    lists:reverse(Statements);
-statements([Line | Rest], Delimiter, Lines, Statements) ->
-    case string:trim(Line) of
-        <<"DELIMITER ", New/binary>> ->
-            statements(Rest, string:trim(New), Lines, Statements);
-        Trimmed ->
-            case binary:longest_common_suffix([Trimmed, Delimiter]) =:= byte_size(Delimiter) of
-                true ->
-                    Body = binary:part(Trimmed, 0, byte_size(Trimmed) - byte_size(Delimiter)),
-                    Statement = iolist_to_binary(
-                        lists:join(<<"\n">>, lists:reverse([Body | Lines]))
-                    ),
-                    statements(Rest, Delimiter, [], [Statement | Statements]);
-                false ->
-                    statements(Rest, Delimiter, [Line | Lines], Statements)
-            end
     end.
 
 normalize_row({_, null, _, _, _, _, _, _, _, _} = Row) ->

@@ -21,9 +21,7 @@ Breaking changes:
 - Authorization denies exact-topic subscriptions to MySQL-managed topics with QoS other than 1,
   and subscriptions from durable sessions or with client IDs longer than 2048 bytes. Exact-topic
   subscriptions receive messages at QoS 1. Wildcard subscriptions receive live messages only.
-- MySQL requires MySQL 8.0 or MariaDB 10.6 or later. The schema includes the `omp_append`
-  stored procedure. Its installation needs the `CREATE ROUTINE` and `ALTER ROUTINE` privileges,
-  and the plugin account needs the `EXECUTE` privilege.
+- MySQL requires MySQL 8.0 or MariaDB 10.6 or later.
 - MySQL TLS verifies the server certificate and host name by default. A TLS connection without
   `cacertfile` or `node.trusted_certs` fails.
 
