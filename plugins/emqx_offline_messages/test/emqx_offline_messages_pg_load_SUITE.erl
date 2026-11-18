@@ -31,7 +31,7 @@ in the CT private directory.
 -include_lib("emqx/include/emqx.hrl").
 -include_lib("emqx/include/asserts.hrl").
 -include_lib("snabbkaffe/include/snabbkaffe.hrl").
--include("../include/emqx_omp.hrl").
+-include("emqx_omp.hrl").
 
 all() -> [t_delivery_load].
 init_per_suite(Config) -> emqx_offline_messages_pg_SUITE:init_per_suite(Config).

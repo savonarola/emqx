@@ -10,14 +10,12 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("emqx/include/asserts.hrl").
+-include_lib("emqx/include/emqx_mqtt.hrl").
 
 -define(MYSQL_HOST, "mysql").
 -define(MYSQL_PORT, 3306).
 -define(MYSQL_TLS_HOST, "mysql-tls").
 -define(MYSQL_TLS_PORT, 3306).
--define(MYSQL_DATABASE, "mqtt").
--define(MYSQL_USERNAME, "root").
--define(MYSQL_PASSWORD, "public").
 
 -define(REDIS_HOST, "redis").
 -define(REDIS_PORT, 6379).
@@ -201,13 +199,24 @@ t_redis_replacement_guard(_Config) ->
     Updates = [{redis, Parsed}],
     Topic = unique_topic(),
     Msg = emqx_message:make(<<"p">>, 1, Topic, <<"guarded">>),
+    PublishOpts = #{hook_prohibition_as_error => true},
     ok = emqx_omp:stop_changes(Updates),
     try
-        ?assertMatch({error, disconnect, _}, emqx_broker:publish2(Msg)),
+        ?assertMatch({error, blocked, _}, emqx_broker:publish2(Msg, PublishOpts)),
+        Pub = emqtt_connect(),
+        try
+            ?assertMatch(
+                {ok, #{reason_code := ?RC_IMPLEMENTATION_SPECIFIC_ERROR}},
+                emqtt:publish(Pub, Topic, <<"guarded">>, 1)
+            ),
+            ?assertEqual(pong, emqtt:ping(Pub))
+        after
+            emqtt:stop(Pub)
+        end,
         ok = meck:new(emqx_offline_messages_redis, [passthrough, no_link]),
         ok = meck:expect(emqx_offline_messages_redis, start, fun(_) -> error(unavailable) end),
         ?assertMatch([{redis, {error, _}}], emqx_omp:start_changes(Updates)),
-        ?assertMatch({error, disconnect, _}, emqx_broker:publish2(Msg))
+        ?assertMatch({error, blocked, _}, emqx_broker:publish2(Msg, PublishOpts))
     after
         meck:unload(emqx_offline_messages_redis),
         [{redis, ok}] = emqx_omp:start_changes(Updates)

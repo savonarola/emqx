@@ -219,3 +219,12 @@ init_metrics() ->
         ?METRICS_WORKER, session_subscribed, [success, fail]
     ),
     ok.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+main_callbacks_handle_stopped_server_test() ->
+    ?assertEqual(ok, on_config_changed(#{}, #{})),
+    ?assertEqual({error, <<"Plugin is not running">>}, on_health_check()).
+
+-endif.

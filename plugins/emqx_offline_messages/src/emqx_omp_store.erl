@@ -27,7 +27,8 @@ The backend uses three pools:
     restore/3,
     unsubscribe/4,
     checkpoint/5,
-    subscribe_async/8,
+    subscribe/6,
+    subscription_cursor_async/6,
     page_async/7
 ]).
 -export([exec/4, exec_async/4, reply/3]).
@@ -124,20 +125,36 @@ checkpoint(Namespace, ClientId, TopicId, Offset, Config) ->
         Config
     ).
 
--doc "Create or update a subscription and send the result to the handler.".
--spec subscribe_async(
+-doc "Create or update a subscription before the subscribe hook returns.".
+-spec subscribe(
     namespace(),
     emqx_types:clientid(),
     emqx_types:topic(),
     emqx_types:subopts(),
     emqx_omp_backend:start_position(),
+    config()
+) -> {ok, #{topic_id := topic_id(), cursor := offset()}} | error().
+subscribe(Namespace, ClientId, Topic, SubOpts, Start, Config) ->
+    call(
+        ?SUBSCRIPTION_META_POOL,
+        ClientId,
+        subscribe,
+        [Namespace, ClientId, Topic, SubOpts, Start],
+        Config
+    ).
+
+-doc "Read a subscription cursor and send the result to the replay handler.".
+-spec subscription_cursor_async(
+    namespace(),
+    emqx_types:clientid(),
+    emqx_types:topic(),
     emqx_extsub_handler:message_target(),
     reference(),
     config()
 ) -> ok.
-subscribe_async(Namespace, ClientId, Topic, SubOpts, Start, Target, Ref, Config) ->
-    Args = [Namespace, ClientId, Topic, SubOpts, Start],
-    async(?SUBSCRIPTION_META_POOL, ClientId, subscribe, Args, Target, Ref, Config).
+subscription_cursor_async(Namespace, ClientId, Topic, Target, Ref, Config) ->
+    Args = [Namespace, ClientId, Topic],
+    async(?SUBSCRIPTION_META_POOL, ClientId, subscription_cursor, Args, Target, Ref, Config).
 
 -doc "Read a message page and send the result to the handler.".
 -spec page_async(
@@ -280,11 +297,8 @@ The pool sends no result when its connection is down, so the caller needs a time
 async(Role, Key, Fun, Args, Target, Ref, #{backend := Backend} = Config) ->
     Pool = pool(Role, Config),
     Callback = {?MODULE, reply, [Target, Ref]},
-    case
-        ecpool:pick_and_do({Pool, Key}, {?MODULE, exec_async, [Backend, Fun, Args]}, {
-            handover_async, Callback
-        })
-    of
+    MFA = {?MODULE, exec_async, [Backend, Fun, Args]},
+    case ecpool:pick_and_do({Pool, Key}, MFA, {handover_async, Callback}) of
         {error, _} = Error -> reply({done, Error}, Target, Ref);
         _ -> ok
     end.

@@ -63,6 +63,8 @@
     emqx_types:subopts(),
     start_position()
 ) -> result(#{topic_id := topic_id(), cursor := offset()}).
+-callback subscription_cursor(connection(), namespace(), emqx_types:clientid(), emqx_types:topic()) ->
+    result(#{topic_id := topic_id(), cursor := offset()} | not_found).
 -callback restore(connection(), namespace(), emqx_types:clientid()) -> result([subscription_row()]).
 -callback unsubscribe(connection(), namespace(), emqx_types:clientid(), emqx_types:topic()) ->
     result(non_neg_integer()).

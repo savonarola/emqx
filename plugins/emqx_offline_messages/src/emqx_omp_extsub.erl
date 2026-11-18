@@ -2,8 +2,11 @@
 %% Copyright (c) 2026 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%--------------------------------------------------------------------
 -module(emqx_omp_extsub).
+
 -moduledoc "Ordered QoS 1 delivery of live copies with database recovery.".
+
 -behaviour(emqx_extsub_handler).
+
 -include_lib("emqx/include/emqx.hrl").
 -include_lib("emqx/include/emqx_mqtt.hrl").
 -include_lib("emqx/include/logger.hrl").
@@ -23,7 +26,6 @@
     key,
     topic,
     clientid,
-    subopts,
     topic_id,
     %% Last offset passed to ExtSub or skipped.
     offset_cursor = 0,
@@ -65,36 +67,33 @@ handle_subscribe(_Type, #{subopts := #{qos := QoS}}, _State, _Topic) when QoS =/
     %% receive no managed messages.
     ignore;
 handle_subscribe(_Type, Context, undefined, Topic) ->
-    #{message_target := Target, clientinfo := #{clientid := ClientId}, subopts := Options} =
+    #{message_target := Target, clientinfo := #{clientid := ClientId}} =
         Context,
     Config = emqx_omp:find(Topic),
     %% A resumed session can hold a subscription that authorization would deny now.
-    case
+    CanReplay =
         emqx_omp:is_managed(Topic, Config) andalso not emqx_topic:wildcard(Topic) andalso
-            emqx_omp:is_client_id_supported(ClientId, Config)
-    of
+            emqx_omp:is_client_id_supported(ClientId, Config),
+    case CanReplay of
         true ->
             Handler = #h{
                 config = Config,
                 target = Target,
                 key = make_ref(),
                 topic = Topic,
-                clientid = ClientId,
-                subopts = maps:with([qos, nl, rap, rh, subid], Options)
+                clientid = ClientId
             },
             {ok, nudge(Handler)};
         false ->
             ignore
     end.
 
--doc "Remove explicit subscriptions or save acknowledged progress before disconnecting.".
+-doc "Skip the final checkpoint on explicit unsubscribe.".
 handle_unsubscribe(unsubscribe, _Context, Handler, _TopicFilter) ->
-    #h{config = #{namespace := Namespace} = Config, clientid = ClientId, topic = Topic} = Handler,
-    log_error(unsubscribe, emqx_omp_store:unsubscribe(Namespace, ClientId, Topic, Config)),
     Handler#h{stopped = true};
-handle_unsubscribe(disconnect, _Context, Handler0, _TopicFilter) ->
-    Handler = checkpoint(Handler0),
-    Handler#h{stopped = true}.
+%% handle_terminate will save progress on disconnect.
+handle_unsubscribe(disconnect, _Context, Handler, _TopicFilter) ->
+    Handler.
 
 -doc "Cancel the reader timers and save progress unless an unsubscribe stopped the reader.".
 handle_terminate(#h{pending = Pending} = Handler) ->
@@ -122,7 +121,7 @@ handle_delivered(Handler0, _Context, Msg, Ack) ->
     } =
         Handler0,
     {{BackendId, Namespace}, Id, Offset} = emqx_message:get_header(?OMP_POSITION, Msg),
-    report_ack(Ack, Config),
+    register_ack(Ack, Config),
     Handler1 = Handler0#h{offset_acked = max(Handler0#h.offset_acked, Offset)},
     Handler =
         case unsent_ack_count(Handler1) >= Max of
@@ -189,6 +188,8 @@ info(Handler, _Context, _Info) ->
     {ok, Handler}.
 
 -doc "Apply a database result, release consecutive buffered copies and schedule more reads.".
+result(Handler, initialize, {ok, not_found}) ->
+    {destroy, Handler};
 result(Handler, initialize, {ok, #{topic_id := Id, cursor := Cursor}}) ->
     #h{config = #{read := #{idle_poll_interval := Interval}}} = Handler,
     Init = Handler#h{
@@ -252,7 +253,7 @@ live_batch(Offset, [Msg | Rest], Demand, Handler0, Acc) ->
 live(
     Offset, _Msg, _Demand, #h{offset_cursor = Cursor, reorder_buffer = ReorderBuffer} = Handler
 ) when
-    Offset =< Cursor; is_map_key(Offset, ReorderBuffer)
+    Offset =< Cursor orelse is_map_key(Offset, ReorderBuffer)
 ->
     {Handler, []};
 live(Offset, Msg0, Demand, Handler0) ->
@@ -263,7 +264,8 @@ live(Offset, Msg0, Demand, Handler0) ->
     } =
         Handler0,
     Msg = message(Offset, Msg0, Handler0),
-    case {Demand > 0, Offset =:= Cursor + 1 andalso Handler0#h.pending =:= undefined} of
+    IsNext = Offset =:= Cursor + 1 andalso Handler0#h.pending =:= undefined,
+    case {Demand > 0, IsNext} of
         {true, true} ->
             %% The next offset: deliver it and the buffered copies that follow it.
             {Handler, Messages} = drain(
@@ -331,12 +333,9 @@ clear_reorder_buffer(Handler) ->
 pump(#h{retry_timer = Timer} = Handler, _Context) when Timer =/= undefined -> Handler;
 pump(#h{pending = Pending} = Handler, _Context) when Pending =/= undefined -> Handler;
 pump(#h{topic_id = undefined} = Handler, _Context) ->
-    #h{config = Config, topic = Topic, clientid = ClientId, subopts = SubOpts} = Handler,
-    #{namespace := Namespace, new_subscription_start := Start} = Config,
+    #h{config = #{namespace := Namespace} = Config, topic = Topic, clientid = ClientId} = Handler,
     request(Handler, initialize, fun(Target, Ref) ->
-        emqx_omp_store:subscribe_async(
-            Namespace, ClientId, Topic, SubOpts, Start, Target, Ref, Config
-        )
+        emqx_omp_store:subscription_cursor_async(Namespace, ClientId, Topic, Target, Ref, Config)
     end);
 pump(#h{dirty = true} = Handler, Context) ->
     read_page(Handler, Context);
@@ -377,7 +376,8 @@ row({_, Offset, _, _, _, _, _, _, _, Expiry} = Row, {Handler0, Messages}) ->
     } = Handler,
     case emqx_omp_store:decode(Topic, {{BackendId, Namespace}, Id}, Row) of
         {ok, Msg} ->
-            case Expiry =/= null andalso Expiry =< erlang:system_time(millisecond) of
+            Expired = Expiry =/= null andalso Expiry =< erlang:system_time(millisecond),
+            case Expired of
                 true -> {Handler, Messages};
                 false -> {Handler, [Msg | Messages]}
             end;
@@ -475,10 +475,10 @@ retry(#h{retry_timer = undefined, target = Target, retry_delay = Previous} = Han
 retry(Handler) ->
     Handler.
 
-report_ack(Ack, Config) when is_integer(Ack), Ack >= 16#80 ->
+register_ack(Ack, Config) when is_integer(Ack), Ack >= 16#80 ->
     emqx_omp:count(rejected, 1, Config),
     ?SLOG_THROTTLE(warning, #{msg => offline_messages_rejected, reason_code => Ack});
-report_ack(_, _) ->
+register_ack(_, _) ->
     ok.
 
 log_error(_Operation, {ok, _}) ->

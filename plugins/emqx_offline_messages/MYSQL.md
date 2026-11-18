@@ -70,7 +70,8 @@ MySQL has no server-side timeout for writes. The plugin limits row-lock waits in
   With the default `query_timeout` of 5000 ms, it waits up to 10 seconds.
 
 A statement that stays slow for other reasons, for example a disk stall, can still exceed this time.
-The publisher is then disconnected, and the message may be stored anyway.
+MQTT 5 publishers receive an error acknowledgement and stay connected. MQTT 3.x publishers
+receive a normal acknowledgement. In either case, the message may still be stored.
 
 TLS verifies the server certificate and host name by default: `verify = verify_peer` and
 `server_name_indication = auto`. Set `cacertfile`, or configure `node.trusted_certs`.

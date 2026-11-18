@@ -26,12 +26,21 @@
     start/1,
     stop/1
 ]).
--export([on_publish/1, on_connected/2, on_session/2, on_authorize/4, on_info/3, guard_publish/1]).
+-export([
+    on_publish/1,
+    on_publish_ack/4,
+    on_connected/2,
+    on_session/2,
+    on_authorize/4,
+    on_info/3,
+    guard_publish/1,
+    on_subscribed/3,
+    on_unsubscribed/3
+]).
 
 -export_type([backend_id/0, config/0, update/0]).
 
 -define(SQL_BACKENDS, [postgresql, mysql]).
--define(EXTSUB_HANDLERS, [emqx_omp_extsub, emqx_omp_live]).
 
 -type backend_id() :: postgresql | mysql | redis.
 -type config() :: emqx_omp_backend:config() | emqx_offline_messages_redis:config().
@@ -96,7 +105,7 @@ start_changes(Updates) ->
                 ?METRICS_WORKER, BackendId, [write_failed, rejected, skipped]
             )
         end,
-        [Update || {Id, #{}} = Update <- Updates, Id =/= redis]
+        [Update || {_, #{}} = Update <- Updates]
     ),
     %% Replace all configurations in one step, so that no topic has two owners at any time.
     Configs = lists:foldl(fun update_config/2, configs_map(), Updates),
@@ -202,13 +211,10 @@ guard_publish(Msg) ->
     case config(redis) of
         #{runtime_ready := true} ->
             {ok, Msg};
-        #{context := #{topic_filters := Filters}} ->
+        #{context := #{topic_filters := Filters}} = Config ->
             case emqx_offline_messages_utils:need_persist_message(Msg, Filters) of
                 true ->
-                    {stop,
-                        emqx_message:set_headers(
-                            #{should_disconnect => true, allow_publish => false}, Msg
-                        )};
+                    publish_result({error, unavailable}, Msg, Config);
                 false ->
                     {ok, Msg}
             end;
@@ -259,7 +265,7 @@ on_publish(#message{topic = Topic} = Msg) ->
             publish_result(Result, Msg, Config)
     end.
 
--doc "Suppress regular dispatch after admission or commit, and disconnect on write failure.".
+-doc "Suppress regular dispatch after admission or commit, or reject a failed publish.".
 publish_result(ok, Msg, _Config) ->
     {stop, persisted(Msg)};
 publish_result({error, Reason}, Msg, #{backend_id := BackendId} = Config) ->
@@ -267,7 +273,12 @@ publish_result({error, Reason}, Msg, #{backend_id := BackendId} = Config) ->
     ?SLOG_THROTTLE(error, #{
         msg => offline_messages_write_failed, backend => BackendId, reason => Reason
     }),
-    {stop, emqx_message:set_headers(#{should_disconnect => true, allow_publish => false}, Msg)}.
+    {stop, emqx_message:set_headers(#{allow_publish => false, omp_publish_failed => true}, Msg)}.
+
+on_publish_ack(_PacketId, #message{headers = #{omp_publish_failed := true}}, _PubRes, _RC) ->
+    {stop, ?RC_IMPLEMENTATION_SPECIFIC_ERROR};
+on_publish_ack(_PacketId, _Msg, _PubRes, RC) ->
+    {ok, RC}.
 
 persisted(Msg) ->
     emqx_message:set_headers(#{allow_publish => false, message_persisted => true}, Msg).
@@ -289,12 +300,73 @@ on_connected(#{clientid := ClientId, protocol := mqtt} = ClientInfo, _ConnInfo) 
 on_connected(_ClientInfo, _ConnInfo) ->
     ok.
 
+on_subscribed(ClientInfo, Topic, Options) ->
+    #{clientid := ClientId} = ClientInfo,
+    SubOpts = maps:with([qos, nl, rap, rh, subid], Options),
+    lists:foreach(
+        fun(#{namespace := Namespace, new_subscription_start := Start} = Config) ->
+            case is_unsupported(ClientInfo, Options, Topic, Config) of
+                false ->
+                    Position =
+                        case emqx_topic:wildcard(Topic) of
+                            true -> latest;
+                            false -> Start
+                        end,
+                    subscription_result(
+                        subscribe,
+                        Config,
+                        emqx_omp_store:subscribe(
+                            Namespace, ClientId, Topic, SubOpts, Position, Config
+                        )
+                    );
+                true ->
+                    ok
+            end
+        end,
+        subscription_backends(ClientInfo, Topic)
+    ).
+
+on_unsubscribed(#{clientid := ClientId} = ClientInfo, Topic, _Options) ->
+    lists:foreach(
+        fun(#{namespace := Namespace} = Config) ->
+            subscription_result(
+                unsubscribe, Config, emqx_omp_store:unsubscribe(Namespace, ClientId, Topic, Config)
+            )
+        end,
+        subscription_backends(ClientInfo, Topic)
+    ).
+
+subscription_backends(#{clientid := ClientId, protocol := mqtt}, Topic) when is_binary(Topic) ->
+    case get(omp_session_impl) of
+        emqx_session_mem ->
+            [
+                Config
+             || Config <- configs(),
+                is_client_id_supported(ClientId, Config),
+                is_restorable(Topic, Config)
+            ];
+        _ ->
+            []
+    end;
+subscription_backends(_, _) ->
+    [].
+
+subscription_result(_Operation, _Config, {ok, _}) ->
+    ok;
+subscription_result(Operation, #{backend_id := BackendId}, {error, Reason}) ->
+    ?SLOG_THROTTLE(error, #{
+        msg => offline_messages_query_failed,
+        operation => Operation,
+        backend => BackendId,
+        reason => Reason
+    }).
+
 -doc "Return the stored subscriptions of in-memory sessions whose client ID the backend can store.".
 restore(ClientId, ClientInfo, #{namespace := Namespace, backend_id := BackendId} = Config) ->
-    case
+    CanRestore =
         get(omp_session_impl) =:= emqx_session_mem andalso
-            is_client_id_supported(ClientId, Config)
-    of
+            is_client_id_supported(ClientId, Config),
+    case CanRestore of
         true ->
             case emqx_omp_store:restore(Namespace, ClientId, Config) of
                 {ok, Rows} ->
@@ -360,25 +432,14 @@ update_hooks(Configs) when map_size(Configs) =:= 0 ->
     lists:foreach(
         fun({Hook, Function, _}) -> emqx_hooks:del(Hook, {?MODULE, Function}) end, hooks()
     ),
-    lists:foreach(fun emqx_extsub_handler_registry:unregister/1, ?EXTSUB_HANDLERS),
+    emqx_extsub_handler_registry:unregister(emqx_omp_extsub),
     ok;
 update_hooks(_Configs) ->
-    %% Exact handlers deliver messages. Wildcard handlers only maintain subscription rows.
-    lists:foreach(
-        fun(Module) ->
-            case
-                emqx_extsub_handler_registry:register(
-                    Module, #{
-                        multi_topic => false, handle_generic_messages => Module =:= emqx_omp_extsub
-                    }
-                )
-            of
-                ok -> ok;
-                {error, extsub_handler_already_registered} -> ok
-            end
-        end,
-        ?EXTSUB_HANDLERS
-    ),
+    Options = #{multi_topic => false, handle_generic_messages => true},
+    case emqx_extsub_handler_registry:register(emqx_omp_extsub, Options) of
+        ok -> ok;
+        {error, extsub_handler_already_registered} -> ok
+    end,
     lists:foreach(
         fun({Hook, Function, Priority}) ->
             ok = emqx_hooks:put(Hook, {?MODULE, Function, []}, Priority)
@@ -431,6 +492,10 @@ hooks() ->
     [
         {'message.publish', guard_publish, ?HP_HIGHEST + 1},
         {'message.publish', on_publish, ?HP_LOWEST - 1},
+        {'message.puback', on_publish_ack, ?HP_LOWEST},
+        {'message.pubrec', on_publish_ack, ?HP_LOWEST},
+        {'session.subscribed', on_subscribed, ?HP_HIGHEST},
+        {'session.unsubscribed', on_unsubscribed, ?HP_HIGHEST},
         {'client.handle_info', on_info, ?HP_LOWEST},
         {'client.connected', on_connected, ?HP_LOWEST},
         {'session.created', on_session, ?HP_LOWEST + 1},

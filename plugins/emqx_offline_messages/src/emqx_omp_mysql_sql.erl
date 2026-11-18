@@ -11,6 +11,7 @@
     health/1,
     append/4,
     subscribe/6,
+    subscription_cursor/4,
     restore/3,
     unsubscribe/4,
     checkpoint/5,
@@ -154,6 +155,18 @@ subscribe(Conn, Namespace, ClientId, Topic, SubOpts, Start) ->
         {ok, #{topic_id => Id, cursor => Cursor}}
     end).
 
+-doc "Read the stored replay cursor without changing the subscription.".
+subscription_cursor(Conn, Namespace, ClientId, Topic) ->
+    Result = query(Conn, """
+    SELECT t.topic_id, s.ack_offset FROM mqtt_omp_subscription s
+    JOIN mqtt_omp_topic t USING (topic_id)
+    WHERE s.namespace = ? AND s.client_id = ? AND t.namespace = ? AND t.topic = ?
+    """, [Namespace, ClientId, Namespace, Topic]),
+    case Result of
+        {ok, [{Id, Cursor}]} -> {ok, #{topic_id => Id, cursor => Cursor}};
+        {ok, []} -> {ok, not_found}
+    end.
+
 -doc "Return a client's subscriptions with their topics and options.".
 -spec restore(connection(), namespace(), emqx_types:clientid()) ->
     {ok, [emqx_omp_backend:subscription_row()]}.
@@ -208,10 +221,11 @@ topics(Conn, Namespace, After, Limit) ->
 -doc "Find the first offset outside the expired prefix.".
 -spec age_cutoff(connection(), topic_id(), offset(), integer()) -> {ok, offset()}.
 age_cutoff(Conn, TopicId, Next, Oldest) ->
-    case query(Conn, """
+    Result = query(Conn, """
     SELECT msg_offset FROM mqtt_omp_message
     WHERE topic_id = ? AND published_at >= ? ORDER BY msg_offset LIMIT 1
-    """, [TopicId, Oldest]) of
+    """, [TopicId, Oldest]),
+    case Result of
         {ok, [{Offset}]} -> {ok, Offset};
         {ok, []} -> {ok, Next}
     end.
@@ -219,13 +233,8 @@ age_cutoff(Conn, TopicId, Next, Oldest) ->
 -doc "Find the first offset that some subscription has not acknowledged.".
 -spec consumed_cutoff(connection(), topic_id(), offset()) -> {ok, offset()}.
 consumed_cutoff(Conn, TopicId, Next) ->
-    case
-        query(
-            Conn,
-            "SELECT min(ack_offset) FROM mqtt_omp_subscription WHERE topic_id = ?",
-            [TopicId]
-        )
-    of
+    SQL = "SELECT min(ack_offset) FROM mqtt_omp_subscription WHERE topic_id = ?",
+    case query(Conn, SQL, [TopicId]) of
         {ok, [{null}]} -> {ok, Next};
         {ok, [{Ack}]} -> {ok, Ack + 1}
     end.
@@ -285,10 +294,11 @@ share_lock_topic_tx(Conn, Namespace, Topic) ->
     end.
 
 select_topic_tx(Conn, Namespace, Topic) ->
-    case query(Conn, """
+    Result = query(Conn, """
     SELECT topic_id, next_offset FROM mqtt_omp_topic
     WHERE namespace = ? AND topic = ? LOCK IN SHARE MODE
-    """, [Namespace, Topic]) of
+    """, [Namespace, Topic]),
+    case Result of
         {ok, [{Id, Next}]} -> {ok, {Id, Next}};
         {ok, []} -> not_found
     end.

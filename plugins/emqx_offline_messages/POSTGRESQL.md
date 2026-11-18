@@ -110,15 +110,17 @@ The `async_batched` setting chooses when the publisher receives its acknowledgem
 
 | `async_batched` | Acknowledgement | Risk |
 | --- | --- | --- |
-| `false` (default) | After the message is written to PostgreSQL | No loss. A failed write disconnects the publisher. If the write timed out but succeeded, the message may be stored twice. |
+| `false` (default) | After the database write succeeds or fails | If a write times out but commits, a client retry can store a duplicate. |
 | `true` | When the plugin accepts the message into its write buffer | The message is lost if the buffered write later fails. |
 
 With `async_batched = true`, the plugin writes buffered messages in batches.
 This gives higher throughput because many messages share one database transaction.
 The `writer.*` settings control the batch size and delay.
 
-When PostgreSQL is not available, the plugin disconnects publishers of QoS 1/2 messages to managed topics.
-It does not send these messages to subscribers without storing them.
+If a QoS 1/2 publish fails before acknowledgement, the plugin does not deliver it to subscribers.
+MQTT 5 publishers receive an error PUBACK or PUBREC and stay connected.
+MQTT 3.x has no publish error reason code, so publishers receive a normal acknowledgement and
+do not learn that the message failed. The plugin logs and counts the failure.
 
 The HTTP publish API reports a stored message as a success, even when the topic has no subscribers.
 
@@ -263,7 +265,7 @@ The plugin reports these counters:
 ### Configuration changes
 
 A configuration change restarts the backend.
-During the restart, QoS 1/2 publishes to managed topics fail and the publishers are disconnected.
+During the restart, QoS 1/2 publishes to managed topics fail without disconnecting the publisher.
 If the backend fails to start, it keeps failing these publishes and the health check until the next configuration change.
 
 ### Connection poolers
@@ -317,9 +319,10 @@ A subscription without new acknowledgements does not run this timer.
 Saving progress does not wait for the database. A failed save is not retried.
 After a crash, a client can receive again the messages acknowledged since the last save.
 
-Wildcard subscriptions are stored with an upsert. Failed writes and missing replies are retried.
-The handler checks configuration changes every 5 minutes, and creates rows in replacement
-backends or namespaces.
+Session hooks wait for the database when saving subscriptions on SUBSCRIBE or deleting them on
+UNSUBSCRIBE. They log failed writes without retrying them. The replay reader only reads the
+saved starting offset and checkpoints delivery progress. Changing the backend or namespace
+does not copy existing subscriptions. Subscribe again to save them under the new configuration.
 
 ### Connection pools
 
@@ -344,7 +347,7 @@ For a stored message, the broker does not route the original message, and it cou
 With `async_batched = true`:
 
 - Each topic is assigned to one batch writer. Writes of one writer run one after another.
-  Many busy topics on one writer can delay acceptance beyond `writer.call_timeout`, which disconnects the publisher.
+  Many busy topics on one writer can delay acceptance beyond `writer.call_timeout`, which fails the publish.
   A message whose acceptance timed out can still be stored later.
 - Stopping the backend writes the buffered messages within `writer.call_timeout`.
 - If a writer crashes, its buffered messages are dropped and counted in `write_failed`. No message is stored twice.

@@ -149,3 +149,76 @@ resource_health_status(Name, ResourceId) ->
                     io_lib:format("Resource ~s health check failed: ~p", [Name, Reason])
                 )}
     end.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+fix_ssl_config_removes_empty_files_test() ->
+    Config0 = #{
+        <<"ssl">> => #{
+            <<"enable">> => true,
+            <<"cacertfile">> => <<>>,
+            <<"certfile">> => <<"/tmp/client.crt">>
+        }
+    },
+    ?assertEqual(
+        #{
+            <<"ssl">> => #{
+                <<"enable">> => true,
+                <<"certfile">> => <<"/tmp/client.crt">>
+            }
+        },
+        fix_ssl_config(Config0)
+    ),
+    ?assertEqual(
+        #{<<"ssl">> => #{<<"enable">> => false}},
+        fix_ssl_config(#{})
+    ).
+
+make_resource_opts_uses_sync_mode_test() ->
+    Opts = make_resource_opts(#{
+        <<"batch_size">> => 10,
+        <<"batch_time">> => 250
+    }),
+    ?assertMatch(
+        #{
+            start_after_created := true,
+            batch_size := 10,
+            batch_time := 250,
+            query_mode := sync,
+            owner_id := <<"omp">>
+        },
+        Opts
+    ).
+
+need_persist_message_requires_qos_and_topic_match_test() ->
+    Filters = topic_filters(#{<<"topics">> => [<<"devices/+/events">>]}),
+    Matching = emqx_message:make(<<"client-a">>, 1, <<"devices/d1/events">>, <<"payload">>),
+    Qos0 = emqx_message:make(<<"client-a">>, 0, <<"devices/d1/events">>, <<"payload">>),
+    OtherTopic = emqx_message:make(<<"client-a">>, 1, <<"devices/d1/state">>, <<"payload">>),
+    ?assert(need_persist_message(Matching, Filters)),
+    ?assertNot(need_persist_message(Qos0, Filters)),
+    ?assertNot(need_persist_message(OtherTopic, Filters)).
+
+resource_health_status_formats_results_test() ->
+    ok = meck:new(emqx_resource, [non_strict]),
+    try
+        ok = meck:expect(emqx_resource, health_check, fun
+            (<<"redis">>) -> {ok, connected};
+            (<<"mysql">>) -> {ok, disconnected};
+            (<<"broken">>) -> {error, timeout}
+        end),
+        ?assertEqual(ok, resource_health_status(<<"Redis">>, <<"redis">>)),
+        ?assertMatch(
+            {error, <<"Resource MySQL is not connected", _/binary>>},
+            resource_health_status(<<"MySQL">>, <<"mysql">>)
+        ),
+        ?assertMatch(
+            {error, <<"Resource Backend health check failed", _/binary>>},
+            resource_health_status(<<"Backend">>, <<"broken">>)
+        )
+    after
+        meck:unload(emqx_resource)
+    end.
+
+-endif.

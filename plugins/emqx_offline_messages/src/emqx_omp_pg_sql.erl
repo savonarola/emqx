@@ -15,6 +15,7 @@ Each function runs on the given connection and raises an error when a statement 
     health/1,
     append/4,
     subscribe/6,
+    subscription_cursor/4,
     restore/3,
     unsubscribe/4,
     checkpoint/5,
@@ -171,6 +172,18 @@ subscribe(Conn, Namespace, ClientId, Topic, SubOpts, Start) ->
         {ok, #{topic_id => Id, cursor => Cursor}}
     end).
 
+-doc "Read the stored replay cursor without changing the subscription.".
+subscription_cursor(Conn, Namespace, ClientId, Topic) ->
+    Result = query(Conn, """
+    SELECT t.topic_id, s.ack_offset FROM mqtt_pg_subscription s
+    JOIN mqtt_pg_topic t USING (topic_id)
+    WHERE s.namespace = $1 AND s.client_id = $2 AND t.namespace = $1 AND t.topic = $3
+    """, [Namespace, ClientId, Topic]),
+    case Result of
+        {ok, [{Id, Cursor}]} -> {ok, #{topic_id => Id, cursor => Cursor}};
+        {ok, []} -> {ok, not_found}
+    end.
+
 -doc "Return the client's subscriptions with their topics and options.".
 -spec restore(epgsql:connection(), namespace(), emqx_types:clientid()) ->
     {ok, [subscription_row()]}.
@@ -228,10 +241,11 @@ topics(Conn, Namespace, After, Limit) ->
 -spec age_cutoff(epgsql:connection(), topic_id(), offset(), timestamp_ms()) -> {ok, offset()}.
 age_cutoff(Conn, TopicId, Next, Oldest) ->
     %% The scan stops at the end of the expired prefix.
-    case query(Conn, """
+    Result = query(Conn, """
     SELECT msg_offset FROM mqtt_pg_message
     WHERE topic_id = $1 AND published_at >= $2 ORDER BY msg_offset LIMIT 1
-    """, [TopicId, Oldest]) of
+    """, [TopicId, Oldest]),
+    case Result of
         {ok, [{Offset}]} -> {ok, Offset};
         {ok, []} -> {ok, Next}
     end.
@@ -241,11 +255,8 @@ age_cutoff(Conn, TopicId, Next, Oldest) ->
 consumed_cutoff(Conn, TopicId, Next) ->
     %% A subscribe transaction blocks appends until its row commits, so no subscriber can
     %% acknowledge an offset above the new subscription's start before this query sees it.
-    case
-        query(
-            Conn, "SELECT min(ack_offset) FROM mqtt_pg_subscription WHERE topic_id = $1", [TopicId]
-        )
-    of
+    SQL = "SELECT min(ack_offset) FROM mqtt_pg_subscription WHERE topic_id = $1",
+    case query(Conn, SQL, [TopicId]) of
         {ok, [{null}]} -> {ok, Next};
         {ok, [{Acked}]} -> {ok, Acked + 1}
     end.
@@ -254,10 +265,11 @@ consumed_cutoff(Conn, TopicId, Next) ->
 -spec trim(epgsql:connection(), topic_id(), offset(), pos_integer()) ->
     {ok, Removed :: non_neg_integer()}.
 trim(Conn, TopicId, Cutoff, Batch) ->
-    case query(Conn, """
+    Result = query(Conn, """
     SELECT min(msg_offset), max(msg_offset) FROM mqtt_pg_message
     WHERE topic_id = $1 AND msg_offset < $2
-    """, [TopicId, Cutoff]) of
+    """, [TopicId, Cutoff]),
+    case Result of
         {ok, [{null, null}]} -> {ok, 0};
         {ok, [{Min, Max}]} -> trim_range(Conn, TopicId, Min, Max, Batch, 0)
     end.
